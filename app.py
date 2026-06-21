@@ -27,22 +27,27 @@ load_dotenv()
 from personality import JARVIS_SYSTEM
 
 # ─── CONFIG ──────────────────────────────────────────────────────────────────
-HERE        = os.path.dirname(os.path.abspath(__file__))
+HERE = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(HERE, "config.json")
 MAX_HISTORY = 20
 
 DEFAULT_MODELS = {
-    "anthropic":         "claude-haiku-4-5",
-    "openai":            "gpt-4o-mini",
+    "anthropic": "claude-haiku-4-5",
+    "openai": "gpt-4o-mini",
     "openai_compatible": "",
 }
 VALID_PROVIDERS = set(DEFAULT_MODELS.keys())
 
-_config       = {"provider": "anthropic", "api_key": "", "model": "claude-haiku-4-5", "base_url": ""}
-_client       = None
-_provider     = "anthropic"
+_config = {
+    "provider": "anthropic",
+    "api_key": "",
+    "model": "claude-haiku-4-5",
+    "base_url": "",
+}
+_client = None
+_provider = "anthropic"
 _conversation = []
-_client_lock  = asyncio.Lock()
+_client_lock = asyncio.Lock()
 _location_context: dict = {}
 
 
@@ -62,7 +67,7 @@ def _load_config():
     if ollama_url:
         _config["provider"] = "openai_compatible"
         _config["base_url"] = ollama_url
-        _config["api_key"]  = "ollama"
+        _config["api_key"] = "ollama"
         ollama_model = os.environ.get("OLLAMA_MODEL", "").strip()
         if ollama_model:
             _config["model"] = ollama_model
@@ -70,7 +75,7 @@ def _load_config():
     provider = _config.get("provider", "anthropic")
     env_key_map = {
         "anthropic": os.environ.get("ANTHROPIC_API_KEY", "").strip(),
-        "openai":    os.environ.get("OPENAI_API_KEY", "").strip(),
+        "openai": os.environ.get("OPENAI_API_KEY", "").strip(),
     }
     env_key = env_key_map.get(provider, "")
     if env_key:
@@ -96,8 +101,10 @@ def _build_client(provider, api_key, base_url=""):
     try:
         if provider == "anthropic":
             import anthropic
+
             return anthropic.AsyncAnthropic(api_key=api_key)
         import openai
+
         kwargs = {"api_key": api_key or "ollama"}
         if provider == "openai_compatible" and base_url:
             kwargs["base_url"] = base_url.strip()
@@ -114,8 +121,10 @@ def _build_sync_client(provider, api_key, base_url=""):
     try:
         if provider == "anthropic":
             import anthropic
+
             return anthropic.Anthropic(api_key=api_key)
         import openai
+
         kwargs = {"api_key": api_key or "ollama"}
         if provider == "openai_compatible" and base_url:
             kwargs["base_url"] = base_url.strip()
@@ -130,10 +139,19 @@ def _openai_create_sync(client, model, messages, stream, max_out=500):
     for extra in ({"max_tokens": max_out}, {"max_completion_tokens": max_out}, {}):
         try:
             return client.chat.completions.create(
-                model=model, messages=messages, stream=stream, **extra)
+                model=model, messages=messages, stream=stream, **extra
+            )
         except Exception as e:
             last = e
-            if any(x in str(e).lower() for x in ("max_tokens", "max_completion_tokens", "unsupported", "temperature")):
+            if any(
+                x in str(e).lower()
+                for x in (
+                    "max_tokens",
+                    "max_completion_tokens",
+                    "unsupported",
+                    "temperature",
+                )
+            ):
                 continue
             raise
     raise last
@@ -143,30 +161,52 @@ def _validate(provider, api_key, model, base_url=""):
     client = _build_sync_client(provider, api_key, base_url)
     if client is None:
         pkg = "anthropic" if provider == "anthropic" else "openai"
-        return False, f"Could not initialise the client. Is the '{pkg}' package installed?"
+        return (
+            False,
+            f"Could not initialise the client. Is the '{pkg}' package installed?",
+        )
     model = model or DEFAULT_MODELS.get(provider, "")
     if not model:
         return False, "Please choose a model."
     try:
         if provider == "anthropic":
             client.messages.create(
-                model=model, max_tokens=4,
-                messages=[{"role": "user", "content": "Reply with: ok"}])
+                model=model,
+                max_tokens=4,
+                messages=[{"role": "user", "content": "Reply with: ok"}],
+            )
         else:
-            _openai_create_sync(client, model,
-                                [{"role": "user", "content": "Reply with: ok"}],
-                                stream=False, max_out=4)
+            _openai_create_sync(
+                client,
+                model,
+                [{"role": "user", "content": "Reply with: ok"}],
+                stream=False,
+                max_out=4,
+            )
         return True, ""
     except Exception as e:
-        msg = str(e); low = msg.lower()
-        if "authentication" in low or "401" in low or ("invalid" in low and "key" in low):
+        msg = str(e)
+        low = msg.lower()
+        if (
+            "authentication" in low
+            or "401" in low
+            or ("invalid" in low and "key" in low)
+        ):
             return False, "That key was rejected. Check it and try again."
         if "404" in low or "not_found" in low or ("model" in low and "exist" in low):
             return False, f"The model '{model}' wasn't found for this key/provider."
-        if "credit" in low or "billing" in low or "quota" in low or "insufficient" in low:
+        if (
+            "credit" in low
+            or "billing" in low
+            or "quota" in low
+            or "insufficient" in low
+        ):
             return False, "The key is valid but the account has no available credit."
         if "connection" in low or "could not" in low or "getaddrinfo" in low:
-            return False, "Couldn't reach the endpoint. Check the base URL / your connection."
+            return (
+                False,
+                "Couldn't reach the endpoint. Check the base URL / your connection.",
+            )
         return False, f"Couldn't connect: {msg[:160]}"
 
 
@@ -183,16 +223,25 @@ async def lifespan(application: FastAPI):
     global _client, _provider
     _load_config()
     _provider = _config.get("provider", "anthropic")
-    _client   = _build_client(_provider, _config.get("api_key", ""), _config.get("base_url", ""))
+    _client = _build_client(
+        _provider, _config.get("api_key", ""), _config.get("base_url", "")
+    )
     if configured():
-        print(f"J.A.R.V.I.S. Starter Kit - online ({_provider} / {_config.get('model')}).", flush=True)
+        print(
+            f"J.A.R.V.I.S. Starter Kit - online ({_provider} / {_config.get('model')}).",
+            flush=True,
+        )
     else:
-        print("J.A.R.V.I.S. Starter Kit - no API key yet; the setup screen will ask for one.", flush=True)
+        print(
+            "J.A.R.V.I.S. Starter Kit - no API key yet; the setup screen will ask for one.",
+            flush=True,
+        )
     print("Open http://localhost:5000", flush=True)
     t1 = asyncio.create_task(_telemetry_loop())
     t2 = asyncio.create_task(_weather_loop())
     yield
-    t1.cancel(); t2.cancel()
+    t1.cancel()
+    t2.cancel()
 
 
 fast_app = FastAPI(lifespan=lifespan)
@@ -212,15 +261,15 @@ async def index(request: Request):
 async def api_status():
     return {
         "configured": configured(),
-        "provider":   _config.get("provider", "anthropic"),
-        "model":      _config.get("model", ""),
+        "provider": _config.get("provider", "anthropic"),
+        "model": _config.get("model", ""),
     }
 
 
 class ConfigPayload(BaseModel):
     provider: str = "anthropic"
-    key:      str = ""
-    model:    str = ""
+    key: str = ""
+    model: str = ""
     base_url: str = ""
 
 
@@ -228,8 +277,8 @@ class ConfigPayload(BaseModel):
 async def api_save_config(payload: ConfigPayload):
     global _client, _provider
     provider = payload.provider.strip()
-    key      = payload.key.strip()
-    model    = payload.model.strip()
+    key = payload.key.strip()
+    model = payload.model.strip()
     base_url = payload.base_url.strip()
 
     if provider not in VALID_PROVIDERS:
@@ -246,9 +295,11 @@ async def api_save_config(payload: ConfigPayload):
         return {"ok": False, "error": err}
 
     async with _client_lock:
-        _config.update({"provider": provider, "api_key": key, "model": model, "base_url": base_url})
+        _config.update(
+            {"provider": provider, "api_key": key, "model": model, "base_url": base_url}
+        )
         _save_config()
-        _client   = _build_client(provider, key, base_url)
+        _client = _build_client(provider, key, base_url)
         _provider = provider
     return {"ok": True}
 
@@ -271,7 +322,11 @@ def _build_system_prompt():
         if ctx.get("pressure_kpa"):
             parts.append(f"pressure: {ctx['pressure_kpa']} kPa")
         if parts:
-            system += "\n\nCURRENT ENVIRONMENT — use naturally when relevant, don't announce it unprompted:\n" + ", ".join(parts) + "."
+            system += (
+                "\n\nCURRENT ENVIRONMENT — use naturally when relevant, don't announce it unprompted:\n"
+                + ", ".join(parts)
+                + "."
+            )
     return system
 
 
@@ -280,10 +335,19 @@ async def _openai_stream_async(client, model, messages, max_out=500):
     for extra in ({"max_tokens": max_out}, {"max_completion_tokens": max_out}, {}):
         try:
             return await client.chat.completions.create(
-                model=model, messages=messages, stream=True, **extra)
+                model=model, messages=messages, stream=True, **extra
+            )
         except Exception as e:
             last = e
-            if any(x in str(e).lower() for x in ("max_tokens", "max_completion_tokens", "unsupported", "temperature")):
+            if any(
+                x in str(e).lower()
+                for x in (
+                    "max_tokens",
+                    "max_completion_tokens",
+                    "unsupported",
+                    "temperature",
+                )
+            ):
                 continue
             raise
     raise last
@@ -299,22 +363,23 @@ def _split_sentences(buf):
         if not m:
             break
         out.append(m.group(1).strip())
-        buf = buf[m.end():]
+        buf = buf[m.end() :]
     return out, buf
 
 
 async def _stream_reply(on_text):
     provider = _provider
-    model    = _config.get("model") or DEFAULT_MODELS.get(provider, "")
-    system   = _build_system_prompt()
+    model = _config.get("model") or DEFAULT_MODELS.get(provider, "")
+    system = _build_system_prompt()
 
     if provider == "anthropic":
         full = ""
         async with _client.messages.stream(
             model=model,
             max_tokens=500,
-            system=[{"type": "text", "text": system,
-                     "cache_control": {"type": "ephemeral"}}],
+            system=[
+                {"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}
+            ],
             messages=_conversation,
         ) as stream:
             async for delta in stream.text_stream:
@@ -323,7 +388,7 @@ async def _stream_reply(on_text):
         return full
 
     msgs = [{"role": "system", "content": system}] + _conversation
-    full   = ""
+    full = ""
     stream = await _openai_stream_async(_client, model, msgs)
     async for chunk in stream:
         try:
@@ -349,9 +414,9 @@ async def _process_message(text):
     if len(_conversation) > MAX_HISTORY:
         _conversation = _conversation[-MAX_HISTORY:]
 
-    seq      = 0
+    seq = 0
     sent_buf = ""
-    first    = True
+    first = True
 
     async def on_text(delta):
         nonlocal sent_buf, seq, first
@@ -393,8 +458,8 @@ async def _process_message(text):
 # ─── SOCKET.IO EVENTS ────────────────────────────────────────────────────────
 @sio.on("connect")
 async def on_connect(sid, environ, auth=None):
-    await sio.emit("status",       {"state": "idle"},              to=sid)
-    await sio.emit("config_state", {"configured": configured()},   to=sid)
+    await sio.emit("status", {"state": "idle"}, to=sid)
+    await sio.emit("config_state", {"configured": configured()}, to=sid)
 
 
 @sio.on("user_message")
@@ -416,32 +481,43 @@ async def _telemetry_loop():
         import psutil
         import time
     except Exception:
-        print("[TELEMETRY] psutil not installed - HUD panels will show placeholders.", flush=True)
+        print(
+            "[TELEMETRY] psutil not installed - HUD panels will show placeholders.",
+            flush=True,
+        )
         return
-    boot     = psutil.boot_time()
+    boot = psutil.boot_time()
     last_net = psutil.net_io_counters()
-    last_t   = asyncio.get_event_loop().time()
+    last_t = asyncio.get_event_loop().time()
     psutil.cpu_percent(interval=None)
     while True:
         await asyncio.sleep(1.5)
         try:
-            now  = asyncio.get_event_loop().time()
-            net  = psutil.net_io_counters()
-            dt   = max(now - last_t, 0.1)
+            now = asyncio.get_event_loop().time()
+            net = psutil.net_io_counters()
+            dt = max(now - last_t, 0.1)
             down = (net.bytes_recv - last_net.bytes_recv) * 8 / 1e6 / dt
-            up   = (net.bytes_sent - last_net.bytes_sent) * 8 / 1e6 / dt
-            pps  = int(((net.packets_recv + net.packets_sent) -
-                        (last_net.packets_recv + last_net.packets_sent)) / dt)
+            up = (net.bytes_sent - last_net.bytes_sent) * 8 / 1e6 / dt
+            pps = int(
+                (
+                    (net.packets_recv + net.packets_sent)
+                    - (last_net.packets_recv + last_net.packets_sent)
+                )
+                / dt
+            )
             last_net, last_t = net, now
-            await sio.emit("hud_update", {
-                "cpu":           round(psutil.cpu_percent(interval=None)),
-                "ram":           round(psutil.virtual_memory().percent),
-                "uptime_h":      round((time.time() - boot) / 3600, 2),
-                "net_down_mbps": round(max(down, 0), 1),
-                "net_up_mbps":   round(max(up, 0), 1),
-                "net_pps":       max(pps, 0),
-                "infer_active":  False,
-            })
+            await sio.emit(
+                "hud_update",
+                {
+                    "cpu": round(psutil.cpu_percent(interval=None)),
+                    "ram": round(psutil.virtual_memory().percent),
+                    "uptime_h": round((time.time() - boot) / 3600, 2),
+                    "net_down_mbps": round(max(down, 0), 1),
+                    "net_up_mbps": round(max(up, 0), 1),
+                    "net_pps": max(pps, 0),
+                    "infer_active": False,
+                },
+            )
         except Exception:
             pass
 
@@ -452,7 +528,8 @@ async def _weather_loop():
             async with httpx.AsyncClient(timeout=8) as client:
                 loc_r = await client.get(
                     "http://ip-api.com/json/",
-                    headers={"User-Agent": "JARVIS-Starter/1.0"})
+                    headers={"User-Agent": "JARVIS-Starter/1.0"},
+                )
                 loc = loc_r.json()
                 lat, lon = loc.get("lat"), loc.get("lon")
                 if lat is not None and lon is not None:
@@ -461,19 +538,40 @@ async def _weather_loop():
                         f"?latitude={lat}&longitude={lon}"
                         f"&current=temperature_2m,surface_pressure,weather_code"
                         f"&temperature_unit=fahrenheit",
-                        headers={"User-Agent": "JARVIS-Starter/1.0"})
-                    cur  = wx_r.json().get("current", {})
+                        headers={"User-Agent": "JARVIS-Starter/1.0"},
+                    )
+                    cur = wx_r.json().get("current", {})
                     code = cur.get("weather_code", 0)
-                    cond = {0: "Clear", 1: "Mainly clear", 2: "Partly cloudy", 3: "Overcast",
-                            45: "Fog", 48: "Fog", 51: "Drizzle", 61: "Rain", 63: "Rain",
-                            65: "Heavy rain", 71: "Snow", 73: "Snow", 80: "Showers",
-                            95: "Thunderstorm"}.get(code, "—")
+                    cond = {
+                        0: "Clear",
+                        1: "Mainly clear",
+                        2: "Partly cloudy",
+                        3: "Overcast",
+                        45: "Fog",
+                        48: "Fog",
+                        51: "Drizzle",
+                        61: "Rain",
+                        63: "Rain",
+                        65: "Heavy rain",
+                        71: "Snow",
+                        73: "Snow",
+                        80: "Showers",
+                        95: "Thunderstorm",
+                    }.get(code, "—")
                     weather_data = {
-                        "temp_f":       round(cur["temperature_2m"]) if cur.get("temperature_2m") is not None else None,
-                        "pressure_kpa": round(cur["surface_pressure"] / 10, 1) if cur.get("surface_pressure") else None,
-                        "city":         loc.get("city", "—"),
-                        "region":       loc.get("region", ""),
-                        "condition":    cond,
+                        "temp_f": (
+                            round(cur["temperature_2m"])
+                            if cur.get("temperature_2m") is not None
+                            else None
+                        ),
+                        "pressure_kpa": (
+                            round(cur["surface_pressure"] / 10, 1)
+                            if cur.get("surface_pressure")
+                            else None
+                        ),
+                        "city": loc.get("city", "—"),
+                        "region": loc.get("region", ""),
+                        "condition": cond,
                     }
                     _location_context.update(weather_data)
                     await sio.emit("weather_update", weather_data)

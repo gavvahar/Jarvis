@@ -1,221 +1,438 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
-<head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>J·A·R·V·I·S — Starter Kit</title>
-<link rel="preconnect" href="https://fonts.googleapis.com" />
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-<link href="https://fonts.googleapis.com/css2?family=Oxanium:wght@300;400;500&family=Share+Tech+Mono&display=swap" rel="stylesheet" />
-<link rel="stylesheet" href="/static/v2/styles.css?v=1" />
-<link rel="stylesheet" href="/static/v2/starter.css?v=1" />
-<!-- vendored locally so the orb + comms work with no internet -->
-<script src="/static/v2/vendor/three.min.js"></script>
-<script src="/static/v2/vendor/socket.io.min.js"></script>
-<!-- Tune the orb for ordinary / GPU-less machines: fewer particles + a gentle
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>J·A·R·V·I·S — Starter Kit</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Oxanium:wght@300;400;500&family=Share+Tech+Mono&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/static/v2/styles.css?v=1" />
+    <link rel="stylesheet" href="/static/v2/starter.css?v=1" />
+    <!-- vendored locally so the orb + comms work with no internet -->
+    <script src="/static/v2/vendor/three.min.js"></script>
+    <script src="/static/v2/vendor/socket.io.min.js"></script>
+    <!-- Tune the orb for ordinary / GPU-less machines: fewer particles + a gentle
      frame cap. The full JARVIS uses 60k; 18k looks nearly identical and runs
      smoothly on integrated graphics (or the WebGL software renderer). -->
-<script>
-  window.__orbCount = 18000;
-  window.__orbMaxFps = 45;
-  window.__device = 'pc';
-</script>
-</head>
-<body class="mode-standby" data-tab="Standby Tab">
-<div id="stage">
+    <script>
+      window.__orbCount = 18000;
+      window.__orbMaxFps = 45;
+      window.__device = "pc";
+    </script>
+  </head>
+  <body class="mode-standby" data-tab="Standby Tab">
+    <div id="stage">
+      <!-- ============ FIRST-RUN SETUP (choose provider + model + key) ============ -->
+      <div id="setup" class="setup-hidden">
+        <div id="setup-card">
+          <div class="setup-ring"></div>
+          <div class="setup-word">J.A.R.V.I.S.</div>
+          <div class="setup-sub">INITIAL CONFIGURATION</div>
+          <p class="setup-lead">
+            Good day, sir. Choose the intelligence you'd like me to run on, then
+            provide its key.
+          </p>
+          <form id="setup-form" autocomplete="off">
+            <label class="setup-label" for="setup-provider">PROVIDER</label>
+            <select id="setup-provider">
+              <option value="anthropic">Anthropic — Claude</option>
+              <option value="openai">OpenAI — GPT</option>
+              <option value="openai_compatible">
+                Other (OpenAI-compatible: OpenRouter, Groq, local…)
+              </option>
+            </select>
 
-  <!-- ============ FIRST-RUN SETUP (choose provider + model + key) ============ -->
-  <div id="setup" class="setup-hidden">
-    <div id="setup-card">
-      <div class="setup-ring"></div>
-      <div class="setup-word">J.A.R.V.I.S.</div>
-      <div class="setup-sub">INITIAL CONFIGURATION</div>
-      <p class="setup-lead">Good day, sir. Choose the intelligence you'd like me to run on, then provide its key.</p>
-      <form id="setup-form" autocomplete="off">
-        <label class="setup-label" for="setup-provider">PROVIDER</label>
-        <select id="setup-provider">
-          <option value="anthropic">Anthropic — Claude</option>
-          <option value="openai">OpenAI — GPT</option>
-          <option value="openai_compatible">Other (OpenAI-compatible: OpenRouter, Groq, local…)</option>
-        </select>
+            <label class="setup-label" for="setup-model">MODEL</label>
+            <select id="setup-model"></select>
+            <input
+              id="setup-model-custom"
+              class="setup-hidden-field"
+              type="text"
+              placeholder="model name (e.g. llama-3.3-70b)"
+              autocomplete="off"
+              spellcheck="false"
+            />
 
-        <label class="setup-label" for="setup-model">MODEL</label>
-        <select id="setup-model"></select>
-        <input id="setup-model-custom" class="setup-hidden-field" type="text" placeholder="model name (e.g. llama-3.3-70b)" autocomplete="off" spellcheck="false" />
+            <input
+              id="setup-baseurl"
+              class="setup-hidden-field"
+              type="text"
+              placeholder="Base URL (e.g. https://openrouter.ai/api/v1)"
+              autocomplete="off"
+              spellcheck="false"
+            />
 
-        <input id="setup-baseurl" class="setup-hidden-field" type="text" placeholder="Base URL (e.g. https://openrouter.ai/api/v1)" autocomplete="off" spellcheck="false" />
-
-        <label class="setup-label" for="setup-key">API KEY</label>
-        <div class="setup-keyrow">
-          <input id="setup-key" type="password" placeholder="sk-..." autocomplete="off" spellcheck="false" />
-          <button type="submit" id="setup-go">CONNECT</button>
+            <label class="setup-label" for="setup-key">API KEY</label>
+            <div class="setup-keyrow">
+              <input
+                id="setup-key"
+                type="password"
+                placeholder="sk-..."
+                autocomplete="off"
+                spellcheck="false"
+              />
+              <button type="submit" id="setup-go">CONNECT</button>
+            </div>
+          </form>
+          <div id="setup-msg"></div>
+          <a
+            class="setup-help"
+            id="setup-help"
+            href="https://console.anthropic.com/settings/keys"
+            target="_blank"
+            rel="noopener"
+          >
+            Get an Anthropic key →
+          </a>
         </div>
-      </form>
-      <div id="setup-msg"></div>
-      <a class="setup-help" id="setup-help" href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">
-        Get an Anthropic key →
-      </a>
+      </div>
+
+      <!-- ============ BACKGROUND ============ -->
+      <div id="grid"></div>
+      <div id="schematics" data-depth="8">
+        <svg
+          class="schem fade-a"
+          style="left: 6%; top: 14%; width: 300px; height: 300px"
+          viewBox="0 0 300 300"
+        >
+          <circle cx="150" cy="150" r="120" stroke-dasharray="2 6" />
+          <circle cx="150" cy="150" r="92" />
+          <circle cx="150" cy="150" r="60" stroke-dasharray="4 4" />
+          <line x1="0" y1="150" x2="300" y2="150" />
+          <line x1="150" y1="0" x2="150" y2="300" />
+          <circle cx="150" cy="30" r="4" />
+          <circle cx="270" cy="150" r="4" />
+          <text
+            x="158"
+            y="44"
+            fill="rgba(127,233,255,.4)"
+            font-size="9"
+            font-family="Share Tech Mono"
+          >
+            θ 047.2
+          </text>
+        </svg>
+        <svg
+          class="schem fade-b"
+          style="right: 5%; top: 20%; width: 260px; height: 340px"
+          viewBox="0 0 260 340"
+        >
+          <rect x="40" y="30" width="180" height="280" stroke-dasharray="3 5" />
+          <line x1="40" y1="90" x2="220" y2="90" />
+          <line x1="40" y1="170" x2="220" y2="170" />
+          <line x1="40" y1="250" x2="220" y2="250" />
+          <circle cx="130" cy="130" r="34" />
+          <circle cx="130" cy="130" r="20" stroke-dasharray="2 3" />
+          <text
+            x="48"
+            y="24"
+            fill="rgba(127,233,255,.4)"
+            font-size="9"
+            font-family="Share Tech Mono"
+          >
+            FIG.II — CORE ASSY
+          </text>
+          <line x1="130" y1="96" x2="130" y2="164" />
+          <line x1="96" y1="130" x2="164" y2="130" />
+        </svg>
+        <svg
+          class="schem fade-c"
+          style="left: 8%; bottom: 8%; width: 320px; height: 240px"
+          viewBox="0 0 320 240"
+        >
+          <path
+            d="M10 200 L80 120 L150 150 L220 60 L310 100"
+            stroke-dasharray="4 4"
+          />
+          <line x1="10" y1="220" x2="310" y2="220" />
+          <line x1="10" y1="20" x2="10" y2="220" />
+          <circle cx="80" cy="120" r="3" />
+          <circle cx="150" cy="150" r="3" />
+          <circle cx="220" cy="60" r="3" />
+          <text
+            x="14"
+            y="16"
+            fill="rgba(127,233,255,.4)"
+            font-size="9"
+            font-family="Share Tech Mono"
+          >
+            SPECTRAL TRACE 9.1kHz
+          </text>
+        </svg>
+        <svg
+          class="schem fade-a"
+          style="right: 9%; bottom: 12%; width: 240px; height: 240px"
+          viewBox="0 0 240 240"
+        >
+          <polygon
+            points="120,20 210,75 210,165 120,220 30,165 30,75"
+            stroke-dasharray="3 4"
+          />
+          <polygon points="120,60 175,92 175,150 120,182 65,150 65,92" />
+          <circle cx="120" cy="121" r="6" />
+          <text
+            x="40"
+            y="234"
+            fill="rgba(127,233,255,.4)"
+            font-size="9"
+            font-family="Share Tech Mono"
+          >
+            CONTAINMENT LATTICE
+          </text>
+        </svg>
+      </div>
+
+      <!-- ============ ORB CLUSTER (orb + rings) ============ -->
+      <div id="orb-cluster">
+        <div class="parallax">
+          <div id="core-bloom"></div>
+          <canvas id="neural"></canvas>
+        </div>
+        <div id="hud"></div>
+      </div>
+
+      <!-- ============ FRAME / BARS ============ -->
+      <div class="bracket bk-tl"></div>
+      <div class="bracket bk-tr"></div>
+      <div class="bracket bk-bl"></div>
+      <div class="bracket bk-br"></div>
+
+      <div id="topbar" class="boot">
+        <span><span class="dot-live"></span></span>
+        <span class="sys-name">J·A·R·V·I·S</span>
+        <span>STARTER KIT</span>
+        <span>v1.0</span>
+        <span id="top-hex">0x7F3A1</span>
+        <span
+          >STATUS&nbsp;:&nbsp;<span
+            id="top-status"
+            style="color: var(--cyan-bright)"
+            >ONLINE</span
+          ></span
+        >
+      </div>
+
+      <!-- ============ TELEMETRY PANELS ============ -->
+      <div
+        class="panel boot"
+        style="top: 96px; left: 34px; animation-delay: 0.3s"
+        data-depth="22"
+      >
+        <div class="p-head">SYSTEM DIAGNOSTICS</div>
+        <div class="p-row">
+          <span>CORE LOAD</span><span class="v" id="val-cpu">—</span>
+        </div>
+        <div class="bar"><i id="fill-cpu"></i></div>
+        <div class="p-row">
+          <span>MEMORY ALLOC</span><span class="v" id="val-ram">—</span>
+        </div>
+        <div class="bar"><i id="fill-ram"></i></div>
+        <div class="p-row">
+          <span>GPU THERMAL</span><span class="v" id="val-thermal">—</span>
+        </div>
+        <div class="p-row">
+          <span>UPTIME (h)</span><span class="v" id="val-uptime">—</span>
+        </div>
+      </div>
+
+      <div
+        class="panel boot"
+        style="top: 300px; left: 34px; animation-delay: 0.54s"
+        data-depth="18"
+      >
+        <div class="p-head">NEURAL ACTIVITY</div>
+        <div class="p-row">
+          <span>SYNAPTIC RATE</span><span class="v" id="neural-val">—</span>
+        </div>
+        <div class="bar"><i id="neural-bar" style="width: 0%"></i></div>
+        <div class="p-row">
+          <span>GPU LOAD</span><span class="v" id="val-gpu">—</span>
+        </div>
+        <div class="p-row">
+          <span>VRAM</span><span class="v" id="val-vram">—</span>
+        </div>
+        <div class="p-row">
+          <span>INFERENCE</span><span class="v amber" id="val-tps">—</span>
+        </div>
+      </div>
+
+      <div
+        class="panel right boot"
+        style="
+          top: 96px;
+          right: 34px;
+          text-align: left;
+          min-width: 210px;
+          animation-delay: 0.42s;
+        "
+        data-depth="22"
+      >
+        <div class="p-head">NETWORK TRAFFIC</div>
+        <svg
+          id="spark"
+          viewBox="0 0 200 46"
+          style="width: 200px; height: 46px; display: block; margin-bottom: 8px"
+        ></svg>
+        <div class="p-row">
+          <span>DOWN Mb/s</span><span class="v" id="val-down">—</span>
+        </div>
+        <div class="p-row">
+          <span>UP Mb/s</span><span class="v" id="val-up">—</span>
+        </div>
+        <div class="p-row">
+          <span>PACKETS/s</span><span class="v" id="val-pps">—</span>
+        </div>
+        <div class="p-row">
+          <span>LATENCY ms</span><span class="v" id="val-latency">—</span>
+        </div>
+      </div>
+
+      <div
+        class="panel right boot"
+        style="
+          top: 300px;
+          right: 34px;
+          min-width: 210px;
+          animation-delay: 0.66s;
+        "
+        data-depth="18"
+      >
+        <div class="p-head">ACTIVE MODULES</div>
+        <div class="p-row">
+          <span>LANG.MODEL</span><span class="v" id="mod-lang">RUN</span>
+        </div>
+        <div class="p-row">
+          <span>VOICE.SYNTH</span><span class="v" id="mod-voice">SYNC</span>
+        </div>
+        <div class="p-row">
+          <span>SPEECH.IN</span><span class="v" id="mod-stt">READY</span>
+        </div>
+        <div class="p-row">
+          <span>LINK</span><span class="v amber" id="mod-link">CLAUDE</span>
+        </div>
+        <div class="p-row">
+          <span>SECURE</span><span class="v" id="mod-sec">AES-512</span>
+        </div>
+      </div>
+
+      <div
+        class="panel boot"
+        style="left: 34px; bottom: 120px; animation-delay: 0.78s"
+        data-depth="16"
+      >
+        <div class="p-head">VOICE PROCESSING</div>
+        <div id="voice"></div>
+        <div class="p-row" style="margin-top: 8px">
+          <span>SIGNAL</span><span class="v" id="val-gain">—</span>
+        </div>
+        <div class="p-row">
+          <span>RECOGNITION</span><span class="v" id="val-recog">STANDBY</span>
+        </div>
+      </div>
+
+      <div
+        class="panel right boot"
+        style="
+          right: 34px;
+          bottom: 120px;
+          min-width: 210px;
+          animation-delay: 0.9s;
+        "
+        data-depth="16"
+      >
+        <div class="p-head">ENVIRONMENT</div>
+        <div class="p-row">
+          <span>AMBIENT TEMP</span><span class="v" id="val-temp">—</span>
+        </div>
+        <div class="p-row">
+          <span>PRESSURE kPa</span><span class="v" id="val-pressure">—</span>
+        </div>
+        <div class="p-row">
+          <span>LOCATION</span><span class="v" id="val-geo">—</span>
+        </div>
+        <div class="p-row">
+          <span>CONDITION</span><span class="v amber" id="val-sat">—</span>
+        </div>
+      </div>
+
+      <div id="bottombar" class="boot">
+        <span class="seg on"><span class="dot-live"></span>CORE STABLE</span>
+        <span class="seg">ENCRYPTION AES-512</span>
+        <span class="seg on">NEURAL LINK ACTIVE</span>
+        <span class="seg">PROTOCOL // SENTINEL</span>
+        <span class="seg on">ALL SYSTEMS NOMINAL</span>
+      </div>
+
+      <!-- ============ STANDBY OVERLAY ============ -->
+      <div id="standby" data-screen-label="Standby Tab">
+        <div class="sb-aurora"></div>
+        <div id="standby-rings"></div>
+        <div class="standby-core">
+          <div class="sb-clock">
+            <span id="sb-time">--:--</span
+            ><span class="sec" id="sb-sec">00</span>
+          </div>
+          <div class="jarvis-word">J.A.R.V.I.S.</div>
+          <div class="jarvis-sub">JUST A RATHER VERY INTELLIGENT SYSTEM</div>
+          <div class="sb-date" id="sb-date">—</div>
+        </div>
+        <div class="standby-tag">
+          <span class="dot-dormant"></span
+          >STANDBY&nbsp;&nbsp;·&nbsp;&nbsp;SYSTEMS
+          DORMANT&nbsp;&nbsp;·&nbsp;&nbsp;SAY&nbsp;“JARVIS”&nbsp;TO WAKE
+        </div>
+      </div>
+
+      <!-- ============ COMMS / DIRECT LINK (Chat — toggle with C) ============ -->
+      <div id="chat-panel" class="chat-hidden" data-screen-label="Chat Tab">
+        <div class="chat-head" id="chat-head">
+          <span class="chat-title"
+            ><span class="chat-dot"></span>DIRECT LINK · SECURE</span
+          >
+          <span class="chat-grip" aria-hidden="true"></span>
+          <button class="chat-close" id="chat-close" aria-label="Close comms">
+            <svg viewBox="0 0 16 16" width="13" height="13">
+              <path
+                d="M3 3 L13 13 M13 3 L3 13"
+                stroke="currentColor"
+                stroke-width="1.6"
+                fill="none"
+              />
+            </svg>
+          </button>
+        </div>
+        <div class="chat-log" id="chat-log"></div>
+        <div class="chat-typing" id="chat-typing">
+          <span></span><span></span><span></span>
+        </div>
+        <form class="chat-input" id="chat-form" autocomplete="off">
+          <input
+            id="chat-text"
+            type="text"
+            placeholder="Message J.A.R.V.I.S…"
+            autocomplete="off"
+          />
+          <button type="submit" class="chat-send" aria-label="Send">
+            <svg viewBox="0 0 20 20" width="16" height="16">
+              <path d="M2 10 L18 3 L11 18 L9 11 Z" fill="currentColor" />
+            </svg>
+          </button>
+        </form>
+      </div>
+
+      <!-- film overlays -->
+      <div id="mode-flash"></div>
+      <div id="fx"></div>
     </div>
-  </div>
 
-  <!-- ============ BACKGROUND ============ -->
-  <div id="grid"></div>
-  <div id="schematics" data-depth="8">
-    <svg class="schem fade-a" style="left:6%;top:14%;width:300px;height:300px" viewBox="0 0 300 300">
-      <circle cx="150" cy="150" r="120" stroke-dasharray="2 6"/>
-      <circle cx="150" cy="150" r="92"/>
-      <circle cx="150" cy="150" r="60" stroke-dasharray="4 4"/>
-      <line x1="0" y1="150" x2="300" y2="150"/><line x1="150" y1="0" x2="150" y2="300"/>
-      <circle cx="150" cy="30" r="4"/><circle cx="270" cy="150" r="4"/>
-      <text x="158" y="44" fill="rgba(127,233,255,.4)" font-size="9" font-family="Share Tech Mono">θ 047.2</text>
-    </svg>
-    <svg class="schem fade-b" style="right:5%;top:20%;width:260px;height:340px" viewBox="0 0 260 340">
-      <rect x="40" y="30" width="180" height="280" stroke-dasharray="3 5"/>
-      <line x1="40" y1="90" x2="220" y2="90"/><line x1="40" y1="170" x2="220" y2="170"/><line x1="40" y1="250" x2="220" y2="250"/>
-      <circle cx="130" cy="130" r="34"/><circle cx="130" cy="130" r="20" stroke-dasharray="2 3"/>
-      <text x="48" y="24" fill="rgba(127,233,255,.4)" font-size="9" font-family="Share Tech Mono">FIG.II — CORE ASSY</text>
-      <line x1="130" y1="96" x2="130" y2="164"/><line x1="96" y1="130" x2="164" y2="130"/>
-    </svg>
-    <svg class="schem fade-c" style="left:8%;bottom:8%;width:320px;height:240px" viewBox="0 0 320 240">
-      <path d="M10 200 L80 120 L150 150 L220 60 L310 100" stroke-dasharray="4 4"/>
-      <line x1="10" y1="220" x2="310" y2="220"/><line x1="10" y1="20" x2="10" y2="220"/>
-      <circle cx="80" cy="120" r="3"/><circle cx="150" cy="150" r="3"/><circle cx="220" cy="60" r="3"/>
-      <text x="14" y="16" fill="rgba(127,233,255,.4)" font-size="9" font-family="Share Tech Mono">SPECTRAL TRACE 9.1kHz</text>
-    </svg>
-    <svg class="schem fade-a" style="right:9%;bottom:12%;width:240px;height:240px" viewBox="0 0 240 240">
-      <polygon points="120,20 210,75 210,165 120,220 30,165 30,75" stroke-dasharray="3 4"/>
-      <polygon points="120,60 175,92 175,150 120,182 65,150 65,92"/>
-      <circle cx="120" cy="121" r="6"/>
-      <text x="40" y="234" fill="rgba(127,233,255,.4)" font-size="9" font-family="Share Tech Mono">CONTAINMENT LATTICE</text>
-    </svg>
-  </div>
-
-  <!-- ============ ORB CLUSTER (orb + rings) ============ -->
-  <div id="orb-cluster">
-    <div class="parallax">
-      <div id="core-bloom"></div>
-      <canvas id="neural"></canvas>
-    </div>
-    <div id="hud"></div>
-  </div>
-
-  <!-- ============ FRAME / BARS ============ -->
-  <div class="bracket bk-tl"></div>
-  <div class="bracket bk-tr"></div>
-  <div class="bracket bk-bl"></div>
-  <div class="bracket bk-br"></div>
-
-  <div id="topbar" class="boot">
-    <span><span class="dot-live"></span></span>
-    <span class="sys-name">J·A·R·V·I·S</span>
-    <span>STARTER KIT</span>
-    <span>v1.0</span>
-    <span id="top-hex">0x7F3A1</span>
-    <span>STATUS&nbsp;:&nbsp;<span id="top-status" style="color:var(--cyan-bright)">ONLINE</span></span>
-  </div>
-
-  <!-- ============ TELEMETRY PANELS ============ -->
-  <div class="panel boot" style="top:96px;left:34px;animation-delay:.3s" data-depth="22">
-    <div class="p-head">SYSTEM DIAGNOSTICS</div>
-    <div class="p-row"><span>CORE LOAD</span><span class="v" id="val-cpu">—</span></div>
-    <div class="bar"><i id="fill-cpu"></i></div>
-    <div class="p-row"><span>MEMORY ALLOC</span><span class="v" id="val-ram">—</span></div>
-    <div class="bar"><i id="fill-ram"></i></div>
-    <div class="p-row"><span>GPU THERMAL</span><span class="v" id="val-thermal">—</span></div>
-    <div class="p-row"><span>UPTIME (h)</span><span class="v" id="val-uptime">—</span></div>
-  </div>
-
-  <div class="panel boot" style="top:300px;left:34px;animation-delay:.54s" data-depth="18">
-    <div class="p-head">NEURAL ACTIVITY</div>
-    <div class="p-row"><span>SYNAPTIC RATE</span><span class="v" id="neural-val">—</span></div>
-    <div class="bar"><i id="neural-bar" style="width:0%"></i></div>
-    <div class="p-row"><span>GPU LOAD</span><span class="v" id="val-gpu">—</span></div>
-    <div class="p-row"><span>VRAM</span><span class="v" id="val-vram">—</span></div>
-    <div class="p-row"><span>INFERENCE</span><span class="v amber" id="val-tps">—</span></div>
-  </div>
-
-  <div class="panel right boot" style="top:96px;right:34px;text-align:left;min-width:210px;animation-delay:.42s" data-depth="22">
-    <div class="p-head">NETWORK TRAFFIC</div>
-    <svg id="spark" viewBox="0 0 200 46" style="width:200px;height:46px;display:block;margin-bottom:8px"></svg>
-    <div class="p-row"><span>DOWN Mb/s</span><span class="v" id="val-down">—</span></div>
-    <div class="p-row"><span>UP Mb/s</span><span class="v" id="val-up">—</span></div>
-    <div class="p-row"><span>PACKETS/s</span><span class="v" id="val-pps">—</span></div>
-    <div class="p-row"><span>LATENCY ms</span><span class="v" id="val-latency">—</span></div>
-  </div>
-
-  <div class="panel right boot" style="top:300px;right:34px;min-width:210px;animation-delay:.66s" data-depth="18">
-    <div class="p-head">ACTIVE MODULES</div>
-    <div class="p-row"><span>LANG.MODEL</span><span class="v" id="mod-lang">RUN</span></div>
-    <div class="p-row"><span>VOICE.SYNTH</span><span class="v" id="mod-voice">SYNC</span></div>
-    <div class="p-row"><span>SPEECH.IN</span><span class="v" id="mod-stt">READY</span></div>
-    <div class="p-row"><span>LINK</span><span class="v amber" id="mod-link">CLAUDE</span></div>
-    <div class="p-row"><span>SECURE</span><span class="v" id="mod-sec">AES-512</span></div>
-  </div>
-
-  <div class="panel boot" style="left:34px;bottom:120px;animation-delay:.78s" data-depth="16">
-    <div class="p-head">VOICE PROCESSING</div>
-    <div id="voice"></div>
-    <div class="p-row" style="margin-top:8px"><span>SIGNAL</span><span class="v" id="val-gain">—</span></div>
-    <div class="p-row"><span>RECOGNITION</span><span class="v" id="val-recog">STANDBY</span></div>
-  </div>
-
-  <div class="panel right boot" style="right:34px;bottom:120px;min-width:210px;animation-delay:.9s" data-depth="16">
-    <div class="p-head">ENVIRONMENT</div>
-    <div class="p-row"><span>AMBIENT TEMP</span><span class="v" id="val-temp">—</span></div>
-    <div class="p-row"><span>PRESSURE kPa</span><span class="v" id="val-pressure">—</span></div>
-    <div class="p-row"><span>LOCATION</span><span class="v" id="val-geo">—</span></div>
-    <div class="p-row"><span>CONDITION</span><span class="v amber" id="val-sat">—</span></div>
-  </div>
-
-  <div id="bottombar" class="boot">
-    <span class="seg on"><span class="dot-live"></span>CORE STABLE</span>
-    <span class="seg">ENCRYPTION AES-512</span>
-    <span class="seg on">NEURAL LINK ACTIVE</span>
-    <span class="seg">PROTOCOL // SENTINEL</span>
-    <span class="seg on">ALL SYSTEMS NOMINAL</span>
-  </div>
-
-  <!-- ============ STANDBY OVERLAY ============ -->
-  <div id="standby" data-screen-label="Standby Tab">
-    <div class="sb-aurora"></div>
-    <div id="standby-rings"></div>
-    <div class="standby-core">
-      <div class="sb-clock"><span id="sb-time">--:--</span><span class="sec" id="sb-sec">00</span></div>
-      <div class="jarvis-word">J.A.R.V.I.S.</div>
-      <div class="jarvis-sub">JUST A RATHER VERY INTELLIGENT SYSTEM</div>
-      <div class="sb-date" id="sb-date">—</div>
-    </div>
-    <div class="standby-tag"><span class="dot-dormant"></span>STANDBY&nbsp;&nbsp;·&nbsp;&nbsp;SYSTEMS DORMANT&nbsp;&nbsp;·&nbsp;&nbsp;SAY&nbsp;“JARVIS”&nbsp;TO WAKE</div>
-  </div>
-
-  <!-- ============ COMMS / DIRECT LINK (Chat — toggle with C) ============ -->
-  <div id="chat-panel" class="chat-hidden" data-screen-label="Chat Tab">
-    <div class="chat-head" id="chat-head">
-      <span class="chat-title"><span class="chat-dot"></span>DIRECT LINK · SECURE</span>
-      <span class="chat-grip" aria-hidden="true"></span>
-      <button class="chat-close" id="chat-close" aria-label="Close comms">
-        <svg viewBox="0 0 16 16" width="13" height="13"><path d="M3 3 L13 13 M13 3 L3 13" stroke="currentColor" stroke-width="1.6" fill="none"/></svg>
-      </button>
-    </div>
-    <div class="chat-log" id="chat-log"></div>
-    <div class="chat-typing" id="chat-typing"><span></span><span></span><span></span></div>
-    <form class="chat-input" id="chat-form" autocomplete="off">
-      <input id="chat-text" type="text" placeholder="Message J.A.R.V.I.S…" autocomplete="off" />
-      <button type="submit" class="chat-send" aria-label="Send">
-        <svg viewBox="0 0 20 20" width="16" height="16"><path d="M2 10 L18 3 L11 18 L9 11 Z" fill="currentColor"/></svg>
-      </button>
-    </form>
-  </div>
-
-  <!-- film overlays -->
-  <div id="mode-flash"></div>
-  <div id="fx"></div>
-</div>
-
-<script src="/static/v2/js/sphere.js?v=1"></script>
-<script src="/static/v2/js/hud.js?v=1"></script>
-<script src="/static/v2/js/standby.js?v=1"></script>
-<script src="/static/v2/js/chat.js?v=1"></script>
-<script src="/static/v2/js/app.js?v=1"></script>
-</body>
+    <script src="/static/v2/js/sphere.js?v=1"></script>
+    <script src="/static/v2/js/hud.js?v=1"></script>
+    <script src="/static/v2/js/standby.js?v=1"></script>
+    <script src="/static/v2/js/chat.js?v=1"></script>
+    <script src="/static/v2/js/app.js?v=1"></script>
+  </body>
 </html>

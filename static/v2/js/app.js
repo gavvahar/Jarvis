@@ -14,13 +14,20 @@
      window.__chat / window.__sendMessage  (chat.js)
    =========================================================== */
 (function () {
-  'use strict';
+  "use strict";
 
   const $ = (id) => document.getElementById(id);
 
-  window.__speech = { speaking: false, listening: false, level: 0, bass: 0, mid: 0, high: 0 };
-  window.__recognition = 'CONNECTING…';
-  document.body.classList.add('stats-open');   // show the HUD panels on the awake screen
+  window.__speech = {
+    speaking: false,
+    listening: false,
+    level: 0,
+    bass: 0,
+    mid: 0,
+    high: 0,
+  };
+  window.__recognition = "CONNECTING…";
+  document.body.classList.add("stats-open"); // show the HUD panels on the awake screen
 
   // ===================================================================
   //  SOCKET.IO
@@ -34,11 +41,14 @@
   let _standby = true;
   function applyMode() {
     if (_standby) {
-      window.__setMode('standby', true);
-      window.__recognition = _configured ? 'STANDBY — SAY “JARVIS”' : 'AWAITING SETUP';
+      window.__setMode("standby", true);
+      window.__recognition = _configured
+        ? "STANDBY — SAY “JARVIS”"
+        : "AWAITING SETUP";
     } else {
-      window.__setMode('awake', true);
-      window.__recognition = _vizState === 'idle' ? 'LISTENING…' : (RECOG[_vizState] || 'LISTENING…');
+      window.__setMode("awake", true);
+      window.__recognition =
+        _vizState === "idle" ? "LISTENING…" : RECOG[_vizState] || "LISTENING…";
     }
   }
   function wake() {
@@ -52,8 +62,13 @@
     applyMode();
   }
 
-  const RECOG = { idle: 'LISTENING…', listening: 'LISTENING', thinking: 'PROCESSING', speaking: 'RESPONDING' };
-  let _vizState = 'idle';
+  const RECOG = {
+    idle: "LISTENING…",
+    listening: "LISTENING",
+    thinking: "PROCESSING",
+    speaking: "RESPONDING",
+  };
+  let _vizState = "idle";
 
   // ===================================================================
   //  TEXT-TO-SPEECH  —  Windows voices via the browser
@@ -65,12 +80,12 @@
     const voices = synth.getVoices();
     if (!voices.length) return;
     const score = (v) => {
-      const n = (v.name || '').toLowerCase();
+      const n = (v.name || "").toLowerCase();
       let s = 0;
-      if (v.lang && v.lang.toLowerCase().startsWith('en')) s += 4;
-      if (v.lang && v.lang.toLowerCase() === 'en-gb') s += 3;             // JARVIS is British
-      if (/(david|george|ryan|guy|james|thomas|daniel)/.test(n)) s += 3;  // male voices
-      if (n.includes('microsoft')) s += 1;
+      if (v.lang && v.lang.toLowerCase().startsWith("en")) s += 4;
+      if (v.lang && v.lang.toLowerCase() === "en-gb") s += 3; // JARVIS is British
+      if (/(david|george|ryan|guy|james|thomas|daniel)/.test(n)) s += 3; // male voices
+      if (n.includes("microsoft")) s += 1;
       return s;
     };
     _voice = voices.slice().sort((a, b) => score(b) - score(a))[0] || voices[0];
@@ -81,10 +96,11 @@
   }
 
   // sentence queue → spoken one at a time, with a synthetic orb envelope while speaking
-  let _ttsQ = [], _ttsActive = false;
+  let _ttsQ = [],
+    _ttsActive = false;
   function speak(text) {
     if (!text) return;
-    if (!synth) return;                 // no speech synthesis → silent (chat still shows text)
+    if (!synth) return; // no speech synthesis → silent (chat still shows text)
     _ttsQ.push(text);
     if (!_ttsActive) _ttsNext();
   }
@@ -92,8 +108,8 @@
     if (_ttsQ.length === 0) {
       _ttsActive = false;
       _speaking = false;
-      if (!_standby) window.__recognition = 'LISTENING…';
-      _vizState = 'idle';
+      if (!_standby) window.__recognition = "LISTENING…";
+      _vizState = "idle";
       return;
     }
     _ttsActive = true;
@@ -101,35 +117,57 @@
     const text = _ttsQ.shift();
     const u = new SpeechSynthesisUtterance(text);
     if (_voice) u.voice = _voice;
-    u.rate = 1.0; u.pitch = 1.0; u.volume = 1.0;
-    u.onboundary = () => { _wordPunch = 1; };     // a little orb kick per word
-    u.onend = () => { _ttsNext(); };
-    u.onerror = () => { _ttsNext(); };
-    try { synth.speak(u); } catch (e) { _ttsNext(); }
+    u.rate = 1.0;
+    u.pitch = 1.0;
+    u.volume = 1.0;
+    u.onboundary = () => {
+      _wordPunch = 1;
+    }; // a little orb kick per word
+    u.onend = () => {
+      _ttsNext();
+    };
+    u.onerror = () => {
+      _ttsNext();
+    };
+    try {
+      synth.speak(u);
+    } catch (e) {
+      _ttsNext();
+    }
   }
   function stopSpeaking() {
     _ttsQ = [];
-    try { synth && synth.cancel(); } catch (e) {}
-    _ttsActive = false; _speaking = false;
+    try {
+      synth && synth.cancel();
+    } catch (e) {}
+    _ttsActive = false;
+    _speaking = false;
   }
 
   // ---- synthetic voice envelope so the orb + waveform react while speaking ----
   // speechSynthesis can't be tapped by the Web Audio analyser, so we fabricate a
   // lively-but-smooth level (plus a per-word punch) — visually equivalent.
-  let _speaking = false, _wordPunch = 0, _env = 0, _t = 0;
+  let _speaking = false,
+    _wordPunch = 0,
+    _env = 0,
+    _t = 0;
   // Speech-recognition state is declared up here as well, so driveViz()'s first
   // synchronous call (below) doesn't hit the temporal dead zone on _listening.
-  let _listening = false, _thinking = false, _micOk = false, _recogOn = false, recog = null;
+  let _listening = false,
+    _thinking = false,
+    _micOk = false,
+    _recogOn = false,
+    recog = null;
   function driveViz() {
     requestAnimationFrame(driveViz);
     _t += 0.08;
     if (_speaking) {
-      const osc = (Math.sin(_t * 3.1) * 0.5 + 0.5) * 0.45 + 0.25;   // base wobble
+      const osc = (Math.sin(_t * 3.1) * 0.5 + 0.5) * 0.45 + 0.25; // base wobble
       const target = Math.min(1, osc + _wordPunch * 0.5);
       _env += (target - _env) * (target > _env ? 0.5 : 0.12);
       _wordPunch *= 0.82;
     } else {
-      _env *= 0.90;
+      _env *= 0.9;
     }
     window.__speech = {
       speaking: _speaking,
@@ -148,29 +186,45 @@
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 
   function startRecognition() {
-    if (!SR) { window.__recognition = 'VOICE IN: NOT SUPPORTED'; return; }
+    if (!SR) {
+      window.__recognition = "VOICE IN: NOT SUPPORTED";
+      return;
+    }
     recog = new SR();
     recog.continuous = true;
     recog.interimResults = true;
-    recog.lang = 'en-US';
+    recog.lang = "en-US";
 
-    recog.onstart = () => { _recogOn = true; _micOk = true; };
+    recog.onstart = () => {
+      _recogOn = true;
+      _micOk = true;
+    };
     recog.onerror = (e) => {
-      if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
+      if (e.error === "not-allowed" || e.error === "service-not-allowed") {
         _micOk = false;
-        window.__recognition = 'MIC BLOCKED — TYPE BELOW';
-        if (window.__chat) window.__chat.addMsg("Microphone's blocked, sir — you can type to me below.", 'in');
+        window.__recognition = "MIC BLOCKED — TYPE BELOW";
+        if (window.__chat)
+          window.__chat.addMsg(
+            "Microphone's blocked, sir — you can type to me below.",
+            "in",
+          );
       }
     };
     recog.onend = () => {
       _recogOn = false;
-      if (_micOk) { try { recog.start(); } catch (e) {} }   // keep it alive
+      if (_micOk) {
+        try {
+          recog.start();
+        } catch (e) {}
+      } // keep it alive
     };
-    let _interimBuf = '', _interimTimer = null;
+    let _interimBuf = "",
+      _interimTimer = null;
     recog.onresult = (ev) => {
       // Ignore anything heard while JARVIS is talking or thinking (don't hear himself).
       if (_speaking || _thinking) return;
-      let finalText = '', interimText = '';
+      let finalText = "",
+        interimText = "";
       for (let i = ev.resultIndex; i < ev.results.length; i++) {
         const r = ev.results[i];
         if (r.isFinal) finalText += r[0].transcript;
@@ -179,7 +233,7 @@
       finalText = finalText.trim();
       if (finalText) {
         clearTimeout(_interimTimer);
-        _interimBuf = '';
+        _interimBuf = "";
         handleHeard(finalText);
         return;
       }
@@ -189,37 +243,49 @@
         clearTimeout(_interimTimer);
         _interimTimer = setTimeout(() => {
           const text = _interimBuf;
-          _interimBuf = '';
+          _interimBuf = "";
           if (text) handleHeard(text);
         }, 1500);
       }
     };
 
-    try { recog.start(); } catch (e) {}
+    try {
+      recog.start();
+    } catch (e) {}
   }
 
   function handleHeard(text) {
     const lower = text.toLowerCase();
     if (_standby) {
-      if (lower.includes('jarvis')) {
+      if (lower.includes("jarvis")) {
         wake();
         // strip the wake word; if a command follows, run it, else just acknowledge
-        const cmd = text.replace(/.*?jarvis[,.\s!?]*/i, '').trim();
+        const cmd = text.replace(/.*?jarvis[,.\s!?]*/i, "").trim();
         if (cmd.length > 2) sendCommand(cmd);
         else {
-          const acks = ['Yes, sir?', 'Sir?', 'Go ahead.', 'At your service.', 'Right here, sir.', 'You rang, sir?'];
+          const acks = [
+            "Yes, sir?",
+            "Sir?",
+            "Go ahead.",
+            "At your service.",
+            "Right here, sir.",
+            "You rang, sir?",
+          ];
           const a = acks[Math.floor(Math.random() * acks.length)];
-          if (window.__chat) window.__chat.addMsg(a, 'in');
-          _vizState = 'speaking'; window.__recognition = 'RESPONDING';
+          if (window.__chat) window.__chat.addMsg(a, "in");
+          _vizState = "speaking";
+          window.__recognition = "RESPONDING";
           speak(a);
         }
       }
       return;
     }
     // awake: standby phrases put him to sleep
-    if (/\b(standby|go to sleep|sleep mode|that'?s all|goodnight)\b/.test(lower)) {
-      if (window.__chat) window.__chat.addMsg('Entering standby, sir.', 'in');
-      speak('Entering standby, sir.');
+    if (
+      /\b(standby|go to sleep|sleep mode|that'?s all|goodnight)\b/.test(lower)
+    ) {
+      if (window.__chat) window.__chat.addMsg("Entering standby, sir.", "in");
+      speak("Entering standby, sir.");
       setTimeout(sleep, 900);
       return;
     }
@@ -230,75 +296,114 @@
   //  SENDING TO CLAUDE
   // ===================================================================
   function sendCommand(text) {
-    if (!_configured) { showSetup(); return; }
-    if (window.__chat) window.__chat.addMsg(text, 'out');     // show the heard/typed command
+    if (!_configured) {
+      showSetup();
+      return;
+    }
+    if (window.__chat) window.__chat.addMsg(text, "out"); // show the heard/typed command
     window.__justTyped = { text, t: Date.now() };
-    socket.emit('user_message', { text });
+    socket.emit("user_message", { text });
   }
   // chat.js hands typed text here (it already renders the 'out' bubble itself)
   window.__sendMessage = (text) => {
-    if (!_configured) { showSetup(); return; }
+    if (!_configured) {
+      showSetup();
+      return;
+    }
     if (_standby) wake();
-    socket.emit('user_message', { text });
+    socket.emit("user_message", { text });
   };
 
   // ===================================================================
   //  INCOMING — Claude's reply, accumulated into one chat bubble per turn
   // ===================================================================
-  let _turnEl = null, _turnText = '';
+  let _turnEl = null,
+    _turnText = "";
   function renderTurn() {
     if (!window.__chat) return;
-    if (!_turnEl) { window.__chat.setTyping(false); _turnEl = window.__chat.addMsg(_turnText, 'in'); }
-    else window.__chat.updateMsg(_turnEl, _turnText);
+    if (!_turnEl) {
+      window.__chat.setTyping(false);
+      _turnEl = window.__chat.addMsg(_turnText, "in");
+    } else window.__chat.updateMsg(_turnEl, _turnText);
   }
-  function endTurn() { _turnEl = null; _turnText = ''; }
+  function endTurn() {
+    _turnEl = null;
+    _turnText = "";
+  }
 
-  socket.on('status', ({ state }) => {
+  socket.on("status", ({ state }) => {
     _vizState = state;
-    _thinking = (state === 'thinking');
-    _listening = (state === 'idle' && !_standby);
-    if (state === 'thinking') { endTurn(); if (window.__chat) window.__chat.setTyping(true); }
+    _thinking = state === "thinking";
+    _listening = state === "idle" && !_standby;
+    if (state === "thinking") {
+      endTurn();
+      if (window.__chat) window.__chat.setTyping(true);
+    }
     if (!_standby) window.__recognition = RECOG[state] || state.toUpperCase();
   });
 
-  socket.on('speak_sentence', ({ text }) => {
-    const t = (text || '').trim();
+  socket.on("speak_sentence", ({ text }) => {
+    const t = (text || "").trim();
     if (!t) return;
-    _turnText = _turnText ? _turnText + ' ' + t : t;
+    _turnText = _turnText ? _turnText + " " + t : t;
     renderTurn();
-    if (!_standby) { _vizState = 'speaking'; window.__recognition = 'RESPONDING'; }
+    if (!_standby) {
+      _vizState = "speaking";
+      window.__recognition = "RESPONDING";
+    }
     speak(t);
   });
 
-  socket.on('response_done', ({ text }) => {
-    if (text && text.length >= _turnText.length) { _turnText = text; renderTurn(); }
+  socket.on("response_done", ({ text }) => {
+    if (text && text.length >= _turnText.length) {
+      _turnText = text;
+      renderTurn();
+    }
     if (window.__chat) window.__chat.setTyping(false);
   });
 
-  socket.on('need_setup', () => { _configured = false; showSetup(); });
-  socket.on('config_state', ({ configured }) => {
+  socket.on("need_setup", () => {
+    _configured = false;
+    showSetup();
+  });
+  socket.on("config_state", ({ configured }) => {
     _configured = !!configured;
-    if (_configured) hideSetup(); else showSetup();
+    if (_configured) hideSetup();
+    else showSetup();
   });
 
   // ---- live telemetry / weather (read by hud.js) ----
-  socket.on('hud_update', (d) => { window.__telemetry = d; });
-  socket.on('weather_update', (d) => { window.__weather = d; });
-
-  socket.on('connect', () => {
-    const ts = $('top-status'); if (ts) { ts.textContent = 'ONLINE'; ts.style.color = 'var(--cyan-bright)'; }
+  socket.on("hud_update", (d) => {
+    window.__telemetry = d;
   });
-  socket.on('disconnect', () => {
-    const ts = $('top-status'); if (ts) { ts.textContent = 'OFFLINE'; ts.style.color = 'var(--amber)'; }
-    window.__recognition = 'OFFLINE';
+  socket.on("weather_update", (d) => {
+    window.__weather = d;
+  });
+
+  socket.on("connect", () => {
+    const ts = $("top-status");
+    if (ts) {
+      ts.textContent = "ONLINE";
+      ts.style.color = "var(--cyan-bright)";
+    }
+  });
+  socket.on("disconnect", () => {
+    const ts = $("top-status");
+    if (ts) {
+      ts.textContent = "OFFLINE";
+      ts.style.color = "var(--amber)";
+    }
+    window.__recognition = "OFFLINE";
   });
 
   // ===================================================================
   //  PUSH-TO-TALK  (SPACE) — also a manual wake
   // ===================================================================
-  const isTyping = (t) => t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable);
-  document.addEventListener('keydown', (e) => {
-    if (e.key === ' ' && !isTyping(e.target) && !e.repeat) {
+  const isTyping = (t) =>
+    t &&
+    (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable);
+  document.addEventListener("keydown", (e) => {
+    if (e.key === " " && !isTyping(e.target) && !e.repeat) {
       e.preventDefault();
       if (_standby) wake();
     }
@@ -307,93 +412,139 @@
   // ===================================================================
   //  FIRST-RUN SETUP  (provider + model + API key)
   // ===================================================================
-  const setupEl = $('setup'), keyInput = $('setup-key'), setupForm = $('setup-form'),
-        setupMsg = $('setup-msg'), setupGo = $('setup-go'),
-        provSel = $('setup-provider'), modelSel = $('setup-model'),
-        modelCustom = $('setup-model-custom'), baseUrl = $('setup-baseurl'),
-        helpLink = $('setup-help');
+  const setupEl = $("setup"),
+    keyInput = $("setup-key"),
+    setupForm = $("setup-form"),
+    setupMsg = $("setup-msg"),
+    setupGo = $("setup-go"),
+    provSel = $("setup-provider"),
+    modelSel = $("setup-model"),
+    modelCustom = $("setup-model-custom"),
+    baseUrl = $("setup-baseurl"),
+    helpLink = $("setup-help");
 
   // Curated model options per provider. "" value = the "Other (type below)" choice.
   const MODELS = {
     anthropic: [
-      { v: 'claude-haiku-4-5',  t: 'Claude Haiku 4.5 — fast & affordable' },
-      { v: 'claude-sonnet-4-6', t: 'Claude Sonnet 4.6 — most in-character' },
-      { v: 'claude-opus-4-8',   t: 'Claude Opus 4.8 — most capable' },
-      { v: '', t: 'Other (type below)…' },
+      { v: "claude-haiku-4-5", t: "Claude Haiku 4.5 — fast & affordable" },
+      { v: "claude-sonnet-4-6", t: "Claude Sonnet 4.6 — most in-character" },
+      { v: "claude-opus-4-8", t: "Claude Opus 4.8 — most capable" },
+      { v: "", t: "Other (type below)…" },
     ],
     openai: [
-      { v: 'gpt-4o-mini',  t: 'GPT-4o mini — fast & affordable' },
-      { v: 'gpt-4o',       t: 'GPT-4o — capable' },
-      { v: 'gpt-4.1-mini', t: 'GPT-4.1 mini' },
-      { v: 'gpt-4.1',      t: 'GPT-4.1 — most capable' },
-      { v: '', t: 'Other (type below)…' },
+      { v: "gpt-4o-mini", t: "GPT-4o mini — fast & affordable" },
+      { v: "gpt-4o", t: "GPT-4o — capable" },
+      { v: "gpt-4.1-mini", t: "GPT-4.1 mini" },
+      { v: "gpt-4.1", t: "GPT-4.1 — most capable" },
+      { v: "", t: "Other (type below)…" },
     ],
-    openai_compatible: [
-      { v: '', t: 'Type the model name below…' },
-    ],
+    openai_compatible: [{ v: "", t: "Type the model name below…" }],
   };
   const HELP = {
-    anthropic: { url: 'https://console.anthropic.com/settings/keys', txt: 'Get an Anthropic key →', ph: 'sk-ant-...' },
-    openai: { url: 'https://platform.openai.com/api-keys', txt: 'Get an OpenAI key →', ph: 'sk-...' },
-    openai_compatible: { url: 'https://openrouter.ai/keys', txt: 'e.g. get an OpenRouter key →', ph: 'your API key' },
+    anthropic: {
+      url: "https://console.anthropic.com/settings/keys",
+      txt: "Get an Anthropic key →",
+      ph: "sk-ant-...",
+    },
+    openai: {
+      url: "https://platform.openai.com/api-keys",
+      txt: "Get an OpenAI key →",
+      ph: "sk-...",
+    },
+    openai_compatible: {
+      url: "https://openrouter.ai/keys",
+      txt: "e.g. get an OpenRouter key →",
+      ph: "your API key",
+    },
   };
 
   function refreshProviderUI() {
     const p = provSel.value;
     // model dropdown
-    modelSel.innerHTML = '';
+    modelSel.innerHTML = "";
     (MODELS[p] || []).forEach((m) => {
-      const o = document.createElement('option');
-      o.value = m.v; o.textContent = m.t; modelSel.appendChild(o);
+      const o = document.createElement("option");
+      o.value = m.v;
+      o.textContent = m.t;
+      modelSel.appendChild(o);
     });
     // help link + key placeholder
     const h = HELP[p] || HELP.anthropic;
-    if (helpLink) { helpLink.href = h.url; helpLink.textContent = h.txt; }
+    if (helpLink) {
+      helpLink.href = h.url;
+      helpLink.textContent = h.txt;
+    }
     if (keyInput) keyInput.placeholder = h.ph;
     // base URL only for the compatible provider
-    baseUrl.style.display = (p === 'openai_compatible') ? 'block' : 'none';
+    baseUrl.style.display = p === "openai_compatible" ? "block" : "none";
     refreshModelUI();
   }
   function refreshModelUI() {
     // show the free-text model box when "Other" (empty value) is selected
-    const custom = modelSel.value === '';
-    modelCustom.style.display = custom ? 'block' : 'none';
+    const custom = modelSel.value === "";
+    modelCustom.style.display = custom ? "block" : "none";
   }
-  if (provSel) { provSel.addEventListener('change', refreshProviderUI); refreshProviderUI(); }
-  if (modelSel) modelSel.addEventListener('change', refreshModelUI);
+  if (provSel) {
+    provSel.addEventListener("change", refreshProviderUI);
+    refreshProviderUI();
+  }
+  if (modelSel) modelSel.addEventListener("change", refreshModelUI);
 
-  function showSetup() { if (setupEl) setupEl.classList.remove('setup-hidden'); setTimeout(() => keyInput && keyInput.focus(), 200); }
-  function hideSetup() { if (setupEl) setupEl.classList.add('setup-hidden'); }
+  function showSetup() {
+    if (setupEl) setupEl.classList.remove("setup-hidden");
+    setTimeout(() => keyInput && keyInput.focus(), 200);
+  }
+  function hideSetup() {
+    if (setupEl) setupEl.classList.add("setup-hidden");
+  }
 
   if (setupForm) {
-    setupForm.addEventListener('submit', async (e) => {
+    setupForm.addEventListener("submit", async (e) => {
       e.preventDefault();
       const provider = provSel.value;
-      const key = (keyInput.value || '').trim();
-      const model = (modelSel.value || (modelCustom.value || '').trim());
-      const base_url = (baseUrl.value || '').trim();
-      if (!key) { setupMsg.className = 'err'; setupMsg.textContent = 'Please paste your API key.'; return; }
-      if (!model) { setupMsg.className = 'err'; setupMsg.textContent = 'Please choose or type a model.'; return; }
-      if (provider === 'openai_compatible' && !base_url) {
-        setupMsg.className = 'err'; setupMsg.textContent = 'This provider needs a base URL.'; return;
+      const key = (keyInput.value || "").trim();
+      const model = modelSel.value || (modelCustom.value || "").trim();
+      const base_url = (baseUrl.value || "").trim();
+      if (!key) {
+        setupMsg.className = "err";
+        setupMsg.textContent = "Please paste your API key.";
+        return;
       }
-      setupGo.disabled = true; setupMsg.className = ''; setupMsg.textContent = 'Verifying…';
+      if (!model) {
+        setupMsg.className = "err";
+        setupMsg.textContent = "Please choose or type a model.";
+        return;
+      }
+      if (provider === "openai_compatible" && !base_url) {
+        setupMsg.className = "err";
+        setupMsg.textContent = "This provider needs a base URL.";
+        return;
+      }
+      setupGo.disabled = true;
+      setupMsg.className = "";
+      setupMsg.textContent = "Verifying…";
       try {
-        const res = await fetch('/api/save_config', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
+        const res = await fetch("/api/save_config", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ provider, key, model, base_url }),
         });
         const data = await res.json();
         if (data.ok) {
           _configured = true;
-          setupMsg.className = 'ok'; setupMsg.textContent = 'Connected. Welcome aboard, sir.';
-          keyInput.value = '';
-          setTimeout(() => { hideSetup(); }, 1100);
+          setupMsg.className = "ok";
+          setupMsg.textContent = "Connected. Welcome aboard, sir.";
+          keyInput.value = "";
+          setTimeout(() => {
+            hideSetup();
+          }, 1100);
         } else {
-          setupMsg.className = 'err'; setupMsg.textContent = data.error || 'That was rejected.';
+          setupMsg.className = "err";
+          setupMsg.textContent = data.error || "That was rejected.";
         }
       } catch (err) {
-        setupMsg.className = 'err'; setupMsg.textContent = 'Could not reach the server. Is it running?';
+        setupMsg.className = "err";
+        setupMsg.textContent = "Could not reach the server. Is it running?";
       } finally {
         setupGo.disabled = false;
       }
@@ -401,13 +552,25 @@
   }
 
   // On load, ask the backend whether we're already configured.
-  fetch('/api/status').then((r) => r.json()).then((d) => {
-    _configured = !!d.configured;
-    const ml = $('mod-link');
-    if (ml && d.provider) ml.textContent = ({ anthropic: 'CLAUDE', openai: 'OPENAI', openai_compatible: 'CUSTOM' })[d.provider] || 'LLM';
-    if (_configured) hideSetup(); else showSetup();
-    applyMode();
-    startRecognition();
-  }).catch(() => { showSetup(); applyMode(); });
-
+  fetch("/api/status")
+    .then((r) => r.json())
+    .then((d) => {
+      _configured = !!d.configured;
+      const ml = $("mod-link");
+      if (ml && d.provider)
+        ml.textContent =
+          {
+            anthropic: "CLAUDE",
+            openai: "OPENAI",
+            openai_compatible: "CUSTOM",
+          }[d.provider] || "LLM";
+      if (_configured) hideSetup();
+      else showSetup();
+      applyMode();
+      startRecognition();
+    })
+    .catch(() => {
+      showSetup();
+      applyMode();
+    });
 })();

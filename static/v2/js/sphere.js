@@ -4,8 +4,13 @@
    ripples of activity, slow 3D rotation. Three.js + GLSL.
    =========================================================== */
 (function () {
-  const canvas = document.getElementById('neural');
-  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true, preserveDrawingBuffer: true });
+  const canvas = document.getElementById("neural");
+  const renderer = new THREE.WebGLRenderer({
+    canvas,
+    antialias: true,
+    alpha: true,
+    preserveDrawingBuffer: true,
+  });
   renderer.setClearColor(0x000000, 0);
   // GPU budget: this 60k-particle orb otherwise free-runs at the monitor's full refresh (up to
   // 144 Hz) at 2x pixel ratio. The 1.5x pixel-ratio cap below is an invisible, free GPU saving and
@@ -13,26 +18,30 @@
   // evenly, so frames were unevenly paced). 90 fps draws every frame on any ≤90 Hz panel (smooth)
   // and only trims a 144 Hz panel. The real GPU thrash was the camera-rescan storm waking NVIDIA
   // Broadcast, not the orb — fixed server-side (see jarvis_vision_presence / pc_crash_diagnosis).
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, window.__orbMaxPixelRatio || 1.5));
-  window.__orbBaseFrameMs = window.__orbBaseFrameMs || (1000 / (window.__orbMaxFps || 90));
-  if (window.__orbMinFrameMs == null) window.__orbMinFrameMs = window.__orbBaseFrameMs;
+  renderer.setPixelRatio(
+    Math.min(window.devicePixelRatio, window.__orbMaxPixelRatio || 1.5),
+  );
+  window.__orbBaseFrameMs =
+    window.__orbBaseFrameMs || 1000 / (window.__orbMaxFps || 90);
+  if (window.__orbMinFrameMs == null)
+    window.__orbMinFrameMs = window.__orbBaseFrameMs;
 
   const scene = new THREE.Scene();
   const camera = new THREE.PerspectiveCamera(42, 1, 0.1, 100);
   camera.position.set(0, 0, 9.2);
 
   // ---- build particles ------------------------------------------------
-  const COUNT = (window.__orbCount || 60000);   // phone sets a lower count (less crowded / lighter)
+  const COUNT = window.__orbCount || 60000; // phone sets a lower count (less crowded / lighter)
   const RADIUS = 3.05;
   const positions = new Float32Array(COUNT * 3);
   const aPhase = new Float32Array(COUNT);
-  const aSeed  = new Float32Array(COUNT);
-  const aType  = new Float32Array(COUNT); // 0 surface, 1 interior
-  const aRad   = new Float32Array(COUNT);
+  const aSeed = new Float32Array(COUNT);
+  const aType = new Float32Array(COUNT); // 0 surface, 1 interior
+  const aRad = new Float32Array(COUNT);
 
   const golden = Math.PI * (3 - Math.sqrt(5));
   for (let i = 0; i < COUNT; i++) {
-    const interior = Math.random() < 0.10;
+    const interior = Math.random() < 0.1;
     let x, y, z, r;
     if (!interior) {
       // fibonacci sphere surface, thicker shell jitter
@@ -42,38 +51,39 @@
       x = Math.sin(inc) * Math.cos(az);
       y = Math.sin(inc) * Math.sin(az);
       z = Math.cos(inc);
-      r = RADIUS * (0.93 + Math.random() * 0.10);
+      r = RADIUS * (0.93 + Math.random() * 0.1);
     } else {
       // sparse interior haze — sits mid-radius, leaves the core dark
-      const u = Math.random(), v = Math.random();
+      const u = Math.random(),
+        v = Math.random();
       const theta = u * Math.PI * 2;
       const phi = Math.acos(2 * v - 1);
-      const rr = 0.30 + Math.random() * 0.55;
+      const rr = 0.3 + Math.random() * 0.55;
       x = Math.sin(phi) * Math.cos(theta);
       y = Math.sin(phi) * Math.sin(theta);
       z = Math.cos(phi);
       r = RADIUS * rr;
     }
-    positions[i * 3]     = x * r;
+    positions[i * 3] = x * r;
     positions[i * 3 + 1] = y * r;
     positions[i * 3 + 2] = z * r;
     aPhase[i] = Math.random() * Math.PI * 2;
-    aSeed[i]  = Math.random();
-    aType[i]  = interior ? 1 : 0;
-    aRad[i]   = r / RADIUS;
+    aSeed[i] = Math.random();
+    aType[i] = interior ? 1 : 0;
+    aRad[i] = r / RADIUS;
   }
 
   const geo = new THREE.BufferGeometry();
-  geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-  geo.setAttribute('aPhase', new THREE.BufferAttribute(aPhase, 1));
-  geo.setAttribute('aSeed',  new THREE.BufferAttribute(aSeed, 1));
-  geo.setAttribute('aType',  new THREE.BufferAttribute(aType, 1));
-  geo.setAttribute('aRad',   new THREE.BufferAttribute(aRad, 1));
+  geo.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+  geo.setAttribute("aPhase", new THREE.BufferAttribute(aPhase, 1));
+  geo.setAttribute("aSeed", new THREE.BufferAttribute(aSeed, 1));
+  geo.setAttribute("aType", new THREE.BufferAttribute(aType, 1));
+  geo.setAttribute("aRad", new THREE.BufferAttribute(aRad, 1));
 
   const uniforms = {
-    uTime:   { value: 0 },
-    uPulse:  { value: 1 },
-    uSize:   { value: 1 },
+    uTime: { value: 0 },
+    uPulse: { value: 1 },
+    uSize: { value: 1 },
     uActivity: { value: 0 }, // spikes amber/brightness on "thinking"
   };
 
@@ -192,7 +202,12 @@
   // faint wireframe shell for containment feel
   const shellGeo = new THREE.IcosahedronGeometry(RADIUS * 1.16, 2);
   const shellMat = new THREE.MeshBasicMaterial({
-    color: 0x3aa9c9, wireframe: true, transparent: true, opacity: 0.05, blending: THREE.AdditiveBlending, depthWrite: false,
+    color: 0x3aa9c9,
+    wireframe: true,
+    transparent: true,
+    opacity: 0.05,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
   });
   const shell = new THREE.Mesh(shellGeo, shellMat);
   scene.add(shell);
@@ -200,9 +215,9 @@
   // ---- interaction / parallax ----------------------------------------
   const target = { x: 0, y: 0 };
   const cur = { x: 0, y: 0 };
-  window.addEventListener('pointermove', (e) => {
-    target.x = (e.clientX / window.innerWidth - 0.5);
-    target.y = (e.clientY / window.innerHeight - 0.5);
+  window.addEventListener("pointermove", (e) => {
+    target.x = e.clientX / window.innerWidth - 0.5;
+    target.y = e.clientY / window.innerHeight - 0.5;
   });
 
   // Activity + pulse are driven by JARVIS's REAL voice — js/socket.js publishes
@@ -212,7 +227,8 @@
 
   // ---- resize ---------------------------------------------------------
   function resize() {
-    const w = window.innerWidth, h = window.innerHeight;
+    const w = window.innerWidth,
+      h = window.innerHeight;
     renderer.setSize(w, h, false);
     camera.aspect = w / h;
     // pull sphere closer/farther so it stays a constant share of the viewport
@@ -221,10 +237,10 @@
     camera.position.z = Math.max(11.67, Math.min(18.04, camera.position.z));
     // Push the camera back to shrink the orb WITHIN the canvas (real margin around it, so the
     // voice-pulse can't clip the edges). Phone sets >1; PC leaves it 1. Done after the clamp.
-    camera.position.z *= (window.__orbZoom || 1);
+    camera.position.z *= window.__orbZoom || 1;
     camera.updateProjectionMatrix();
   }
-  window.addEventListener('resize', resize);
+  window.addEventListener("resize", resize);
   resize();
 
   // ---- loop -----------------------------------------------------------
@@ -236,7 +252,7 @@
     // framerate (set by socket.js) to free GPU back to the video surface + the rest of
     // the system — this is what kept "display camera" from going laggy. 0 = full rate.
     const minMs = window.__orbMinFrameMs || 0;
-    if (minMs && now && (now - _lastDraw) < minMs) return;
+    if (minMs && now && now - _lastDraw < minMs) return;
     _lastDraw = now || 0;
 
     const t = clock.getElapsedTime();
@@ -248,21 +264,21 @@
     // release lets it ease back down. No hard clamp -> it keeps full dynamic range.
     const sp = window.__speech;
     const lvl = sp ? sp.level : 0;
-    activity += (lvl - activity) * (lvl > activity ? 0.40 : 0.10);
+    activity += (lvl - activity) * (lvl > activity ? 0.4 : 0.1);
 
     // ONE shared drive (smoothed level + a per-word bass punch) feeds BOTH the size
     // and the brightness, so the orb brightens/dims on exactly the same wavelength
     // as it grows/shrinks.
     const voice = activity + (sp ? sp.bass : 0) * 0.5;
-    uniforms.uActivity.value = voice;                                      // brightness + amber
-    uniforms.uPulse.value = 1 + Math.sin(t * 0.5) * 0.004 + voice * 0.09;  // size
+    uniforms.uActivity.value = voice; // brightness + amber
+    uniforms.uPulse.value = 1 + Math.sin(t * 0.5) * 0.004 + voice * 0.09; // size
 
     // smooth parallax
     cur.x += (target.x - cur.x) * 0.04;
     cur.y += (target.y - cur.y) * 0.04;
 
     points.rotation.y = t * 0.07 + cur.x * 0.12;
-    points.rotation.x = Math.sin(t * 0.04) * 0.10 + cur.y * 0.08;
+    points.rotation.x = Math.sin(t * 0.04) * 0.1 + cur.y * 0.08;
     shell.rotation.y = -t * 0.03;
     shell.rotation.x = t * 0.02;
 
