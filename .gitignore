@@ -4,3 +4,4 @@ __pycache__/
 *.pyc
 .lh
 .claude
+node_modules/
