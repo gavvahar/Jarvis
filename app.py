@@ -19,12 +19,11 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 import socketio
-from pydantic import BaseModel
 from dotenv import load_dotenv
 
-load_dotenv()
-
 from personality import JARVIS_SYSTEM
+
+load_dotenv()
 
 # ─── CONFIG ──────────────────────────────────────────────────────────────────
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -266,20 +265,14 @@ async def api_status():
     }
 
 
-class ConfigPayload(BaseModel):
-    provider: str = "anthropic"
-    key: str = ""
-    model: str = ""
-    base_url: str = ""
-
-
 @fast_app.post("/api/save_config")
-async def api_save_config(payload: ConfigPayload):
+async def api_save_config(request: Request):
     global _client, _provider
-    provider = payload.provider.strip()
-    key = payload.key.strip()
-    model = payload.model.strip()
-    base_url = payload.base_url.strip()
+    data = await request.json()
+    provider = (data.get("provider") or "anthropic").strip()
+    key = (data.get("key") or "").strip()
+    model = (data.get("model") or "").strip()
+    base_url = (data.get("base_url") or "").strip()
 
     if provider not in VALID_PROVIDERS:
         return {"ok": False, "error": "Unknown provider."}
