@@ -1,0 +1,6 @@
+flask>=3.0
+flask-socketio>=5.3
+anthropic>=0.40
+openai>=1.40
+psutil>=5.9
+python-dotenv>=1.0
