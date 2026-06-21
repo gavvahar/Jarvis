@@ -8,3 +8,7 @@ openai>=1.40
 psutil>=5.9
 python-dotenv>=1.0
 jinja2>=3.1
+black
+ruff
+nodeenv
+tox
