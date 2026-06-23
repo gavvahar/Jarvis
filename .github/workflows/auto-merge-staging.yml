@@ -1,0 +1,46 @@
+name: Auto Merge Staging to Main
+
+on:
+  schedule:
+    - cron: "0 5 * * 5"  # Friday midnight EST (UTC-5, Nov–Mar)
+    - cron: "0 4 * * 5"  # Friday midnight EDT (UTC-4, Mar–Nov)
+  workflow_dispatch:      # Allow manual trigger
+
+jobs:
+  check-time:
+    runs-on: ubuntu-latest
+    outputs:
+      is_midnight_eastern: ${{ steps.check.outputs.is_midnight_eastern }}
+    steps:
+      - name: Check if midnight Eastern time
+        id: check
+        run: |
+          eastern_hour=$(TZ="America/New_York" date +%H)
+          if [ "$eastern_hour" = "00" ] || [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "is_midnight_eastern=true" >> $GITHUB_OUTPUT
+          else
+            echo "Not midnight Eastern (hour: $eastern_hour ET), skipping merge."
+            echo "is_midnight_eastern=false" >> $GITHUB_OUTPUT
+          fi
+
+  merge:
+    needs: check-time
+    if: needs.check-time.outputs.is_midnight_eastern == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Merge staging into main
+        run: |
+          git checkout main
+          git merge --no-ff origin/staging -m "chore: auto-merge staging into main [$(date -u '+%Y-%m-%d')]"
+          git push origin main
