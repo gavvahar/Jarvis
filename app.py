@@ -26,7 +26,6 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
-from starlette.middleware.base import BaseHTTPMiddleware
 import socketio
 from dotenv import load_dotenv
 
@@ -643,26 +642,25 @@ async def lifespan(application: FastAPI):
 _SESSION_COOKIE_OPTS = dict(httponly=True, max_age=86400 * 30, samesite="lax")
 _NO_REFRESH_PATHS = {"/login", "/auth/callback", "/logout"}
 
-
-class _RefreshSession(BaseHTTPMiddleware):
-    """Re-issue the session cookie on every authenticated request so the
-    30-day expiry is measured from last activity, not from login."""
-
-    async def dispatch(self, request: Request, call_next):
-        response = await call_next(request)
-        if request.url.path not in _NO_REFRESH_PATHS and _signer:
-            user_id = _get_current_user(request)
-            if user_id:
-                response.set_cookie("jarvis_session", _sign_session(user_id), **_SESSION_COOKIE_OPTS)
-        return response
-
-
 fast_app = FastAPI(lifespan=lifespan)
-fast_app.add_middleware(_RefreshSession)
 fast_app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
 
 app = socketio.ASGIApp(sio, other_asgi_app=fast_app)
+
+
+@fast_app.middleware("http")
+async def _refresh_session(request: Request, call_next):
+    """Re-issue the session cookie on every authenticated request so the
+    30-day expiry resets from last activity, not from login."""
+    response = await call_next(request)
+    if request.url.path not in _NO_REFRESH_PATHS and _signer:
+        user_id = _get_current_user(request)
+        if user_id:
+            response.set_cookie(
+                "jarvis_session", _sign_session(user_id), **_SESSION_COOKIE_OPTS
+            )
+    return response
 
 
 # ─── AUTH ROUTES ─────────────────────────────────────────────────────────────
@@ -727,7 +725,9 @@ async def auth_callback(request: Request):
     _user_states.pop(user_id, None)
 
     response = RedirectResponse("/", status_code=303)
-    response.set_cookie("jarvis_session", _sign_session(user_id), **_SESSION_COOKIE_OPTS)
+    response.set_cookie(
+        "jarvis_session", _sign_session(user_id), **_SESSION_COOKIE_OPTS
+    )
     response.delete_cookie("oidc_state")
     return response
 
@@ -1145,7 +1145,11 @@ async def on_connect(sid, environ, auth=None):
     _sid_to_user[sid] = user_id
     state = await _get_user_state(user_id)
     await sio.emit("status", {"state": "idle"}, to=sid)
-    await sio.emit("config_state", {"configured": _user_configured(state), "role": state.get("role", "user")}, to=sid)
+    await sio.emit(
+        "config_state",
+        {"configured": _user_configured(state), "role": state.get("role", "user")},
+        to=sid,
+    )
 
 
 @sio.on("disconnect")
