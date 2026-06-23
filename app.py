@@ -44,7 +44,9 @@ DEFAULT_MODELS = {
 VALID_PROVIDERS = set(DEFAULT_MODELS.keys())
 
 # ─── ENV ──────────────────────────────────────────────────────────────────────
-DATABASE_URL = os.environ.get("DATABASE_URL", "postgresql://jarvis:jarvis@postgres/jarvis")
+DATABASE_URL = os.environ.get(
+    "DATABASE_URL", "postgresql://jarvis:jarvis@postgres/jarvis"
+)
 AUTHENTIK_URL = os.environ.get("AUTHENTIK_URL", "").rstrip("/")
 OIDC_DISCOVERY_URL = os.environ.get("OIDC_DISCOVERY_URL", "")
 OIDC_CLIENT_ID = os.environ.get("OIDC_CLIENT_ID", "")
@@ -192,7 +194,9 @@ _oidc_config: dict | None = None
 async def _fetch_oidc_config():
     global _oidc_config
     if not OIDC_DISCOVERY_URL:
-        print("[AUTH] OIDC_DISCOVERY_URL not set — authentication disabled.", flush=True)
+        print(
+            "[AUTH] OIDC_DISCOVERY_URL not set — authentication disabled.", flush=True
+        )
         return
     try:
         async with httpx.AsyncClient(timeout=10) as c:
@@ -229,7 +233,7 @@ def _get_user_from_environ(environ: dict) -> str | None:
     for part in cookie_str.split(";"):
         part = part.strip()
         if part.startswith("jarvis_session="):
-            return _verify_session(part[len("jarvis_session="):])
+            return _verify_session(part[len("jarvis_session=") :])
     return None
 
 
@@ -271,7 +275,9 @@ async def _get_user_state(user_id: str) -> dict:
             provider = "anthropic"
         if not config.get("model"):
             config["model"] = DEFAULT_MODELS.get(provider, "")
-        client = _build_client(provider, config.get("api_key", ""), config.get("base_url", ""))
+        client = _build_client(
+            provider, config.get("api_key", ""), config.get("base_url", "")
+        )
         _user_states[user_id] = {
             "config": config,
             "client": client,
@@ -481,7 +487,9 @@ async def _ha_get_states(config: dict, domain=None):
     return "\n".join(lines) if lines else "No entities found."
 
 
-async def _ha_call_service(config: dict, domain, service, entity_id=None, service_data=None):
+async def _ha_call_service(
+    config: dict, domain, service, entity_id=None, service_data=None
+):
     url = config["ha_url"].rstrip("/") + f"/api/services/{domain}/{service}"
     payload = dict(service_data or {})
     if entity_id:
@@ -524,7 +532,12 @@ def _openai_create_sync(client, model, messages, stream, max_out=500):
             last = e
             if any(
                 x in str(e).lower()
-                for x in ("max_tokens", "max_completion_tokens", "unsupported", "temperature")
+                for x in (
+                    "max_tokens",
+                    "max_completion_tokens",
+                    "unsupported",
+                    "temperature",
+                )
             ):
                 continue
             raise
@@ -535,7 +548,10 @@ def _validate(provider, api_key, model, base_url=""):
     client = _build_sync_client(provider, api_key, base_url)
     if client is None:
         pkg = "anthropic" if provider == "anthropic" else "openai"
-        return False, f"Could not initialise the client. Is the '{pkg}' package installed?"
+        return (
+            False,
+            f"Could not initialise the client. Is the '{pkg}' package installed?",
+        )
     model = model or DEFAULT_MODELS.get(provider, "")
     if not model:
         return False, "Please choose a model."
@@ -558,14 +574,26 @@ def _validate(provider, api_key, model, base_url=""):
     except Exception as e:
         msg = str(e)
         low = msg.lower()
-        if "authentication" in low or "401" in low or ("invalid" in low and "key" in low):
+        if (
+            "authentication" in low
+            or "401" in low
+            or ("invalid" in low and "key" in low)
+        ):
             return False, "That key was rejected. Check it and try again."
         if "404" in low or "not_found" in low or ("model" in low and "exist" in low):
             return False, f"The model '{model}' wasn't found for this key/provider."
-        if "credit" in low or "billing" in low or "quota" in low or "insufficient" in low:
+        if (
+            "credit" in low
+            or "billing" in low
+            or "quota" in low
+            or "insufficient" in low
+        ):
             return False, "The key is valid but the account has no available credit."
         if "connection" in low or "could not" in low or "getaddrinfo" in low:
-            return False, "Couldn't reach the endpoint. Check the base URL / your connection."
+            return (
+                False,
+                "Couldn't reach the endpoint. Check the base URL / your connection.",
+            )
         return False, f"Couldn't connect: {msg[:160]}"
 
 
@@ -626,7 +654,9 @@ async def auth_callback(request: Request):
     state = request.query_params.get("state")
     stored_state = request.cookies.get("oidc_state")
     if not code or not state or state != stored_state:
-        raise HTTPException(400, "Invalid OAuth2 callback — state mismatch or missing code")
+        raise HTTPException(
+            400, "Invalid OAuth2 callback — state mismatch or missing code"
+        )
 
     try:
         async with httpx.AsyncClient(timeout=10) as c:
@@ -650,7 +680,7 @@ async def auth_callback(request: Request):
             r.raise_for_status()
             userinfo = r.json()
     except Exception as e:
-        raise HTTPException(502, f"OIDC token exchange failed: {e}")
+        raise HTTPException(502, f"OIDC token exchange failed: {e}") from e
 
     user_id = userinfo["sub"]
     email = userinfo.get("email", "")
@@ -862,7 +892,12 @@ async def _openai_stream_async(client, model, messages, max_out=500, **extra_kwa
             last = e
             if any(
                 x in str(e).lower()
-                for x in ("max_tokens", "max_completion_tokens", "unsupported", "temperature")
+                for x in (
+                    "max_tokens",
+                    "max_completion_tokens",
+                    "unsupported",
+                    "temperature",
+                )
             ):
                 continue
             raise
@@ -879,7 +914,7 @@ def _split_sentences(buf):
         if not m:
             break
         out.append(m.group(1).strip())
-        buf = buf[m.end():]
+        buf = buf[m.end() :]
     return out, buf
 
 
@@ -898,7 +933,13 @@ async def _stream_reply(state: dict, on_text):
             stream_kwargs = dict(
                 model=model,
                 max_tokens=500,
-                system=[{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}],
+                system=[
+                    {
+                        "type": "text",
+                        "text": system,
+                        "cache_control": {"type": "ephemeral"},
+                    }
+                ],
                 messages=local_msgs,
             )
             if ha_tools:
@@ -913,9 +954,15 @@ async def _stream_reply(state: dict, on_text):
             results = []
             for block in final.content:
                 if block.type == "tool_use":
-                    result = await _execute_ha_tool(config, block.name, dict(block.input))
+                    result = await _execute_ha_tool(
+                        config, block.name, dict(block.input)
+                    )
                     results.append(
-                        {"type": "tool_result", "tool_use_id": block.id, "content": result}
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": block.id,
+                            "content": result,
+                        }
                     )
             local_msgs.append({"role": "assistant", "content": final.content})
             local_msgs.append({"role": "user", "content": results})
@@ -951,7 +998,11 @@ async def _stream_reply(state: dict, on_text):
                             tool_calls_acc[idx]["args"] += tc.function.arguments
                         if tc.id and not tool_calls_acc[idx]["id"]:
                             tool_calls_acc[idx]["id"] = tc.id
-                        if tc.function and tc.function.name and not tool_calls_acc[idx]["name"]:
+                        if (
+                            tc.function
+                            and tc.function.name
+                            and not tool_calls_acc[idx]["name"]
+                        ):
                             tool_calls_acc[idx]["name"] = tc.function.name
             if finish_reason != "tool_calls" or not ha_tools:
                 return full
@@ -970,7 +1021,9 @@ async def _stream_reply(state: dict, on_text):
                 tool_msgs.append(
                     {"role": "tool", "tool_call_id": acc["id"], "content": result}
                 )
-            local_msgs.append({"role": "assistant", "content": None, "tool_calls": tc_list})
+            local_msgs.append(
+                {"role": "assistant", "content": None, "tool_calls": tc_list}
+            )
             local_msgs.extend(tool_msgs)
 
     return full
@@ -1014,7 +1067,9 @@ async def _process_message(sid: str, text: str):
     try:
         full = await _stream_reply(state, on_text)
         if sent_buf.strip():
-            await sio.emit("speak_sentence", {"text": sent_buf.strip(), "seq": seq}, to=sid)
+            await sio.emit(
+                "speak_sentence", {"text": sent_buf.strip(), "seq": seq}, to=sid
+            )
         reply = full.strip() or "…"
         state["conversation"].append({"role": "assistant", "content": reply})
         await _db_append_message(user_id, "assistant", reply)
@@ -1038,7 +1093,9 @@ async def _process_message(sid: str, text: str):
             conv.pop()
             await _db_clear_conversation(user_id)
             for msg_entry in conv:
-                await _db_append_message(user_id, msg_entry["role"], msg_entry["content"])
+                await _db_append_message(
+                    user_id, msg_entry["role"], msg_entry["content"]
+                )
         await sio.emit("speak_sentence", {"text": msg, "seq": 0}, to=sid)
         await sio.emit("response_done", {"text": msg}, to=sid)
         await sio.emit("status", {"state": "idle"}, to=sid)
