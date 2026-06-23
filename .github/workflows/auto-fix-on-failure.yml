@@ -11,12 +11,13 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       issues: write
-      contents: read
+      contents: write
 
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.workflow_run.head_sha }}
+          ref: ${{ github.event.workflow_run.head_branch }}
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - uses: actions/setup-python@v5
         with:
@@ -28,6 +29,11 @@ jobs:
           python -m pip install --upgrade pip
           pip install tox
 
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
       - name: Attempt auto-format
         id: format
         shell: bash
@@ -35,6 +41,12 @@ jobs:
           set -o pipefail
           tox -e format 2>&1 | tee /tmp/format_output.txt
         continue-on-error: true
+
+      - name: Commit and push fixes
+        if: steps.format.outcome == 'success'
+        run: |
+          make commit
+          git push
 
       - name: Create failure issue
         if: steps.format.outcome == 'failure'
