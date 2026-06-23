@@ -54,6 +54,7 @@ OIDC_CLIENT_ID = os.environ.get("OIDC_CLIENT_ID", "")
 OIDC_CLIENT_SECRET = os.environ.get("OIDC_CLIENT_SECRET", "")
 APP_URL = os.environ.get("APP_URL", "http://localhost:5000").rstrip("/")
 SECRET_KEY = os.environ.get("SECRET_KEY", "change-me")
+OIDC_ADMIN_GROUP = os.environ.get("OIDC_ADMIN_GROUP", "jarvis-admins")
 
 # ─── DB ───────────────────────────────────────────────────────────────────────
 _db_pool: asyncpg.Pool | None = None
@@ -62,6 +63,7 @@ _SCHEMA = """
 CREATE TABLE IF NOT EXISTS user_configs (
     user_id     TEXT PRIMARY KEY,
     email       TEXT NOT NULL DEFAULT '',
+    role        TEXT NOT NULL DEFAULT 'user',
     provider    TEXT NOT NULL DEFAULT 'anthropic',
     api_key     TEXT NOT NULL DEFAULT '',
     model       TEXT NOT NULL DEFAULT 'claude-haiku-4-5',
@@ -70,6 +72,8 @@ CREATE TABLE IF NOT EXISTS user_configs (
     ha_token    TEXT NOT NULL DEFAULT '',
     updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+ALTER TABLE user_configs ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'user';
 
 CREATE TABLE IF NOT EXISTS conversations (
     id          BIGSERIAL PRIMARY KEY,
@@ -90,28 +94,30 @@ async def _db_init():
         await conn.execute(_SCHEMA)
 
 
-async def _db_ensure_user(user_id: str, email: str):
+async def _db_ensure_user(user_id: str, email: str, role: str):
     async with _db_pool.acquire() as conn:
         await conn.execute(
             """
-            INSERT INTO user_configs (user_id, email)
-            VALUES ($1, $2)
-            ON CONFLICT (user_id) DO UPDATE SET email = EXCLUDED.email
+            INSERT INTO user_configs (user_id, email, role)
+            VALUES ($1, $2, $3)
+            ON CONFLICT (user_id) DO UPDATE SET email = EXCLUDED.email, role = EXCLUDED.role
             """,
             user_id,
             email,
+            role,
         )
 
 
 async def _db_load_config(user_id: str) -> dict:
     async with _db_pool.acquire() as conn:
         row = await conn.fetchrow(
-            "SELECT provider, api_key, model, base_url, ha_url, ha_token "
+            "SELECT role, provider, api_key, model, base_url, ha_url, ha_token "
             "FROM user_configs WHERE user_id = $1",
             user_id,
         )
     if row is None:
         return {
+            "role": "user",
             "provider": "anthropic",
             "api_key": "",
             "model": "claude-haiku-4-5",
@@ -284,12 +290,23 @@ async def _get_user_state(user_id: str) -> dict:
             "client": client,
             "provider": provider,
             "conversation": conversation,
+            "role": config.get("role", "user"),
         }
     return _user_states[user_id]
 
 
 def _user_configured(state: dict) -> bool:
     return state["client"] is not None
+
+
+async def _require_admin(request: Request) -> str:
+    user_id = _get_current_user(request)
+    if not user_id:
+        raise HTTPException(401)
+    state = await _get_user_state(user_id)
+    if state.get("role") != "admin":
+        raise HTTPException(403, "Admin access required")
+    return user_id
 
 
 # ─── LLM CLIENTS ─────────────────────────────────────────────────────────────
@@ -703,7 +720,11 @@ async def auth_callback(request: Request):
 
     user_id = userinfo["sub"]
     email = userinfo.get("email", "")
-    await _db_ensure_user(user_id, email)
+    groups = userinfo.get("groups", [])
+    role = "admin" if OIDC_ADMIN_GROUP and OIDC_ADMIN_GROUP in groups else "user"
+    await _db_ensure_user(user_id, email, role)
+    # Invalidate cached state so role is reloaded on next request
+    _user_states.pop(user_id, None)
 
     response = RedirectResponse("/", status_code=303)
     response.set_cookie("jarvis_session", _sign_session(user_id), **_SESSION_COOKIE_OPTS)
@@ -739,6 +760,7 @@ async def api_status(request: Request):
         "model": config.get("model", ""),
         "ha_configured": _ha_configured(config),
         "ha_url": config.get("ha_url", ""),
+        "role": state.get("role", "user"),
     }
 
 
@@ -1123,7 +1145,7 @@ async def on_connect(sid, environ, auth=None):
     _sid_to_user[sid] = user_id
     state = await _get_user_state(user_id)
     await sio.emit("status", {"state": "idle"}, to=sid)
-    await sio.emit("config_state", {"configured": _user_configured(state)}, to=sid)
+    await sio.emit("config_state", {"configured": _user_configured(state), "role": state.get("role", "user")}, to=sid)
 
 
 @sio.on("disconnect")
