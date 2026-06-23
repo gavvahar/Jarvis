@@ -94,7 +94,7 @@ async def _db_init():
 
 
 async def _db_ensure_user(user_id: str, email: str, role: str):
-    async with _db_pool.acquire() as conn:
+    async with _db_pool.acquire() as conn:                                                                   
         await conn.execute(
             """
             INSERT INTO user_configs (user_id, email, role)
