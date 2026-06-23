@@ -200,6 +200,7 @@
       _micOk = true;
     };
     recog.onerror = (e) => {
+      console.warn("[RECOG] error:", e.error);
       if (e.error === "not-allowed" || e.error === "service-not-allowed") {
         _micOk = false;
         window.__recognition = "MIC BLOCKED — TYPE BELOW";
@@ -208,15 +209,25 @@
             "Microphone's blocked, sir — you can type to me below.",
             "in",
           );
+      } else if (e.error === "network") {
+        _micOk = false;
+        window.__recognition = "SPEECH API UNAVAILABLE — TYPE BELOW";
+        if (window.__chat)
+          window.__chat.addMsg(
+            "Voice recognition unavailable — the Google speech service can't be reached. You can type to me below, sir.",
+            "in",
+          );
       }
     };
     recog.onend = () => {
       _recogOn = false;
       if (_micOk) {
-        try {
-          recog.start();
-        } catch (e) {}
-      } // keep it alive
+        setTimeout(() => {
+          try {
+            recog.start();
+          } catch (e) {}
+        }, 1000);
+      }
     };
     let _interimBuf = "",
       _interimTimer = null;
