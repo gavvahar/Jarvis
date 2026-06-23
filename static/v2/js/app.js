@@ -155,9 +155,7 @@
   // synchronous call (below) doesn't hit the temporal dead zone on _listening.
   let _listening = false,
     _thinking = false,
-    _micOk = false,
-    _recogOn = false,
-    recog = null;
+    _micOk = false;
   function driveViz() {
     requestAnimationFrame(driveViz);
     _t += 0.08;
@@ -181,27 +179,21 @@
   driveViz();
 
   // ===================================================================
-  //  SPEECH RECOGNITION  (voice in)
+  //  SPEECH RECOGNITION  — local Whisper via VAD + MediaRecorder
   // ===================================================================
-  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-
   function startRecognition() {
-    if (!SR) {
-      window.__recognition = "VOICE IN: NOT SUPPORTED";
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      window.__recognition = "MIC NOT SUPPORTED";
       return;
     }
-    recog = new SR();
-    recog.continuous = true;
-    recog.interimResults = true;
-    recog.lang = "en-US";
-
-    recog.onstart = () => {
-      _recogOn = true;
-      _micOk = true;
-    };
-    recog.onerror = (e) => {
-      console.warn("[RECOG] error:", e.error);
-      if (e.error === "not-allowed" || e.error === "service-not-allowed") {
+    navigator.mediaDevices
+      .getUserMedia({ audio: true, video: false })
+      .then((stream) => {
+        _micOk = true;
+        window.__recognition = "LISTENING…";
+        _vadLoop(stream);
+      })
+      .catch(() => {
         _micOk = false;
         window.__recognition = "MIC BLOCKED — TYPE BELOW";
         if (window.__chat)
@@ -209,60 +201,76 @@
             "Microphone's blocked, sir — you can type to me below.",
             "in",
           );
-      } else if (e.error === "network") {
-        _micOk = false;
-        window.__recognition = "SPEECH API UNAVAILABLE — TYPE BELOW";
-        if (window.__chat)
-          window.__chat.addMsg(
-            "Voice recognition unavailable — the Google speech service can't be reached. You can type to me below, sir.",
-            "in",
-          );
-      }
-    };
-    recog.onend = () => {
-      _recogOn = false;
-      if (_micOk) {
-        setTimeout(() => {
-          try {
-            recog.start();
-          } catch (e) {}
-        }, 1000);
-      }
-    };
-    let _interimBuf = "",
-      _interimTimer = null;
-    recog.onresult = (ev) => {
-      // Ignore anything heard while JARVIS is talking or thinking (don't hear himself).
-      if (_speaking || _thinking) return;
-      let finalText = "",
-        interimText = "";
-      for (let i = ev.resultIndex; i < ev.results.length; i++) {
-        const r = ev.results[i];
-        if (r.isFinal) finalText += r[0].transcript;
-        else interimText += r[0].transcript;
-      }
-      finalText = finalText.trim();
-      if (finalText) {
-        clearTimeout(_interimTimer);
-        _interimBuf = "";
-        handleHeard(finalText);
-        return;
-      }
-      // Fallback: if mic is muted before a final result arrives, submit after 1.5 s of silence.
-      if (interimText.trim()) {
-        _interimBuf = interimText.trim();
-        clearTimeout(_interimTimer);
-        _interimTimer = setTimeout(() => {
-          const text = _interimBuf;
-          _interimBuf = "";
-          if (text) handleHeard(text);
-        }, 1500);
-      }
-    };
+      });
+  }
 
+  function _vadLoop(stream) {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const source = ctx.createMediaStreamSource(stream);
+    const analyser = ctx.createAnalyser();
+    analyser.fftSize = 512;
+    source.connect(analyser);
+    const buf = new Uint8Array(analyser.frequencyBinCount);
+
+    const THRESHOLD = 20;   // 0–255 amplitude; adjust if too sensitive
+    const SILENCE_MS = 800; // ms of quiet before we cut the recording
+    const MIN_MS = 300;     // ignore clips shorter than this (noise bursts)
+
+    const mime =
+      ["audio/webm;codecs=opus", "audio/webm", "audio/ogg"].find((t) =>
+        MediaRecorder.isTypeSupported(t),
+      ) || "";
+
+    let rec = null,
+      chunks = [],
+      recStart = 0,
+      lastLoud = 0;
+
+    function tick() {
+      requestAnimationFrame(tick);
+      analyser.getByteFrequencyData(buf);
+      const avg = buf.reduce((s, v) => s + v, 0) / buf.length;
+      const now = Date.now();
+      const loud = avg > THRESHOLD && !_speaking && !_thinking;
+      if (loud) lastLoud = now;
+      const silentFor = now - lastLoud;
+
+      if (loud && !rec) {
+        chunks = [];
+        recStart = now;
+        rec = new MediaRecorder(stream, mime ? { mimeType: mime } : {});
+        rec.ondataavailable = (e) => e.data.size > 0 && chunks.push(e.data);
+        rec.onstop = () => {
+          const r = rec;
+          rec = null;
+          if (Date.now() - recStart >= MIN_MS && chunks.length)
+            _transcribe(new Blob(chunks, { type: r.mimeType }));
+        };
+        rec.start(100);
+      }
+
+      if (rec && rec.state === "recording" && silentFor > SILENCE_MS) {
+        rec.stop();
+      }
+    }
+
+    tick();
+  }
+
+  async function _transcribe(blob) {
+    const fd = new FormData();
+    fd.append("audio", blob, "speech.webm");
     try {
-      recog.start();
-    } catch (e) {}
+      const r = await fetch("/api/transcribe", { method: "POST", body: fd });
+      const { text } = await r.json();
+      const t = (text || "").trim();
+      if (t) {
+        console.log("[STT]", t);
+        handleHeard(t);
+      }
+    } catch (e) {
+      console.warn("[STT] error:", e);
+    }
   }
 
   function handleHeard(text) {

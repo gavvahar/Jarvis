@@ -11,10 +11,11 @@ import os
 import re
 import json
 import asyncio
+import tempfile
 from contextlib import asynccontextmanager
 
 import httpx
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, File, UploadFile
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -48,6 +49,17 @@ _provider = "anthropic"
 _conversation = []
 _client_lock = asyncio.Lock()
 _location_context: dict = {}
+
+_whisper = None
+_whisper_lock = asyncio.Lock()
+
+
+def _get_whisper():
+    global _whisper
+    if _whisper is None:
+        from faster_whisper import WhisperModel
+        _whisper = WhisperModel("tiny.en", device="cpu", compute_type="int8")
+    return _whisper
 
 
 def _load_config():
@@ -236,6 +248,11 @@ async def lifespan(application: FastAPI):
             flush=True,
         )
     print("Open http://localhost:5000", flush=True)
+    try:
+        await asyncio.to_thread(_get_whisper)
+        print("[STT] Whisper model ready.", flush=True)
+    except Exception as e:
+        print(f"[STT] Whisper model load failed: {e}", flush=True)
     t1 = asyncio.create_task(_telemetry_loop())
     t2 = asyncio.create_task(_weather_loop())
     yield
@@ -263,6 +280,36 @@ async def api_status():
         "provider": _config.get("provider", "anthropic"),
         "model": _config.get("model", ""),
     }
+
+
+@fast_app.post("/api/transcribe")
+async def api_transcribe(audio: UploadFile = File(...)):
+    data = await audio.read()
+    if not data:
+        return {"text": ""}
+    tmp = None
+    try:
+        with tempfile.NamedTemporaryFile(suffix=".webm", delete=False) as f:
+            f.write(data)
+            tmp = f.name
+
+        def _run():
+            m = _get_whisper()
+            segs, _ = m.transcribe(tmp, language="en", beam_size=1)
+            return " ".join(s.text for s in segs).strip()
+
+        async with _whisper_lock:
+            text = await asyncio.to_thread(_run)
+        return {"text": text}
+    except Exception as e:
+        print(f"[STT] {e}", flush=True)
+        return {"text": ""}
+    finally:
+        if tmp:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
 
 
 @fast_app.post("/api/save_config")
