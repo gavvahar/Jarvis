@@ -25,5 +25,5 @@ jobs:
           python -m pip install --upgrade pip
           pip install tox
 
-      - name: Run tox (all)
-        run: tox -e all
+      - name: Run tox (github)
+        run: tox -e github
