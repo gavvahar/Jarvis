@@ -12,6 +12,8 @@ lint:
 
 fmt:
 	tox -e format
+	make commit
+	git push
 
 commit:
 	git add .
