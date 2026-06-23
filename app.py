@@ -1,24 +1,31 @@
 """
 app.py — J.A.R.V.I.S. Starter Kit backend (FastAPI + python-socketio).
 
+Multi-user: each user authenticates via Authentik (OIDC) and gets their own
+config and conversation history stored in PostgreSQL.
+
 Three providers:
   • anthropic         — Claude, via AsyncAnthropic
   • openai            — GPT models, via AsyncOpenAI
   • openai_compatible — any OpenAI-compatible endpoint (Ollama, OpenRouter, …)
 """
 
+import json
 import os
 import re
-import json
 import asyncio
+import secrets
 import tempfile
+import urllib.parse
 from contextlib import asynccontextmanager
 
+import asyncpg
 import httpx
-from fastapi import FastAPI, Request, File, UploadFile
-from fastapi.responses import HTMLResponse
+from fastapi import FastAPI, HTTPException, Request, File, UploadFile
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 import socketio
 from dotenv import load_dotenv
 
@@ -26,9 +33,7 @@ from personality import JARVIS_SYSTEM
 
 load_dotenv()
 
-# ─── CONFIG ──────────────────────────────────────────────────────────────────
-HERE = os.path.dirname(os.path.abspath(__file__))
-CONFIG_PATH = os.path.join(HERE, "config.json")
+# ─── CONSTANTS ────────────────────────────────────────────────────────────────
 MAX_HISTORY = 20
 
 DEFAULT_MODELS = {
@@ -38,18 +43,204 @@ DEFAULT_MODELS = {
 }
 VALID_PROVIDERS = set(DEFAULT_MODELS.keys())
 
-_config = {
-    "provider": "anthropic",
-    "api_key": "",
-    "model": "claude-haiku-4-5",
-    "base_url": "",
-    "ha_url": "",
-    "ha_token": "",
-}
-_client = None
-_provider = "anthropic"
-_conversation = []
-_client_lock = asyncio.Lock()
+# ─── ENV ──────────────────────────────────────────────────────────────────────
+DATABASE_URL = os.environ.get("DATABASE_URL", "postgresql://jarvis:jarvis@postgres/jarvis")
+AUTHENTIK_URL = os.environ.get("AUTHENTIK_URL", "").rstrip("/")
+OIDC_DISCOVERY_URL = os.environ.get("OIDC_DISCOVERY_URL", "")
+OIDC_CLIENT_ID = os.environ.get("OIDC_CLIENT_ID", "")
+OIDC_CLIENT_SECRET = os.environ.get("OIDC_CLIENT_SECRET", "")
+APP_URL = os.environ.get("APP_URL", "http://localhost:5000").rstrip("/")
+SECRET_KEY = os.environ.get("SECRET_KEY", "change-me")
+
+# ─── DB ───────────────────────────────────────────────────────────────────────
+_db_pool: asyncpg.Pool | None = None
+
+_SCHEMA = """
+CREATE TABLE IF NOT EXISTS user_configs (
+    user_id     TEXT PRIMARY KEY,
+    email       TEXT NOT NULL DEFAULT '',
+    provider    TEXT NOT NULL DEFAULT 'anthropic',
+    api_key     TEXT NOT NULL DEFAULT '',
+    model       TEXT NOT NULL DEFAULT 'claude-haiku-4-5',
+    base_url    TEXT NOT NULL DEFAULT '',
+    ha_url      TEXT NOT NULL DEFAULT '',
+    ha_token    TEXT NOT NULL DEFAULT '',
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS conversations (
+    id          BIGSERIAL PRIMARY KEY,
+    user_id     TEXT NOT NULL REFERENCES user_configs(user_id) ON DELETE CASCADE,
+    role        TEXT NOT NULL,
+    content     TEXT NOT NULL,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_conversations_user ON conversations (user_id, created_at DESC);
+"""
+
+
+async def _db_init():
+    global _db_pool
+    _db_pool = await asyncpg.create_pool(DATABASE_URL, min_size=2, max_size=10)
+    async with _db_pool.acquire() as conn:
+        await conn.execute(_SCHEMA)
+
+
+async def _db_ensure_user(user_id: str, email: str):
+    async with _db_pool.acquire() as conn:
+        await conn.execute(
+            """
+            INSERT INTO user_configs (user_id, email)
+            VALUES ($1, $2)
+            ON CONFLICT (user_id) DO UPDATE SET email = EXCLUDED.email
+            """,
+            user_id,
+            email,
+        )
+
+
+async def _db_load_config(user_id: str) -> dict:
+    async with _db_pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT provider, api_key, model, base_url, ha_url, ha_token "
+            "FROM user_configs WHERE user_id = $1",
+            user_id,
+        )
+    if row is None:
+        return {
+            "provider": "anthropic",
+            "api_key": "",
+            "model": "claude-haiku-4-5",
+            "base_url": "",
+            "ha_url": "",
+            "ha_token": "",
+        }
+    return dict(row)
+
+
+async def _db_save_config(user_id: str, config: dict):
+    async with _db_pool.acquire() as conn:
+        await conn.execute(
+            """
+            UPDATE user_configs
+            SET provider=$2, api_key=$3, model=$4, base_url=$5,
+                ha_url=$6, ha_token=$7, updated_at=NOW()
+            WHERE user_id=$1
+            """,
+            user_id,
+            config["provider"],
+            config["api_key"],
+            config["model"],
+            config["base_url"],
+            config["ha_url"],
+            config["ha_token"],
+        )
+
+
+async def _db_load_conversation(user_id: str) -> list:
+    async with _db_pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT role, content FROM (
+                SELECT role, content, created_at
+                FROM conversations
+                WHERE user_id = $1
+                ORDER BY created_at DESC
+                LIMIT $2
+            ) sub ORDER BY created_at ASC
+            """,
+            user_id,
+            MAX_HISTORY,
+        )
+    return [{"role": r["role"], "content": json.loads(r["content"])} for r in rows]
+
+
+async def _db_append_message(user_id: str, role: str, content):
+    async with _db_pool.acquire() as conn:
+        await conn.execute(
+            "INSERT INTO conversations (user_id, role, content) VALUES ($1, $2, $3)",
+            user_id,
+            role,
+            json.dumps(content),
+        )
+        await conn.execute(
+            """
+            DELETE FROM conversations
+            WHERE user_id = $1 AND id NOT IN (
+                SELECT id FROM conversations
+                WHERE user_id = $1
+                ORDER BY created_at DESC
+                LIMIT $2
+            )
+            """,
+            user_id,
+            MAX_HISTORY,
+        )
+
+
+async def _db_clear_conversation(user_id: str):
+    async with _db_pool.acquire() as conn:
+        await conn.execute("DELETE FROM conversations WHERE user_id = $1", user_id)
+
+
+# ─── AUTH ─────────────────────────────────────────────────────────────────────
+_signer: URLSafeTimedSerializer | None = None
+_oidc_config: dict | None = None
+
+
+async def _fetch_oidc_config():
+    global _oidc_config
+    if not OIDC_DISCOVERY_URL:
+        print("[AUTH] OIDC_DISCOVERY_URL not set — authentication disabled.", flush=True)
+        return
+    try:
+        async with httpx.AsyncClient(timeout=10) as c:
+            r = await c.get(OIDC_DISCOVERY_URL)
+            r.raise_for_status()
+            _oidc_config = r.json()
+        print("[AUTH] OIDC configuration loaded.", flush=True)
+    except Exception as e:
+        print(f"[AUTH] Failed to fetch OIDC discovery document: {e}", flush=True)
+
+
+def _sign_session(user_id: str) -> str:
+    return _signer.dumps(user_id)
+
+
+def _verify_session(value: str) -> str | None:
+    try:
+        return _signer.loads(value, max_age=86400 * 30)
+    except (BadSignature, SignatureExpired):
+        return None
+
+
+def _get_current_user(request: Request) -> str | None:
+    cookie = request.cookies.get("jarvis_session")
+    if not cookie:
+        return None
+    return _verify_session(cookie)
+
+
+def _get_user_from_environ(environ: dict) -> str | None:
+    """Extract and verify the session cookie from a Socket.IO ASGI environ."""
+    headers = dict(environ.get("headers", []))
+    cookie_str = headers.get(b"cookie", b"").decode()
+    for part in cookie_str.split(";"):
+        part = part.strip()
+        if part.startswith("jarvis_session="):
+            return _verify_session(part[len("jarvis_session="):])
+    return None
+
+
+# ─── PER-USER STATE ───────────────────────────────────────────────────────────
+# {user_id: {config, client, provider, conversation}}
+_user_states: dict[str, dict] = {}
+_user_locks: dict[str, asyncio.Lock] = {}
+
+# socket sid → user_id
+_sid_to_user: dict[str, str] = {}
+
 _location_context: dict = {}
 
 _whisper = None
@@ -65,58 +256,37 @@ def _get_whisper():
     return _whisper
 
 
-def _load_config():
-    global _config
-    try:
-        with open(CONFIG_PATH, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        if isinstance(data, dict):
-            _config.update({k: v for k, v in data.items() if v is not None})
-    except FileNotFoundError:
-        pass
-    except Exception as e:
-        print(f"[CONFIG] Could not read config.json: {e}", flush=True)
-
-    ha_url = os.environ.get("HA_URL", "").strip()
-    ha_token = os.environ.get("HA_TOKEN", "").strip()
-    if ha_url:
-        _config["ha_url"] = ha_url
-    if ha_token:
-        _config["ha_token"] = ha_token
-
-    ollama_url = os.environ.get("OLLAMA_BASE_URL", "").strip()
-    if ollama_url:
-        _config["provider"] = "openai_compatible"
-        _config["base_url"] = ollama_url
-        _config["api_key"] = "ollama"
-        ollama_model = os.environ.get("OLLAMA_MODEL", "").strip()
-        if ollama_model:
-            _config["model"] = ollama_model
-
-    provider = _config.get("provider", "anthropic")
-    env_key_map = {
-        "anthropic": os.environ.get("ANTHROPIC_API_KEY", "").strip(),
-        "openai": os.environ.get("OPENAI_API_KEY", "").strip(),
-    }
-    env_key = env_key_map.get(provider, "")
-    if env_key:
-        _config["api_key"] = env_key
-    if _config.get("provider") not in VALID_PROVIDERS:
-        _config["provider"] = "anthropic"
-    if not _config.get("model"):
-        _config["model"] = DEFAULT_MODELS.get(_config["provider"], "")
+def _get_user_lock(user_id: str) -> asyncio.Lock:
+    if user_id not in _user_locks:
+        _user_locks[user_id] = asyncio.Lock()
+    return _user_locks[user_id]
 
 
-def _save_config():
-    try:
-        with open(CONFIG_PATH, "w", encoding="utf-8") as f:
-            json.dump(_config, f, indent=2)
-    except Exception as e:
-        print(f"[CONFIG] Could not write config.json: {e}", flush=True)
+async def _get_user_state(user_id: str) -> dict:
+    if user_id not in _user_states:
+        config = await _db_load_config(user_id)
+        conversation = await _db_load_conversation(user_id)
+        provider = config.get("provider", "anthropic")
+        if provider not in VALID_PROVIDERS:
+            provider = "anthropic"
+        if not config.get("model"):
+            config["model"] = DEFAULT_MODELS.get(provider, "")
+        client = _build_client(provider, config.get("api_key", ""), config.get("base_url", ""))
+        _user_states[user_id] = {
+            "config": config,
+            "client": client,
+            "provider": provider,
+            "conversation": conversation,
+        }
+    return _user_states[user_id]
 
 
+def _user_configured(state: dict) -> bool:
+    return state["client"] is not None
+
+
+# ─── LLM CLIENTS ─────────────────────────────────────────────────────────────
 def _build_client(provider, api_key, base_url=""):
-    """Async SDK client for conversations."""
     if not api_key and provider != "openai_compatible":
         return None
     try:
@@ -136,7 +306,6 @@ def _build_client(provider, api_key, base_url=""):
 
 
 def _build_sync_client(provider, api_key, base_url=""):
-    """Sync client used only during config validation."""
     if not api_key and provider != "openai_compatible":
         return None
     try:
@@ -155,7 +324,7 @@ def _build_sync_client(provider, api_key, base_url=""):
         return None
 
 
-# ─── HOME ASSISTANT ──────────────────────────────────────────────────────────
+# ─── HOME ASSISTANT ───────────────────────────────────────────────────────────
 HA_TOOLS_ANTHROPIC = [
     {
         "name": "get_ha_states",
@@ -261,19 +430,19 @@ HA_TOOLS_OPENAI = [
 ]
 
 
-def _ha_configured():
-    return bool(_config.get("ha_url") and _config.get("ha_token"))
+def _ha_configured(config: dict) -> bool:
+    return bool(config.get("ha_url") and config.get("ha_token"))
 
 
-def _ha_headers():
+def _ha_headers(config: dict) -> dict:
     return {
-        "Authorization": f"Bearer {_config['ha_token']}",
+        "Authorization": f"Bearer {config['ha_token']}",
         "Content-Type": "application/json",
     }
 
 
-def _get_ha_tools(provider):
-    if not _ha_configured():
+def _get_ha_tools(config: dict, provider: str) -> list:
+    if not _ha_configured(config):
         return []
     return HA_TOOLS_ANTHROPIC if provider == "anthropic" else HA_TOOLS_OPENAI
 
@@ -294,10 +463,10 @@ async def _validate_ha(url, token):
         return False, f"Could not reach Home Assistant: {e}"
 
 
-async def _ha_get_states(domain=None):
-    url = _config["ha_url"].rstrip("/") + "/api/states"
+async def _ha_get_states(config: dict, domain=None):
+    url = config["ha_url"].rstrip("/") + "/api/states"
     async with httpx.AsyncClient(timeout=8) as c:
-        r = await c.get(url, headers=_ha_headers())
+        r = await c.get(url, headers=_ha_headers(config))
     r.raise_for_status()
     states = r.json()
     if domain:
@@ -312,13 +481,13 @@ async def _ha_get_states(domain=None):
     return "\n".join(lines) if lines else "No entities found."
 
 
-async def _ha_call_service(domain, service, entity_id=None, service_data=None):
-    url = _config["ha_url"].rstrip("/") + f"/api/services/{domain}/{service}"
+async def _ha_call_service(config: dict, domain, service, entity_id=None, service_data=None):
+    url = config["ha_url"].rstrip("/") + f"/api/services/{domain}/{service}"
     payload = dict(service_data or {})
     if entity_id:
         payload["entity_id"] = entity_id
     async with httpx.AsyncClient(timeout=8) as c:
-        r = await c.post(url, headers=_ha_headers(), json=payload)
+        r = await c.post(url, headers=_ha_headers(config), json=payload)
     return (
         "Done."
         if r.status_code in (200, 201)
@@ -326,12 +495,13 @@ async def _ha_call_service(domain, service, entity_id=None, service_data=None):
     )
 
 
-async def _execute_ha_tool(name, args):
+async def _execute_ha_tool(config: dict, name, args):
     try:
         if name == "get_ha_states":
-            return await _ha_get_states(args.get("domain"))
+            return await _ha_get_states(config, args.get("domain"))
         if name == "call_ha_service":
             return await _ha_call_service(
+                config,
                 args["domain"],
                 args["service"],
                 args.get("entity_id"),
@@ -342,6 +512,7 @@ async def _execute_ha_tool(name, args):
         return f"Error: {e}"
 
 
+# ─── CONFIG VALIDATION ────────────────────────────────────────────────────────
 def _openai_create_sync(client, model, messages, stream, max_out=500):
     last = None
     for extra in ({"max_tokens": max_out}, {"max_completion_tokens": max_out}, {}):
@@ -353,12 +524,7 @@ def _openai_create_sync(client, model, messages, stream, max_out=500):
             last = e
             if any(
                 x in str(e).lower()
-                for x in (
-                    "max_tokens",
-                    "max_completion_tokens",
-                    "unsupported",
-                    "temperature",
-                )
+                for x in ("max_tokens", "max_completion_tokens", "unsupported", "temperature")
             ):
                 continue
             raise
@@ -369,10 +535,7 @@ def _validate(provider, api_key, model, base_url=""):
     client = _build_sync_client(provider, api_key, base_url)
     if client is None:
         pkg = "anthropic" if provider == "anthropic" else "openai"
-        return (
-            False,
-            f"Could not initialise the client. Is the '{pkg}' package installed?",
-        )
+        return False, f"Could not initialise the client. Is the '{pkg}' package installed?"
     model = model or DEFAULT_MODELS.get(provider, "")
     if not model:
         return False, "Please choose a model."
@@ -395,31 +558,15 @@ def _validate(provider, api_key, model, base_url=""):
     except Exception as e:
         msg = str(e)
         low = msg.lower()
-        if (
-            "authentication" in low
-            or "401" in low
-            or ("invalid" in low and "key" in low)
-        ):
+        if "authentication" in low or "401" in low or ("invalid" in low and "key" in low):
             return False, "That key was rejected. Check it and try again."
         if "404" in low or "not_found" in low or ("model" in low and "exist" in low):
             return False, f"The model '{model}' wasn't found for this key/provider."
-        if (
-            "credit" in low
-            or "billing" in low
-            or "quota" in low
-            or "insufficient" in low
-        ):
+        if "credit" in low or "billing" in low or "quota" in low or "insufficient" in low:
             return False, "The key is valid but the account has no available credit."
         if "connection" in low or "could not" in low or "getaddrinfo" in low:
-            return (
-                False,
-                "Couldn't reach the endpoint. Check the base URL / your connection.",
-            )
+            return False, "Couldn't reach the endpoint. Check the base URL / your connection."
         return False, f"Couldn't connect: {msg[:160]}"
-
-
-def configured():
-    return _client is not None
 
 
 # ─── SOCKET.IO + FASTAPI ─────────────────────────────────────────────────────
@@ -428,23 +575,11 @@ sio = socketio.AsyncServer(async_mode="asgi", cors_allowed_origins="*")
 
 @asynccontextmanager
 async def lifespan(application: FastAPI):
-    global _client, _provider
-    _load_config()
-    _provider = _config.get("provider", "anthropic")
-    _client = _build_client(
-        _provider, _config.get("api_key", ""), _config.get("base_url", "")
-    )
-    if configured():
-        print(
-            f"J.A.R.V.I.S. Starter Kit - online ({_provider} / {_config.get('model')}).",
-            flush=True,
-        )
-    else:
-        print(
-            "J.A.R.V.I.S. Starter Kit - no API key yet; the setup screen will ask for one.",
-            flush=True,
-        )
-    print("Open http://localhost:5000", flush=True)
+    global _signer
+    _signer = URLSafeTimedSerializer(SECRET_KEY)
+    await _db_init()
+    await _fetch_oidc_config()
+    print("J.A.R.V.I.S. Starter Kit - online. Open http://localhost:5000", flush=True)
     try:
         await asyncio.to_thread(_get_whisper)
         print("[STT] Whisper model ready.", flush=True)
@@ -455,6 +590,8 @@ async def lifespan(application: FastAPI):
     yield
     t1.cancel()
     t2.cancel()
+    if _db_pool:
+        await _db_pool.close()
 
 
 fast_app = FastAPI(lifespan=lifespan)
@@ -464,25 +601,108 @@ templates = Jinja2Templates(directory="templates")
 app = socketio.ASGIApp(sio, other_asgi_app=fast_app)
 
 
+# ─── AUTH ROUTES ─────────────────────────────────────────────────────────────
+@fast_app.get("/login")
+async def login(request: Request):
+    if not _oidc_config:
+        raise HTTPException(503, "OIDC not configured — set OIDC_DISCOVERY_URL in .env")
+    state = secrets.token_urlsafe(32)
+    params = {
+        "client_id": OIDC_CLIENT_ID,
+        "response_type": "code",
+        "scope": "openid email profile",
+        "redirect_uri": f"{APP_URL}/auth/callback",
+        "state": state,
+    }
+    url = _oidc_config["authorization_endpoint"] + "?" + urllib.parse.urlencode(params)
+    response = RedirectResponse(url)
+    response.set_cookie("oidc_state", state, httponly=True, max_age=300, samesite="lax")
+    return response
+
+
+@fast_app.get("/auth/callback")
+async def auth_callback(request: Request):
+    code = request.query_params.get("code")
+    state = request.query_params.get("state")
+    stored_state = request.cookies.get("oidc_state")
+    if not code or not state or state != stored_state:
+        raise HTTPException(400, "Invalid OAuth2 callback — state mismatch or missing code")
+
+    try:
+        async with httpx.AsyncClient(timeout=10) as c:
+            r = await c.post(
+                _oidc_config["token_endpoint"],
+                data={
+                    "grant_type": "authorization_code",
+                    "code": code,
+                    "redirect_uri": f"{APP_URL}/auth/callback",
+                    "client_id": OIDC_CLIENT_ID,
+                    "client_secret": OIDC_CLIENT_SECRET,
+                },
+            )
+            r.raise_for_status()
+            tokens = r.json()
+
+            r = await c.get(
+                _oidc_config["userinfo_endpoint"],
+                headers={"Authorization": f"Bearer {tokens['access_token']}"},
+            )
+            r.raise_for_status()
+            userinfo = r.json()
+    except Exception as e:
+        raise HTTPException(502, f"OIDC token exchange failed: {e}")
+
+    user_id = userinfo["sub"]
+    email = userinfo.get("email", "")
+    await _db_ensure_user(user_id, email)
+
+    response = RedirectResponse("/", status_code=303)
+    response.set_cookie(
+        "jarvis_session",
+        _sign_session(user_id),
+        httponly=True,
+        max_age=86400 * 30,
+        samesite="lax",
+    )
+    response.delete_cookie("oidc_state")
+    return response
+
+
+@fast_app.get("/logout")
+async def logout():
+    response = RedirectResponse("/login", status_code=303)
+    response.delete_cookie("jarvis_session")
+    return response
+
+
 # ─── HTTP ROUTES ─────────────────────────────────────────────────────────────
 @fast_app.get("/", response_class=HTMLResponse)
 async def index(request: Request):
+    if not _get_current_user(request):
+        return RedirectResponse("/login")
     return templates.TemplateResponse(request, "index.html")
 
 
 @fast_app.get("/api/status")
-async def api_status():
+async def api_status(request: Request):
+    user_id = _get_current_user(request)
+    if not user_id:
+        raise HTTPException(401)
+    state = await _get_user_state(user_id)
+    config = state["config"]
     return {
-        "configured": configured(),
-        "provider": _config.get("provider", "anthropic"),
-        "model": _config.get("model", ""),
-        "ha_configured": _ha_configured(),
-        "ha_url": _config.get("ha_url", ""),
+        "configured": _user_configured(state),
+        "provider": config.get("provider", "anthropic"),
+        "model": config.get("model", ""),
+        "ha_configured": _ha_configured(config),
+        "ha_url": config.get("ha_url", ""),
     }
 
 
 @fast_app.post("/api/transcribe")
-async def api_transcribe(audio: UploadFile = File(...)):
+async def api_transcribe(request: Request, audio: UploadFile = File(...)):
+    if not _get_current_user(request):
+        raise HTTPException(401)
     data = await audio.read()
     if not data:
         return {"text": ""}
@@ -519,13 +739,15 @@ async def api_transcribe(audio: UploadFile = File(...)):
 
 @fast_app.post("/api/save_config")
 async def api_save_config(request: Request):
-    global _client, _provider
+    user_id = _get_current_user(request)
+    if not user_id:
+        raise HTTPException(401)
+
     data = await request.json()
     provider = (data.get("provider") or "anthropic").strip()
     key = (data.get("key") or "").strip()
     model = (data.get("model") or "").strip()
     base_url = (data.get("base_url") or "").strip()
-
     ha_url = (data.get("ha_url") or "").strip()
     ha_token = (data.get("ha_token") or "").strip()
 
@@ -547,49 +769,57 @@ async def api_save_config(request: Request):
         if not ha_ok:
             return {"ok": False, "error": f"Home Assistant: {ha_err}"}
 
-    async with _client_lock:
-        _config.update(
-            {
-                "provider": provider,
-                "api_key": key,
-                "model": model,
-                "base_url": base_url,
-                "ha_url": ha_url,
-                "ha_token": ha_token,
-            }
-        )
-        _save_config()
-        _client = _build_client(provider, key, base_url)
-        _provider = provider
+    new_config = {
+        "provider": provider,
+        "api_key": key,
+        "model": model,
+        "base_url": base_url,
+        "ha_url": ha_url,
+        "ha_token": ha_token,
+    }
+
+    async with _get_user_lock(user_id):
+        await _db_save_config(user_id, new_config)
+        state = await _get_user_state(user_id)
+        state["config"].update(new_config)
+        state["client"] = _build_client(provider, key, base_url)
+        state["provider"] = provider
+
     return {"ok": True}
 
 
 @fast_app.post("/api/save_ha")
 async def api_save_ha(request: Request):
+    user_id = _get_current_user(request)
+    if not user_id:
+        raise HTTPException(401)
+
     data = await request.json()
     ha_url = (data.get("ha_url") or "").strip()
     ha_token = (data.get("ha_token") or "").strip()
 
-    effective_token = ha_token or _config.get("ha_token", "")
+    state = await _get_user_state(user_id)
+    config = state["config"]
+    effective_token = ha_token or config.get("ha_token", "")
 
     if ha_url and effective_token:
         ha_ok, ha_err = await _validate_ha(ha_url, effective_token)
         if not ha_ok:
             return {"ok": False, "error": ha_err}
 
-    async with _client_lock:
-        _config["ha_url"] = ha_url
+    async with _get_user_lock(user_id):
+        config["ha_url"] = ha_url
         if ha_token:
-            _config["ha_token"] = ha_token
+            config["ha_token"] = ha_token
         elif not ha_url:
-            _config["ha_token"] = ""
-        _save_config()
+            config["ha_token"] = ""
+        await _db_save_config(user_id, config)
 
-    return {"ok": True, "ha_configured": _ha_configured()}
+    return {"ok": True, "ha_configured": _ha_configured(config)}
 
 
 # ─── LLM STREAMING ───────────────────────────────────────────────────────────
-def _build_system_prompt():
+def _build_system_prompt(config: dict) -> str:
     system = JARVIS_SYSTEM
     ctx = _location_context
     if ctx:
@@ -611,7 +841,7 @@ def _build_system_prompt():
                 + ", ".join(parts)
                 + "."
             )
-    if _ha_configured():
+    if _ha_configured(config):
         system += (
             "\n\nHOME AUTOMATION — you are connected to Home Assistant via tools. "
             "Use get_ha_states to check device states and call_ha_service to control "
@@ -632,12 +862,7 @@ async def _openai_stream_async(client, model, messages, max_out=500, **extra_kwa
             last = e
             if any(
                 x in str(e).lower()
-                for x in (
-                    "max_tokens",
-                    "max_completion_tokens",
-                    "unsupported",
-                    "temperature",
-                )
+                for x in ("max_tokens", "max_completion_tokens", "unsupported", "temperature")
             ):
                 continue
             raise
@@ -654,16 +879,18 @@ def _split_sentences(buf):
         if not m:
             break
         out.append(m.group(1).strip())
-        buf = buf[m.end() :]
+        buf = buf[m.end():]
     return out, buf
 
 
-async def _stream_reply(on_text):
-    provider = _provider
-    model = _config.get("model") or DEFAULT_MODELS.get(provider, "")
-    system = _build_system_prompt()
-    ha_tools = _get_ha_tools(provider)
-    local_msgs = list(_conversation)
+async def _stream_reply(state: dict, on_text):
+    provider = state["provider"]
+    config = state["config"]
+    client = state["client"]
+    model = config.get("model") or DEFAULT_MODELS.get(provider, "")
+    system = _build_system_prompt(config)
+    ha_tools = _get_ha_tools(config, provider)
+    local_msgs = list(state["conversation"])
 
     for _ in range(4):
         if provider == "anthropic":
@@ -671,18 +898,12 @@ async def _stream_reply(on_text):
             stream_kwargs = dict(
                 model=model,
                 max_tokens=500,
-                system=[
-                    {
-                        "type": "text",
-                        "text": system,
-                        "cache_control": {"type": "ephemeral"},
-                    }
-                ],
+                system=[{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}],
                 messages=local_msgs,
             )
             if ha_tools:
                 stream_kwargs["tools"] = ha_tools
-            async with _client.messages.stream(**stream_kwargs) as stream:
+            async with client.messages.stream(**stream_kwargs) as stream:
                 async for delta in stream.text_stream:
                     full += delta
                     await on_text(delta)
@@ -692,13 +913,9 @@ async def _stream_reply(on_text):
             results = []
             for block in final.content:
                 if block.type == "tool_use":
-                    result = await _execute_ha_tool(block.name, dict(block.input))
+                    result = await _execute_ha_tool(config, block.name, dict(block.input))
                     results.append(
-                        {
-                            "type": "tool_result",
-                            "tool_use_id": block.id,
-                            "content": result,
-                        }
+                        {"type": "tool_result", "tool_use_id": block.id, "content": result}
                     )
             local_msgs.append({"role": "assistant", "content": final.content})
             local_msgs.append({"role": "user", "content": results})
@@ -709,7 +926,7 @@ async def _stream_reply(on_text):
             finish_reason = None
             full = ""
             stream_extra = {"tools": ha_tools} if ha_tools else {}
-            stream = await _openai_stream_async(_client, model, msgs, **stream_extra)
+            stream = await _openai_stream_async(client, model, msgs, **stream_extra)
             async for chunk in stream:
                 try:
                     choice = chunk.choices[0]
@@ -734,11 +951,7 @@ async def _stream_reply(on_text):
                             tool_calls_acc[idx]["args"] += tc.function.arguments
                         if tc.id and not tool_calls_acc[idx]["id"]:
                             tool_calls_acc[idx]["id"] = tc.id
-                        if (
-                            tc.function
-                            and tc.function.name
-                            and not tool_calls_acc[idx]["name"]
-                        ):
+                        if tc.function and tc.function.name and not tool_calls_acc[idx]["name"]:
                             tool_calls_acc[idx]["name"] = tc.function.name
             if finish_reason != "tool_calls" or not ha_tools:
                 return full
@@ -746,7 +959,7 @@ async def _stream_reply(on_text):
             tool_msgs = []
             for acc in tool_calls_acc.values():
                 args = json.loads(acc["args"] or "{}")
-                result = await _execute_ha_tool(acc["name"], args)
+                result = await _execute_ha_tool(config, acc["name"], args)
                 tc_list.append(
                     {
                         "id": acc["id"],
@@ -757,26 +970,30 @@ async def _stream_reply(on_text):
                 tool_msgs.append(
                     {"role": "tool", "tool_call_id": acc["id"], "content": result}
                 )
-            local_msgs.append(
-                {"role": "assistant", "content": None, "tool_calls": tc_list}
-            )
+            local_msgs.append({"role": "assistant", "content": None, "tool_calls": tc_list})
             local_msgs.extend(tool_msgs)
 
     return full
 
 
-async def _process_message(text):
-    global _conversation
-
-    if not configured():
-        await sio.emit("need_setup", {})
-        await sio.emit("status", {"state": "idle"})
+async def _process_message(sid: str, text: str):
+    user_id = _sid_to_user.get(sid)
+    if not user_id:
         return
 
-    await sio.emit("status", {"state": "thinking"})
-    _conversation.append({"role": "user", "content": text})
-    if len(_conversation) > MAX_HISTORY:
-        _conversation = _conversation[-MAX_HISTORY:]
+    state = await _get_user_state(user_id)
+
+    if not _user_configured(state):
+        await sio.emit("need_setup", {}, to=sid)
+        await sio.emit("status", {"state": "idle"}, to=sid)
+        return
+
+    await sio.emit("status", {"state": "thinking"}, to=sid)
+
+    state["conversation"].append({"role": "user", "content": text})
+    await _db_append_message(user_id, "user", text)
+    if len(state["conversation"]) > MAX_HISTORY:
+        state["conversation"] = state["conversation"][-MAX_HISTORY:]
 
     seq = 0
     sent_buf = ""
@@ -785,58 +1002,81 @@ async def _process_message(text):
     async def on_text(delta):
         nonlocal sent_buf, seq, first
         if first:
-            await sio.emit("status", {"state": "speaking"})
+            await sio.emit("status", {"state": "speaking"}, to=sid)
             first = False
         sent_buf += delta
         sents, sent_buf = _split_sentences(sent_buf)
         for s in sents:
             if s:
-                await sio.emit("speak_sentence", {"text": s, "seq": seq})
+                await sio.emit("speak_sentence", {"text": s, "seq": seq}, to=sid)
                 seq += 1
 
     try:
-        full = await _stream_reply(on_text)
+        full = await _stream_reply(state, on_text)
         if sent_buf.strip():
-            await sio.emit("speak_sentence", {"text": sent_buf.strip(), "seq": seq})
-        _conversation.append({"role": "assistant", "content": full.strip() or "…"})
-        await sio.emit("response_done", {"text": full.strip()})
-        await sio.emit("status", {"state": "idle"})
+            await sio.emit("speak_sentence", {"text": sent_buf.strip(), "seq": seq}, to=sid)
+        reply = full.strip() or "…"
+        state["conversation"].append({"role": "assistant", "content": reply})
+        await _db_append_message(user_id, "assistant", reply)
+        if len(state["conversation"]) > MAX_HISTORY:
+            state["conversation"] = state["conversation"][-MAX_HISTORY:]
+        await sio.emit("response_done", {"text": reply}, to=sid)
+        await sio.emit("status", {"state": "idle"}, to=sid)
 
     except Exception as e:
         print(f"[BRAIN] {e}", flush=True)
         low = str(e).lower()
         if "authentication" in low or "401" in low:
             msg = "My key's been refused, sir — best re-enter it."
-            await sio.emit("need_setup", {})
+            await sio.emit("need_setup", {}, to=sid)
         elif "overloaded" in low or "429" in low or "rate" in low or "529" in low:
             msg = "Briefly overloaded, sir — worth trying again in a moment."
         else:
             msg = "Something's gone wrong on my end, sir. Do try that again."
-        if _conversation and _conversation[-1].get("role") == "user":
-            _conversation.pop()
-        await sio.emit("speak_sentence", {"text": msg, "seq": 0})
-        await sio.emit("response_done", {"text": msg})
-        await sio.emit("status", {"state": "idle"})
+        conv = state["conversation"]
+        if conv and conv[-1].get("role") == "user":
+            conv.pop()
+            await _db_clear_conversation(user_id)
+            for msg_entry in conv:
+                await _db_append_message(user_id, msg_entry["role"], msg_entry["content"])
+        await sio.emit("speak_sentence", {"text": msg, "seq": 0}, to=sid)
+        await sio.emit("response_done", {"text": msg}, to=sid)
+        await sio.emit("status", {"state": "idle"}, to=sid)
 
 
 # ─── SOCKET.IO EVENTS ────────────────────────────────────────────────────────
 @sio.on("connect")
 async def on_connect(sid, environ, auth=None):
+    user_id = _get_user_from_environ(environ)
+    if not user_id:
+        raise ConnectionRefusedError("unauthorized")
+    _sid_to_user[sid] = user_id
+    state = await _get_user_state(user_id)
     await sio.emit("status", {"state": "idle"}, to=sid)
-    await sio.emit("config_state", {"configured": configured()}, to=sid)
+    await sio.emit("config_state", {"configured": _user_configured(state)}, to=sid)
+
+
+@sio.on("disconnect")
+async def on_disconnect(sid):
+    _sid_to_user.pop(sid, None)
 
 
 @sio.on("user_message")
 async def on_user_message(sid, data):
     text = ((data or {}).get("text") or "").strip()
     if text:
-        asyncio.create_task(_process_message(text))
+        asyncio.create_task(_process_message(sid, text))
 
 
 @sio.on("reset_chat")
 async def on_reset_chat(sid, data=None):
-    global _conversation
-    _conversation = []
+    user_id = _sid_to_user.get(sid)
+    if not user_id:
+        return
+    state = _user_states.get(user_id)
+    if state:
+        state["conversation"] = []
+    await _db_clear_conversation(user_id)
 
 
 # ─── BACKGROUND TASKS ────────────────────────────────────────────────────────
