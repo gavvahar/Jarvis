@@ -18,8 +18,8 @@ jobs:
 
       - name: Gather PR context
         run: |
-          git log "origin/${{ github.base_ref }}...HEAD" --format="%s" > /tmp/commits.txt || true
-          git log "origin/${{ github.base_ref }}...HEAD" --format="%s" | head -1 > /tmp/first_subject.txt || true
+          git log "origin/${{ github.base_ref }}...HEAD" --format="%s" --no-merges > /tmp/commits.txt || true
+          git log "origin/${{ github.base_ref }}...HEAD" --format="%s" --no-merges | head -1 > /tmp/first_subject.txt || true
           git diff "origin/${{ github.base_ref }}...HEAD" --stat > /tmp/diff_stat.txt || true
           git diff "origin/${{ github.base_ref }}...HEAD" | head -c 51200 > /tmp/diff.txt || true
 
