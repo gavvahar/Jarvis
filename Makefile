@@ -8,4 +8,4 @@ docker:
 lint:
 	tox -e all
 	git add .
-	git commit -m "lint: run tox and fix issues" || "nothing to commit"
+	git commit -m "lint: run tox and fix issues" || echo "nothing to commit"
