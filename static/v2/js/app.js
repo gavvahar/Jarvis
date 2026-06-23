@@ -212,7 +212,7 @@
     source.connect(analyser);
     const buf = new Uint8Array(analyser.frequencyBinCount);
 
-    const THRESHOLD = 20;   // 0–255 amplitude; adjust if too sensitive
+    const THRESHOLD = 30;   // 0–255 amplitude; adjust if too sensitive
     const SILENCE_MS = 800; // ms of quiet before we cut the recording
     const MIN_MS = 300;     // ignore clips shorter than this (noise bursts)
 
@@ -264,9 +264,11 @@
       const r = await fetch("/api/transcribe", { method: "POST", body: fd });
       const { text } = await r.json();
       const t = (text || "").trim();
-      if (t) {
+      if (t && t.split(/\s+/).length >= 2) {
         console.log("[STT]", t);
         handleHeard(t);
+      } else if (t) {
+        console.log("[STT] ignored (too short):", t);
       }
     } catch (e) {
       console.warn("[STT] error:", e);

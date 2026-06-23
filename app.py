@@ -295,7 +295,10 @@ async def api_transcribe(audio: UploadFile = File(...)):
 
         def _run():
             m = _get_whisper()
-            segs, _ = m.transcribe(tmp, language="en", beam_size=1)
+            segs, _ = m.transcribe(
+                tmp, language="en", beam_size=1,
+                vad_filter=True, no_speech_threshold=0.6,
+            )
             return " ".join(s.text for s in segs).strip()
 
         async with _whisper_lock:
