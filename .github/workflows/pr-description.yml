@@ -33,7 +33,7 @@ jobs:
           curl -fsSL \
             "https://github.com/orhun/git-cliff/releases/download/v${CLIFF_VER}/git-cliff-${CLIFF_VER}-x86_64-unknown-linux-musl.tar.gz" \
             | tar -xz -C /tmp
-          CLIFF="/tmp/git-cliff-${CLIFF_VER}-x86_64-unknown-linux-musl/git-cliff"
+          CLIFF=$(find /tmp -name "git-cliff" -type f | head -1)
           chmod +x "$CLIFF"
 
           "$CLIFF" --config .github/scripts/cliff.toml "origin/${{ github.base_ref }}..HEAD" \
