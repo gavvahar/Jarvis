@@ -526,7 +526,7 @@
       const key = (keyInput.value || "").trim();
       const model = modelSel.value || (modelCustom.value || "").trim();
       const base_url = (baseUrl.value || "").trim();
-      if (!key) {
+      if (!key && provider !== "openai_compatible") {
         setupMsg.className = "err";
         setupMsg.textContent = "Please paste your API key.";
         return;
