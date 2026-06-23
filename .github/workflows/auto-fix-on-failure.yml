@@ -1,0 +1,80 @@
+name: Auto-Fix on Test Failure
+
+on:
+  workflow_run:
+    workflows: ["Code Quality"]
+    types: [completed]
+
+jobs:
+  fix-and-report:
+    if: ${{ github.event.workflow_run.conclusion == 'failure' }}
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+          cache: "pip"
+
+      - name: Install tox
+        run: |
+          python -m pip install --upgrade pip
+          pip install tox
+
+      - name: Attempt auto-format
+        id: format
+        shell: bash
+        run: |
+          set -o pipefail
+          tox -e format 2>&1 | tee /tmp/format_output.txt
+        continue-on-error: true
+
+      - name: Create failure issue
+        if: steps.format.outcome == 'failure'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const formatOutput = fs.readFileSync('/tmp/format_output.txt', 'utf8').trim();
+            const branch = context.payload.workflow_run.head_branch;
+            const fullSha = context.payload.workflow_run.head_sha;
+            const shortSha = fullSha.substring(0, 7);
+            const failedRunUrl = context.payload.workflow_run.html_url;
+            const commitUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/commit/${fullSha}`;
+            const thisRunUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+
+            const body = [
+              '## CI Failure Report',
+              '',
+              'The **Code Quality** workflow failed. An automatic `tox -e format` fix was attempted but also failed.',
+              'Manual intervention is required.',
+              '',
+              '| | |',
+              '|---|---|',
+              `| **Branch** | \`${branch}\` |`,
+              `| **Commit** | [${shortSha}](${commitUrl}) |`,
+              `| **Failed Test Run** | [View logs](${failedRunUrl}) |`,
+              `| **This Fix Attempt** | [View logs](${thisRunUrl}) |`,
+              '',
+              '---',
+              '',
+              '### Auto-Format Failure Output (`tox -e format`)',
+              '',
+              '```',
+              formatOutput,
+              '```',
+            ].join('\n');
+
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `CI: tests and auto-format failed on \`${branch}\` (${shortSha})`,
+              body,
+            });
