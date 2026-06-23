@@ -133,59 +133,59 @@ jobs:
 
           echo "✅ template succeeded"
 
-      # ── Method 3: Ollama (local LLM on the runner) ───────────────────────────
+      # ── Method 3: Ollama (remote at ollama.gavva.dev) ────────────────────────
       - name: "[3] Ollama"
         id: ollama
         if: steps.gitcliff.outcome == 'failure' && steps.template.outcome == 'failure'
         continue-on-error: true
-        timeout-minutes: 10
+        timeout-minutes: 3
         run: |
           set -euo pipefail
 
-          curl -fsSL https://ollama.com/install.sh | sh
-
-          ollama serve > /tmp/ollama.log 2>&1 &
-
-          # Wait until the API is up
-          for i in $(seq 1 15); do
-            curl -sf http://localhost:11434/api/tags > /dev/null 2>&1 && break
-            sleep 2
-          done
-
-          # Use the smallest available model
-          ollama pull llama3.2:1b
-
           python3 - << 'PYEOF'
-          import subprocess, sys
+          import json, sys, urllib.request, urllib.error
 
           commits   = open('/tmp/commits.txt').read().strip()
           diff_stat = open('/tmp/diff_stat.txt').read().strip()
 
           prompt = f"""Generate a GitHub pull request title and description.
 
-          Commits:
-          {commits}
+Commits:
+{commits}
 
-          Files changed:
-          {diff_stat}
+Files changed:
+{diff_stat}
 
-          Reply in this exact format (no extra text):
-          TITLE: <concise title under 70 characters>
-          BODY:
-          ## Summary
-          - <bullet>
-          - <bullet>
+Reply in this exact format (no extra text):
+TITLE: <concise title under 70 characters>
+BODY:
+## Summary
+- <bullet>
+- <bullet>
 
-          ## Test plan
-          - [ ] <item>
-          - [ ] <item>"""
+## Test plan
+- [ ] <item>
+- [ ] <item>"""
 
-          result = subprocess.run(
-              ['ollama', 'run', 'llama3.2:1b', prompt],
-              capture_output=True, text=True, timeout=120,
+          payload = json.dumps({
+              "model": "qwen2.5:14b",
+              "prompt": prompt,
+              "stream": False,
+          }).encode()
+
+          req = urllib.request.Request(
+              "https://ollama.gavva.dev/api/generate",
+              data=payload,
+              headers={"Content-Type": "application/json"},
           )
 
-          output = result.stdout.strip()
+          try:
+              with urllib.request.urlopen(req, timeout=60) as resp:
+                  output = json.loads(resp.read()).get("response", "").strip()
+          except urllib.error.URLError as e:
+              print(f"Ollama unreachable: {e}", file=sys.stderr)
+              sys.exit(1)
+
           if not output:
               sys.exit(1)
 
