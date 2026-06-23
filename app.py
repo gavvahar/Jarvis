@@ -60,6 +60,7 @@ def _get_whisper():
     global _whisper
     if _whisper is None:
         from faster_whisper import WhisperModel
+
         _whisper = WhisperModel("tiny.en", device="cpu", compute_type="int8")
     return _whisper
 
@@ -196,7 +197,7 @@ HA_TOOLS_ANTHROPIC = [
                 },
                 "service_data": {
                     "type": "object",
-                    "description": "Optional extra data, e.g. {\"brightness_pct\": 50} for lights.",
+                    "description": 'Optional extra data, e.g. {"brightness_pct": 50} for lights.',
                 },
             },
             "required": ["domain", "service"],
@@ -250,7 +251,7 @@ HA_TOOLS_OPENAI = [
                     },
                     "service_data": {
                         "type": "object",
-                        "description": "Optional extra data, e.g. {\"brightness_pct\": 50} for lights.",
+                        "description": 'Optional extra data, e.g. {"brightness_pct": 50} for lights.',
                     },
                 },
                 "required": ["domain", "service"],
@@ -318,7 +319,11 @@ async def _ha_call_service(domain, service, entity_id=None, service_data=None):
         payload["entity_id"] = entity_id
     async with httpx.AsyncClient(timeout=8) as c:
         r = await c.post(url, headers=_ha_headers(), json=payload)
-    return "Done." if r.status_code in (200, 201) else f"HA returned {r.status_code}: {r.text[:120]}"
+    return (
+        "Done."
+        if r.status_code in (200, 201)
+        else f"HA returned {r.status_code}: {r.text[:120]}"
+    )
 
 
 async def _execute_ha_tool(name, args):
@@ -490,8 +495,11 @@ async def api_transcribe(audio: UploadFile = File(...)):
         def _run():
             m = _get_whisper()
             segs, _ = m.transcribe(
-                tmp, language="en", beam_size=1,
-                vad_filter=True, no_speech_threshold=0.6,
+                tmp,
+                language="en",
+                beam_size=1,
+                vad_filter=True,
+                no_speech_threshold=0.6,
             )
             return " ".join(s.text for s in segs).strip()
 
@@ -639,7 +647,13 @@ async def _stream_reply(on_text):
             stream_kwargs = dict(
                 model=model,
                 max_tokens=500,
-                system=[{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}],
+                system=[
+                    {
+                        "type": "text",
+                        "text": system,
+                        "cache_control": {"type": "ephemeral"},
+                    }
+                ],
                 messages=local_msgs,
             )
             if ha_tools:
@@ -655,7 +669,13 @@ async def _stream_reply(on_text):
             for block in final.content:
                 if block.type == "tool_use":
                     result = await _execute_ha_tool(block.name, dict(block.input))
-                    results.append({"type": "tool_result", "tool_use_id": block.id, "content": result})
+                    results.append(
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": block.id,
+                            "content": result,
+                        }
+                    )
             local_msgs.append({"role": "assistant", "content": final.content})
             local_msgs.append({"role": "user", "content": results})
 
@@ -690,7 +710,11 @@ async def _stream_reply(on_text):
                             tool_calls_acc[idx]["args"] += tc.function.arguments
                         if tc.id and not tool_calls_acc[idx]["id"]:
                             tool_calls_acc[idx]["id"] = tc.id
-                        if tc.function and tc.function.name and not tool_calls_acc[idx]["name"]:
+                        if (
+                            tc.function
+                            and tc.function.name
+                            and not tool_calls_acc[idx]["name"]
+                        ):
                             tool_calls_acc[idx]["name"] = tc.function.name
             if finish_reason != "tool_calls" or not ha_tools:
                 return full
@@ -699,13 +723,19 @@ async def _stream_reply(on_text):
             for acc in tool_calls_acc.values():
                 args = json.loads(acc["args"] or "{}")
                 result = await _execute_ha_tool(acc["name"], args)
-                tc_list.append({
-                    "id": acc["id"],
-                    "type": "function",
-                    "function": {"name": acc["name"], "arguments": acc["args"]},
-                })
-                tool_msgs.append({"role": "tool", "tool_call_id": acc["id"], "content": result})
-            local_msgs.append({"role": "assistant", "content": None, "tool_calls": tc_list})
+                tc_list.append(
+                    {
+                        "id": acc["id"],
+                        "type": "function",
+                        "function": {"name": acc["name"], "arguments": acc["args"]},
+                    }
+                )
+                tool_msgs.append(
+                    {"role": "tool", "tool_call_id": acc["id"], "content": result}
+                )
+            local_msgs.append(
+                {"role": "assistant", "content": None, "tool_calls": tc_list}
+            )
             local_msgs.extend(tool_msgs)
 
     return full
