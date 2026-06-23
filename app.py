@@ -564,6 +564,30 @@ async def api_save_config(request: Request):
     return {"ok": True}
 
 
+@fast_app.post("/api/save_ha")
+async def api_save_ha(request: Request):
+    data = await request.json()
+    ha_url = (data.get("ha_url") or "").strip()
+    ha_token = (data.get("ha_token") or "").strip()
+
+    effective_token = ha_token or _config.get("ha_token", "")
+
+    if ha_url and effective_token:
+        ha_ok, ha_err = await _validate_ha(ha_url, effective_token)
+        if not ha_ok:
+            return {"ok": False, "error": ha_err}
+
+    async with _client_lock:
+        _config["ha_url"] = ha_url
+        if ha_token:
+            _config["ha_token"] = ha_token
+        elif not ha_url:
+            _config["ha_token"] = ""
+        _save_config()
+
+    return {"ok": True, "ha_configured": _ha_configured()}
+
+
 # ─── LLM STREAMING ───────────────────────────────────────────────────────────
 def _build_system_prompt():
     system = JARVIS_SYSTEM
