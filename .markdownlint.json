@@ -1,3 +1,6 @@
 {
-  "MD003": { "style": "atx" }
+  "MD003": { "style": "atx" },
+  "MD013": false,
+  "MD041": false,
+  "MD060": false
 }
