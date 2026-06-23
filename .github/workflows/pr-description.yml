@@ -1,0 +1,237 @@
+name: Auto PR Description
+
+on:
+  pull_request:
+    types: [opened, reopened]
+
+jobs:
+  generate-description:
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Gather PR context
+        run: |
+          git log "origin/${{ github.base_ref }}...HEAD" --oneline          > /tmp/commits.txt    || true
+          git log "origin/${{ github.base_ref }}...HEAD" --format="%s" \
+            | head -1                                                        > /tmp/first_subject.txt || true
+          git diff "origin/${{ github.base_ref }}...HEAD" --stat            > /tmp/diff_stat.txt  || true
+          git diff "origin/${{ github.base_ref }}...HEAD" | head -c 51200  > /tmp/diff.txt        || true
+
+      # ── Method 1: git-cliff (Conventional Commits) ───────────────────────────
+      - name: "[1] git-cliff"
+        id: gitcliff
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+
+          # Install git-cliff
+          CLIFF_VER=$(curl -sf "https://api.github.com/repos/orhun/git-cliff/releases/latest" \
+            | python3 -c "import sys,json; print(json.load(sys.stdin)['tag_name'].lstrip('v'))")
+          curl -fsSL \
+            "https://github.com/orhun/git-cliff/releases/download/v${CLIFF_VER}/git-cliff-${CLIFF_VER}-x86_64-unknown-linux-musl.tar.gz" \
+            | tar -xz -C /tmp
+          chmod +x "/tmp/git-cliff-${CLIFF_VER}-x86_64-unknown-linux-musl/git-cliff"
+          CLIFF="/tmp/git-cliff-${CLIFF_VER}-x86_64-unknown-linux-musl/git-cliff"
+
+          # Write a PR-friendly cliff config
+          cat > /tmp/cliff.toml << 'CLIFF_CFG'
+          [changelog]
+          header = ""
+          body = """
+          ## Summary
+          {% for group, commits in commits | group_by(attribute="group") %}
+          ### {{ group }}
+          {% for commit in commits %}
+          - {{ commit.message | upper_first }}
+          {%- endfor %}
+          {% endfor %}
+
+          ## Test plan
+
+          - [ ] Review the changes above
+          - [ ] Existing tests pass
+          """
+          trim = true
+
+          [git]
+          conventional_commits = true
+          filter_unconventional = true
+          commit_parsers = [
+            { message = "^feat",     group = "✨ Features" },
+            { message = "^fix",      group = "🐛 Bug Fixes" },
+            { message = "^docs",     group = "📚 Documentation" },
+            { message = "^refactor", group = "♻️ Refactoring" },
+            { message = "^test",     group = "🧪 Tests" },
+            { message = "^perf",     group = "⚡ Performance" },
+            { message = "^chore",    group = "🔧 Chores" },
+          ]
+          CLIFF_CFG
+
+          "$CLIFF" --config /tmp/cliff.toml \
+            "origin/${{ github.base_ref }}..HEAD" \
+            > /tmp/pr_body.txt 2>/tmp/cliff_err.txt
+
+          # Only succeed when conventional commits were actually found
+          grep -q "^### " /tmp/pr_body.txt || { echo "No conventional commits found"; exit 1; }
+
+          FIRST=$(cat /tmp/first_subject.txt)
+          BRANCH="${{ github.head_ref }}"
+          printf '%s' "${FIRST:-$BRANCH}" | cut -c1-70 > /tmp/pr_title.txt
+
+          echo "✅ git-cliff succeeded"
+
+      # ── Method 2: Template from commit messages ───────────────────────────────
+      - name: "[2] Commit-message template"
+        id: template
+        if: steps.gitcliff.outcome == 'failure'
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+
+          [ -s /tmp/commits.txt ] || { echo "No commits found"; exit 1; }
+
+          FIRST=$(cat /tmp/first_subject.txt)
+          BRANCH="${{ github.head_ref }}"
+          printf '%s' "${FIRST:-$BRANCH}" | cut -c1-70 > /tmp/pr_title.txt
+
+          python3 - << 'PYEOF'
+          commits   = open('/tmp/commits.txt').read().strip().splitlines()
+          diff_stat = open('/tmp/diff_stat.txt').read().strip()
+
+          bullets = '\n'.join(
+              '- ' + ' '.join(line.split()[1:])
+              for line in commits[:10]
+              if line.strip()
+          )
+
+          body = f"""## Summary
+
+          {bullets}
+
+          ## Changes
+
+          ```
+          {diff_stat}
+          ```
+
+          ## Test plan
+
+          - [ ] Review the changes above
+          - [ ] Existing tests pass
+          - [ ] No regressions introduced
+          """
+
+          open('/tmp/pr_body.txt', 'w').write(body)
+          PYEOF
+
+          echo "✅ template succeeded"
+
+      # ── Method 3: Ollama (local LLM on the runner) ───────────────────────────
+      - name: "[3] Ollama"
+        id: ollama
+        if: steps.gitcliff.outcome == 'failure' && steps.template.outcome == 'failure'
+        continue-on-error: true
+        timeout-minutes: 10
+        run: |
+          set -euo pipefail
+
+          curl -fsSL https://ollama.com/install.sh | sh
+
+          ollama serve > /tmp/ollama.log 2>&1 &
+
+          # Wait until the API is up
+          for i in $(seq 1 15); do
+            curl -sf http://localhost:11434/api/tags > /dev/null 2>&1 && break
+            sleep 2
+          done
+
+          # Use the smallest available model
+          ollama pull llama3.2:1b
+
+          python3 - << 'PYEOF'
+          import subprocess, sys
+
+          commits   = open('/tmp/commits.txt').read().strip()
+          diff_stat = open('/tmp/diff_stat.txt').read().strip()
+
+          prompt = f"""Generate a GitHub pull request title and description.
+
+          Commits:
+          {commits}
+
+          Files changed:
+          {diff_stat}
+
+          Reply in this exact format (no extra text):
+          TITLE: <concise title under 70 characters>
+          BODY:
+          ## Summary
+          - <bullet>
+          - <bullet>
+
+          ## Test plan
+          - [ ] <item>
+          - [ ] <item>"""
+
+          result = subprocess.run(
+              ['ollama', 'run', 'llama3.2:1b', prompt],
+              capture_output=True, text=True, timeout=120,
+          )
+
+          output = result.stdout.strip()
+          if not output:
+              sys.exit(1)
+
+          lines = output.splitlines()
+          title = next(
+              (l.removeprefix('TITLE:').strip() for l in lines if l.startswith('TITLE:')),
+              '',
+          )
+          body_start = next((i for i, l in enumerate(lines) if l.startswith('BODY:')), None)
+          body = '\n'.join(lines[body_start + 1:]).strip() if body_start is not None else ''
+
+          if not title or not body:
+              sys.exit(1)
+
+          open('/tmp/pr_title.txt', 'w').write(title[:70])
+          open('/tmp/pr_body.txt',  'w').write(body)
+          print('Title:', title)
+          PYEOF
+
+          echo "✅ Ollama succeeded"
+
+      # ── Method 4: Nudge user toward GitHub Copilot ───────────────────────────
+      - name: "[4] Suggest GitHub Copilot"
+        if: |
+          steps.gitcliff.outcome == 'failure' &&
+          steps.template.outcome == 'failure' &&
+          steps.ollama.outcome  == 'failure'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh pr comment ${{ github.event.pull_request.number }} --body \
+            "⚠️ **All automatic description methods failed.**
+
+          If your repo has [GitHub Copilot](https://docs.github.com/en/copilot/using-github-copilot/using-github-copilot-for-pull-requests/creating-a-pull-request-summary-with-github-copilot) enabled, click the ✨ **Generate description** button in the PR description editor.
+
+          Otherwise, please fill in the title and description manually."
+
+      # ── Apply result ─────────────────────────────────────────────────────────
+      - name: Update PR
+        if: |
+          steps.gitcliff.outcome == 'success' ||
+          steps.template.outcome == 'success' ||
+          steps.ollama.outcome   == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh pr edit ${{ github.event.pull_request.number }} \
+            --title "$(tr -d '\n' < /tmp/pr_title.txt)" \
+            --body-file /tmp/pr_body.txt
