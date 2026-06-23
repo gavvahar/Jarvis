@@ -597,7 +597,9 @@
 
   function setHaStatus(configured, url) {
     if (configured) {
-      haStatusDot && haStatusDot.classList.replace("disconnected", "connected") || haStatusDot && haStatusDot.classList.add("connected");
+      (haStatusDot &&
+        haStatusDot.classList.replace("disconnected", "connected")) ||
+        (haStatusDot && haStatusDot.classList.add("connected"));
       if (haStatusText) haStatusText.textContent = "CONNECTED";
       haSettingsBtn && haSettingsBtn.classList.add("ha-live");
     } else {
@@ -611,7 +613,10 @@
 
   function showHaSettings() {
     if (haSettingsEl) haSettingsEl.classList.remove("setup-hidden");
-    if (haMsg) { haMsg.textContent = ""; haMsg.className = ""; }
+    if (haMsg) {
+      haMsg.textContent = "";
+      haMsg.className = "";
+    }
     setTimeout(() => haUrlInput && haUrlInput.focus(), 150);
   }
   function hideHaSettings() {
@@ -621,9 +626,10 @@
 
   if (haSettingsBtn) haSettingsBtn.addEventListener("click", showHaSettings);
   if (haCancelBtn) haCancelBtn.addEventListener("click", hideHaSettings);
-  haSettingsEl && haSettingsEl.addEventListener("click", (e) => {
-    if (e.target === haSettingsEl) hideHaSettings();
-  });
+  haSettingsEl &&
+    haSettingsEl.addEventListener("click", (e) => {
+      if (e.target === haSettingsEl) hideHaSettings();
+    });
 
   if (haSettingsForm) {
     haSettingsForm.addEventListener("submit", async (e) => {
@@ -684,7 +690,8 @@
         if (haUrlEl) haUrlEl.value = d.ha_url;
       }
       setHaStatus(!!d.ha_configured, d.ha_url || "");
-      if (d.ha_configured && haTokenInput) haTokenInput.dataset.hasExisting = "1";
+      if (d.ha_configured && haTokenInput)
+        haTokenInput.dataset.hasExisting = "1";
       if (_configured) hideSetup();
       else showSetup();
       applyMode();
