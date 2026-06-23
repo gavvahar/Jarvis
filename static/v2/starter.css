@@ -246,7 +246,9 @@
   font-size: 13px;
   outline: none;
   letter-spacing: 0.04em;
-  transition: border-color 0.2s, box-shadow 0.2s;
+  transition:
+    border-color 0.2s,
+    box-shadow 0.2s;
 }
 #ha-settings-form input:focus {
   border-color: var(--cyan-bright, #aef1ff);
@@ -269,8 +271,13 @@
   background: rgba(127, 233, 255, 0.3);
   flex-shrink: 0;
 }
-#ha-status-dot.connected { background: #7fffc4; box-shadow: 0 0 6px #7fffc4; }
-#ha-status-dot.disconnected { background: #ff9a7a; }
+#ha-status-dot.connected {
+  background: #7fffc4;
+  box-shadow: 0 0 6px #7fffc4;
+}
+#ha-status-dot.disconnected {
+  background: #ff9a7a;
+}
 #ha-settings-form button {
   flex: 1;
   padding: 11px;
@@ -283,14 +290,21 @@
   letter-spacing: 0.12em;
   font-size: 12px;
   cursor: pointer;
-  transition: background 0.2s, box-shadow 0.2s;
+  transition:
+    background 0.2s,
+    box-shadow 0.2s;
 }
 #ha-settings-form button:hover {
   background: rgba(127, 233, 255, 0.22);
   box-shadow: 0 0 16px rgba(127, 233, 255, 0.3);
 }
-#ha-settings-form button:disabled { opacity: 0.5; cursor: default; }
-#ha-cancel { border-color: rgba(127, 233, 255, 0.2) !important; }
+#ha-settings-form button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+#ha-cancel {
+  border-color: rgba(127, 233, 255, 0.2) !important;
+}
 #ha-msg {
   min-height: 16px;
   margin-top: 12px;
@@ -299,8 +313,12 @@
   letter-spacing: 0.04em;
   color: rgba(127, 233, 255, 0.7);
 }
-#ha-msg.ok { color: #7fffc4; }
-#ha-msg.err { color: #ff9a7a; }
+#ha-msg.ok {
+  color: #7fffc4;
+}
+#ha-msg.err {
+  color: #ff9a7a;
+}
 
 /* ── HA Settings button in topbar ─────────────────────────────────────────── */
 #ha-settings-btn {
@@ -316,7 +334,9 @@
   font-size: 9.5px;
   letter-spacing: 0.14em;
   cursor: pointer;
-  transition: background 0.2s, color 0.2s;
+  transition:
+    background 0.2s,
+    color 0.2s;
 }
 #ha-settings-btn:hover {
   background: rgba(127, 233, 255, 0.16);
