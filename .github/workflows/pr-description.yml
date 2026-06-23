@@ -23,6 +23,57 @@ jobs:
           git diff "origin/${{ github.base_ref }}...HEAD" --stat > /tmp/diff_stat.txt || true
           git diff "origin/${{ github.base_ref }}...HEAD" | head -c 51200 > /tmp/diff.txt || true
 
+      - name: Assign PR author and code owners
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 - <<'EOF'
+          import subprocess, os, fnmatch
+
+          pr_author = "${{ github.event.pull_request.user.login }}"
+          base_ref = "origin/${{ github.base_ref }}"
+
+          changed = subprocess.run(
+              ["git", "diff", f"{base_ref}...HEAD", "--name-only"],
+              capture_output=True, text=True
+          ).stdout.splitlines()
+
+          def codeowners_match(pattern, filepath):
+              p = pattern.lstrip("/")
+              if p == "*":
+                  return True
+              if "/" not in p:
+                  return fnmatch.fnmatch(os.path.basename(filepath), p)
+              return fnmatch.fnmatch(filepath, p) or fnmatch.fnmatch(filepath, p.rstrip("/") + "/*")
+
+          code_owners = set()
+          for path in ["CODEOWNERS", ".github/CODEOWNERS", "docs/CODEOWNERS"]:
+              if os.path.exists(path):
+                  rules = []
+                  for line in open(path):
+                      line = line.strip()
+                      if not line or line.startswith("#"):
+                          continue
+                      parts = line.split()
+                      if len(parts) >= 2:
+                          rules.append((parts[0], [o.lstrip("@") for o in parts[1:] if o.startswith("@")]))
+                  for f in changed:
+                      matched = []
+                      for pattern, owners in rules:
+                          if codeowners_match(pattern, f):
+                              matched = owners
+                      code_owners.update(matched)
+                  break
+
+          assignees = list(code_owners | {pr_author})
+          subprocess.run(
+              ["gh", "pr", "edit", "${{ github.event.pull_request.number }}",
+               "--add-assignee", ",".join(assignees)],
+              check=True
+          )
+          print(f"Assigned: {', '.join(assignees)}")
+          EOF
+
       # Method 1: git-cliff (Conventional Commits)
       - name: "[1] git-cliff"
         id: gitcliff
