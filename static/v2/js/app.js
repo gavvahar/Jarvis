@@ -212,9 +212,9 @@
     source.connect(analyser);
     const buf = new Uint8Array(analyser.frequencyBinCount);
 
-    const THRESHOLD = 30;   // 0–255 amplitude; adjust if too sensitive
+    const THRESHOLD = 30; // 0–255 amplitude; adjust if too sensitive
     const SILENCE_MS = 800; // ms of quiet before we cut the recording
-    const MIN_MS = 300;     // ignore clips shorter than this (noise bursts)
+    const MIN_MS = 300; // ignore clips shorter than this (noise bursts)
 
     const mime =
       ["audio/webm;codecs=opus", "audio/webm", "audio/ogg"].find((t) =>
@@ -545,10 +545,19 @@
       setupMsg.className = "";
       setupMsg.textContent = "Verifying…";
       try {
+        const ha_url = ($("setup-ha-url").value || "").trim();
+        const ha_token = ($("setup-ha-token").value || "").trim();
         const res = await fetch("/api/save_config", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ provider, key, model, base_url }),
+          body: JSON.stringify({
+            provider,
+            key,
+            model,
+            base_url,
+            ha_url,
+            ha_token,
+          }),
         });
         const data = await res.json();
         if (data.ok) {
@@ -585,6 +594,10 @@
             openai: "OPENAI",
             openai_compatible: "CUSTOM",
           }[d.provider] || "LLM";
+      if (d.ha_url) {
+        const haUrlEl = $("setup-ha-url");
+        if (haUrlEl) haUrlEl.value = d.ha_url;
+      }
       if (_configured) hideSetup();
       else showSetup();
       applyMode();
