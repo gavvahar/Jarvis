@@ -26,6 +26,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
+from starlette.middleware.base import BaseHTTPMiddleware
 import socketio
 from dotenv import load_dotenv
 
@@ -622,7 +623,25 @@ async def lifespan(application: FastAPI):
         await _db_pool.close()
 
 
+_SESSION_COOKIE_OPTS = dict(httponly=True, max_age=86400 * 30, samesite="lax")
+_NO_REFRESH_PATHS = {"/login", "/auth/callback", "/logout"}
+
+
+class _RefreshSession(BaseHTTPMiddleware):
+    """Re-issue the session cookie on every authenticated request so the
+    30-day expiry is measured from last activity, not from login."""
+
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+        if request.url.path not in _NO_REFRESH_PATHS and _signer:
+            user_id = _get_current_user(request)
+            if user_id:
+                response.set_cookie("jarvis_session", _sign_session(user_id), **_SESSION_COOKIE_OPTS)
+        return response
+
+
 fast_app = FastAPI(lifespan=lifespan)
+fast_app.add_middleware(_RefreshSession)
 fast_app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
 
@@ -687,13 +706,7 @@ async def auth_callback(request: Request):
     await _db_ensure_user(user_id, email)
 
     response = RedirectResponse("/", status_code=303)
-    response.set_cookie(
-        "jarvis_session",
-        _sign_session(user_id),
-        httponly=True,
-        max_age=86400 * 30,
-        samesite="lax",
-    )
+    response.set_cookie("jarvis_session", _sign_session(user_id), **_SESSION_COOKIE_OPTS)
     response.delete_cookie("oidc_state")
     return response
 
