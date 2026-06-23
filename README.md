@@ -1,6 +1,7 @@
 ============================================================
 J.A.R.V.I.S. — STARTER KIT
 Your own Iron Man-style AI, running on your server
+
 ============================================================
 
 ## WHAT THIS IS
@@ -48,9 +49,9 @@ The variables you must set:
 | `SECRET_KEY`         | Any long random string — signs session cookies                       |
 | `POSTGRES_PASSWORD`  | Password for the Postgres database                                   |
 | `DATABASE_URL`       | Full Postgres connection string (default matches compose.yml)        |
-| `AUTHENTIK_URL`      | Base URL of your Authentik instance, e.g. `https://auth.example.com` |
-| `OIDC_DISCOVERY_URL` | Authentik OIDC discovery URL (see below)                             |
-| `OIDC_CLIENT_ID`     | Client ID from your Authentik OAuth2 provider                        |
+| `AUTHENTIK_URL`      | Base URL of your Authentik instance, e.g. `https://auth.example.com`   |
+| `OIDC_DISCOVERY_URL` | Authentik OIDC discovery URL (see below)                               |
+| `OIDC_CLIENT_ID`     | Client ID from your Authentik OAuth2 provider                          |
 | `OIDC_CLIENT_SECRET` | Client secret from your Authentik OAuth2 provider                    |
 | `APP_URL`            | Public URL of this app, e.g. `https://jarvis.example.com`            |
 
