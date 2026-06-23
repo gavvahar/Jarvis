@@ -253,7 +253,7 @@ app = socketio.ASGIApp(sio, other_asgi_app=fast_app)
 # ─── HTTP ROUTES ─────────────────────────────────────────────────────────────
 @fast_app.get("/", response_class=HTMLResponse)
 async def index(request: Request):
-    return templates.TemplateResponse("index.html", {"request": request})
+    return templates.TemplateResponse(request, "index.html")
 
 
 @fast_app.get("/api/status")
