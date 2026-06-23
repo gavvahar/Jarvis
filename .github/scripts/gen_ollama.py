@@ -49,7 +49,11 @@ if not output:
 
 lines = output.splitlines()
 title = next(
-    (line.removeprefix("TITLE:").strip() for line in lines if line.startswith("TITLE:")),
+    (
+        line.removeprefix("TITLE:").strip()
+        for line in lines
+        if line.startswith("TITLE:")
+    ),
     "",
 )
 body_start = next((i for i, line in enumerate(lines) if line.startswith("BODY:")), None)
