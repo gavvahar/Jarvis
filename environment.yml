@@ -1,4 +1,4 @@
-name: console
+name: jarvis
 channels:
   - defaults
   - conda-forge
