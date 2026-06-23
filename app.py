@@ -43,6 +43,8 @@ _config = {
     "api_key": "",
     "model": "claude-haiku-4-5",
     "base_url": "",
+    "ha_url": "",
+    "ha_token": "",
 }
 _client = None
 _provider = "anthropic"
@@ -73,6 +75,13 @@ def _load_config():
         pass
     except Exception as e:
         print(f"[CONFIG] Could not read config.json: {e}", flush=True)
+
+    ha_url = os.environ.get("HA_URL", "").strip()
+    ha_token = os.environ.get("HA_TOKEN", "").strip()
+    if ha_url:
+        _config["ha_url"] = ha_url
+    if ha_token:
+        _config["ha_token"] = ha_token
 
     ollama_url = os.environ.get("OLLAMA_BASE_URL", "").strip()
     if ollama_url:
@@ -143,6 +152,189 @@ def _build_sync_client(provider, api_key, base_url=""):
     except Exception as e:
         print(f"[CLIENT] Failed to build sync {provider} client: {e}", flush=True)
         return None
+
+
+# ─── HOME ASSISTANT ──────────────────────────────────────────────────────────
+HA_TOOLS_ANTHROPIC = [
+    {
+        "name": "get_ha_states",
+        "description": (
+            "Get the current state of Home Assistant devices. "
+            "Optionally filter by domain (e.g. 'light', 'switch', 'climate', "
+            "'sensor', 'automation', 'script'). Omit domain to get all entities."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "domain": {
+                    "type": "string",
+                    "description": "Optional domain filter, e.g. 'light' or 'switch'.",
+                }
+            },
+        },
+    },
+    {
+        "name": "call_ha_service",
+        "description": (
+            "Call a Home Assistant service to control a device, run a script, "
+            "or trigger an automation."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "domain": {
+                    "type": "string",
+                    "description": "Service domain, e.g. 'light', 'switch', 'climate', 'automation', 'script'.",
+                },
+                "service": {
+                    "type": "string",
+                    "description": "Service name, e.g. 'turn_on', 'turn_off', 'toggle', 'trigger'.",
+                },
+                "entity_id": {
+                    "type": "string",
+                    "description": "Entity ID to act on, e.g. 'light.living_room'. Omit for scripts/automations.",
+                },
+                "service_data": {
+                    "type": "object",
+                    "description": "Optional extra data, e.g. {\"brightness_pct\": 50} for lights.",
+                },
+            },
+            "required": ["domain", "service"],
+        },
+    },
+]
+
+HA_TOOLS_OPENAI = [
+    {
+        "type": "function",
+        "function": {
+            "name": "get_ha_states",
+            "description": (
+                "Get the current state of Home Assistant devices. "
+                "Optionally filter by domain (e.g. 'light', 'switch', 'climate', "
+                "'sensor', 'automation', 'script'). Omit domain to get all entities."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "domain": {
+                        "type": "string",
+                        "description": "Optional domain filter, e.g. 'light' or 'switch'.",
+                    }
+                },
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "call_ha_service",
+            "description": (
+                "Call a Home Assistant service to control a device, run a script, "
+                "or trigger an automation."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "domain": {
+                        "type": "string",
+                        "description": "Service domain, e.g. 'light', 'switch', 'climate', 'automation', 'script'.",
+                    },
+                    "service": {
+                        "type": "string",
+                        "description": "Service name, e.g. 'turn_on', 'turn_off', 'toggle', 'trigger'.",
+                    },
+                    "entity_id": {
+                        "type": "string",
+                        "description": "Entity ID to act on, e.g. 'light.living_room'. Omit for scripts/automations.",
+                    },
+                    "service_data": {
+                        "type": "object",
+                        "description": "Optional extra data, e.g. {\"brightness_pct\": 50} for lights.",
+                    },
+                },
+                "required": ["domain", "service"],
+            },
+        },
+    },
+]
+
+
+def _ha_configured():
+    return bool(_config.get("ha_url") and _config.get("ha_token"))
+
+
+def _ha_headers():
+    return {
+        "Authorization": f"Bearer {_config['ha_token']}",
+        "Content-Type": "application/json",
+    }
+
+
+def _get_ha_tools(provider):
+    if not _ha_configured():
+        return []
+    return HA_TOOLS_ANTHROPIC if provider == "anthropic" else HA_TOOLS_OPENAI
+
+
+async def _validate_ha(url, token):
+    try:
+        async with httpx.AsyncClient(timeout=5) as c:
+            r = await c.get(
+                url.rstrip("/") + "/api/",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+        if r.status_code == 200:
+            return True, ""
+        if r.status_code == 401:
+            return False, "Home Assistant token was rejected."
+        return False, f"Home Assistant returned HTTP {r.status_code}."
+    except Exception as e:
+        return False, f"Could not reach Home Assistant: {e}"
+
+
+async def _ha_get_states(domain=None):
+    url = _config["ha_url"].rstrip("/") + "/api/states"
+    async with httpx.AsyncClient(timeout=8) as c:
+        r = await c.get(url, headers=_ha_headers())
+    r.raise_for_status()
+    states = r.json()
+    if domain:
+        states = [s for s in states if s["entity_id"].startswith(domain + ".")]
+    lines = []
+    for s in states[:60]:
+        name = s.get("attributes", {}).get("friendly_name", "")
+        line = f"{s['entity_id']}: {s['state']}"
+        if name:
+            line += f" ({name})"
+        lines.append(line)
+    return "\n".join(lines) if lines else "No entities found."
+
+
+async def _ha_call_service(domain, service, entity_id=None, service_data=None):
+    url = _config["ha_url"].rstrip("/") + f"/api/services/{domain}/{service}"
+    payload = dict(service_data or {})
+    if entity_id:
+        payload["entity_id"] = entity_id
+    async with httpx.AsyncClient(timeout=8) as c:
+        r = await c.post(url, headers=_ha_headers(), json=payload)
+    return "Done." if r.status_code in (200, 201) else f"HA returned {r.status_code}: {r.text[:120]}"
+
+
+async def _execute_ha_tool(name, args):
+    try:
+        if name == "get_ha_states":
+            return await _ha_get_states(args.get("domain"))
+        if name == "call_ha_service":
+            return await _ha_call_service(
+                args["domain"],
+                args["service"],
+                args.get("entity_id"),
+                args.get("service_data"),
+            )
+        return f"Unknown tool: {name}"
+    except Exception as e:
+        return f"Error: {e}"
 
 
 def _openai_create_sync(client, model, messages, stream, max_out=500):
@@ -279,6 +471,8 @@ async def api_status():
         "configured": configured(),
         "provider": _config.get("provider", "anthropic"),
         "model": _config.get("model", ""),
+        "ha_configured": _ha_configured(),
+        "ha_url": _config.get("ha_url", ""),
     }
 
 
@@ -324,6 +518,9 @@ async def api_save_config(request: Request):
     model = (data.get("model") or "").strip()
     base_url = (data.get("base_url") or "").strip()
 
+    ha_url = (data.get("ha_url") or "").strip()
+    ha_token = (data.get("ha_token") or "").strip()
+
     if provider not in VALID_PROVIDERS:
         return {"ok": False, "error": "Unknown provider."}
     if not key and provider != "openai_compatible":
@@ -337,9 +534,21 @@ async def api_save_config(request: Request):
     if not ok:
         return {"ok": False, "error": err}
 
+    if ha_url and ha_token:
+        ha_ok, ha_err = await _validate_ha(ha_url, ha_token)
+        if not ha_ok:
+            return {"ok": False, "error": f"Home Assistant: {ha_err}"}
+
     async with _client_lock:
         _config.update(
-            {"provider": provider, "api_key": key, "model": model, "base_url": base_url}
+            {
+                "provider": provider,
+                "api_key": key,
+                "model": model,
+                "base_url": base_url,
+                "ha_url": ha_url,
+                "ha_token": ha_token,
+            }
         )
         _save_config()
         _client = _build_client(provider, key, base_url)
@@ -370,15 +579,22 @@ def _build_system_prompt():
                 + ", ".join(parts)
                 + "."
             )
+    if _ha_configured():
+        system += (
+            "\n\nHOME AUTOMATION — you are connected to Home Assistant via tools. "
+            "Use get_ha_states to check device states and call_ha_service to control "
+            "devices, run scripts, and trigger automations. When given a home control "
+            "command, use your tools and then confirm briefly in JARVIS voice."
+        )
     return system
 
 
-async def _openai_stream_async(client, model, messages, max_out=500):
+async def _openai_stream_async(client, model, messages, max_out=500, **extra_kwargs):
     last = None
     for extra in ({"max_tokens": max_out}, {"max_completion_tokens": max_out}, {}):
         try:
             return await client.chat.completions.create(
-                model=model, messages=messages, stream=True, **extra
+                model=model, messages=messages, stream=True, **extra, **extra_kwargs
             )
         except Exception as e:
             last = e
@@ -414,33 +630,84 @@ async def _stream_reply(on_text):
     provider = _provider
     model = _config.get("model") or DEFAULT_MODELS.get(provider, "")
     system = _build_system_prompt()
+    ha_tools = _get_ha_tools(provider)
+    local_msgs = list(_conversation)
 
-    if provider == "anthropic":
-        full = ""
-        async with _client.messages.stream(
-            model=model,
-            max_tokens=500,
-            system=[
-                {"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}
-            ],
-            messages=_conversation,
-        ) as stream:
-            async for delta in stream.text_stream:
-                full += delta
-                await on_text(delta)
-        return full
+    for _ in range(4):
+        if provider == "anthropic":
+            full = ""
+            stream_kwargs = dict(
+                model=model,
+                max_tokens=500,
+                system=[{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}],
+                messages=local_msgs,
+            )
+            if ha_tools:
+                stream_kwargs["tools"] = ha_tools
+            async with _client.messages.stream(**stream_kwargs) as stream:
+                async for delta in stream.text_stream:
+                    full += delta
+                    await on_text(delta)
+                final = await stream.get_final_message()
+            if final.stop_reason != "tool_use" or not ha_tools:
+                return full
+            results = []
+            for block in final.content:
+                if block.type == "tool_use":
+                    result = await _execute_ha_tool(block.name, dict(block.input))
+                    results.append({"type": "tool_result", "tool_use_id": block.id, "content": result})
+            local_msgs.append({"role": "assistant", "content": final.content})
+            local_msgs.append({"role": "user", "content": results})
 
-    msgs = [{"role": "system", "content": system}] + _conversation
-    full = ""
-    stream = await _openai_stream_async(_client, model, msgs)
-    async for chunk in stream:
-        try:
-            delta = chunk.choices[0].delta.content
-        except (AttributeError, IndexError):
-            delta = None
-        if delta:
-            full += delta
-            await on_text(delta)
+        else:
+            msgs = [{"role": "system", "content": system}] + local_msgs
+            tool_calls_acc = {}
+            finish_reason = None
+            full = ""
+            stream_extra = {"tools": ha_tools} if ha_tools else {}
+            stream = await _openai_stream_async(_client, model, msgs, **stream_extra)
+            async for chunk in stream:
+                try:
+                    choice = chunk.choices[0]
+                except (AttributeError, IndexError):
+                    continue
+                if choice.finish_reason:
+                    finish_reason = choice.finish_reason
+                delta = choice.delta
+                if delta.content:
+                    full += delta.content
+                    await on_text(delta.content)
+                if getattr(delta, "tool_calls", None):
+                    for tc in delta.tool_calls:
+                        idx = tc.index
+                        if idx not in tool_calls_acc:
+                            tool_calls_acc[idx] = {
+                                "id": tc.id or "",
+                                "name": (tc.function.name or "") if tc.function else "",
+                                "args": "",
+                            }
+                        if tc.function and tc.function.arguments:
+                            tool_calls_acc[idx]["args"] += tc.function.arguments
+                        if tc.id and not tool_calls_acc[idx]["id"]:
+                            tool_calls_acc[idx]["id"] = tc.id
+                        if tc.function and tc.function.name and not tool_calls_acc[idx]["name"]:
+                            tool_calls_acc[idx]["name"] = tc.function.name
+            if finish_reason != "tool_calls" or not ha_tools:
+                return full
+            tc_list = []
+            tool_msgs = []
+            for acc in tool_calls_acc.values():
+                args = json.loads(acc["args"] or "{}")
+                result = await _execute_ha_tool(acc["name"], args)
+                tc_list.append({
+                    "id": acc["id"],
+                    "type": "function",
+                    "function": {"name": acc["name"], "arguments": acc["args"]},
+                })
+                tool_msgs.append({"role": "tool", "tool_call_id": acc["id"], "content": result})
+            local_msgs.append({"role": "assistant", "content": None, "tool_calls": tc_list})
+            local_msgs.extend(tool_msgs)
+
     return full
 
 
