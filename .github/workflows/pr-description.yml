@@ -18,8 +18,8 @@ jobs:
 
       - name: Gather PR context
         run: |
-          git log "origin/${{ github.base_ref }}...HEAD" --oneline > /tmp/commits.txt || true
-          git log "origin/${{ github.base_ref }}...HEAD" --format="%s" | head -1 > /tmp/first_subject.txt || true
+          git log "origin/${{ github.base_ref }}...HEAD" --format="%s" --no-merges > /tmp/commits.txt || true
+          git log "origin/${{ github.base_ref }}...HEAD" --format="%s" --no-merges | head -1 > /tmp/first_subject.txt || true
           git diff "origin/${{ github.base_ref }}...HEAD" --stat > /tmp/diff_stat.txt || true
           git diff "origin/${{ github.base_ref }}...HEAD" | head -c 51200 > /tmp/diff.txt || true
 
@@ -41,9 +41,13 @@ jobs:
 
           grep -q "^### " /tmp/pr_body.txt || { echo "No conventional commits found"; exit 1; }
 
-          FIRST=$(cat /tmp/first_subject.txt)
-          BRANCH="${{ github.head_ref }}"
-          printf '%s' "${FIRST:-$BRANCH}" | cut -c1-70 > /tmp/pr_title.txt
+          python3 - <<'EOF'
+          import re, sys
+          raw = open("/tmp/first_subject.txt").read().strip() or "${{ github.head_ref }}"
+          clean = re.sub(r'^[a-z]+(\([^)]+\))?: ', '', raw)
+          title = (clean[0].upper() + clean[1:])[:70] if clean else raw[:70]
+          open("/tmp/pr_title.txt", "w").write(title)
+          EOF
 
       # Method 2: Template from commit messages
       - name: "[2] Commit-message template"
@@ -51,9 +55,6 @@ jobs:
         if: steps.gitcliff.outcome == 'failure'
         continue-on-error: true
         run: |
-          FIRST=$(cat /tmp/first_subject.txt)
-          BRANCH="${{ github.head_ref }}"
-          printf '%s' "${FIRST:-$BRANCH}" | cut -c1-70 > /tmp/pr_title.txt
           python3 .github/scripts/gen_template.py
 
       # Method 3: Ollama (remote at ollama.gavva.dev)

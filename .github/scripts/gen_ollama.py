@@ -10,14 +10,19 @@ diff_stat = open("/tmp/diff_stat.txt").read().strip()
 
 prompt = f"""Generate a GitHub pull request title and description.
 
-Commits:
+Commit messages:
 {commits}
 
 Files changed:
 {diff_stat}
 
+Rules:
+- The title must be plain English, easy to understand, and under 70 characters.
+- Do NOT include commit hashes, branch names, or technical prefixes (feat:, fix:, chore:, etc.) in the title.
+- Capitalize the first word of the title.
+
 Reply in this exact format (no extra text):
-TITLE: <concise title under 70 characters>
+TITLE: <concise plain-English title>
 BODY:
 ## Summary
 - <bullet>
