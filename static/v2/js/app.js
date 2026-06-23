@@ -545,10 +545,12 @@
       setupMsg.className = "";
       setupMsg.textContent = "Verifying…";
       try {
+        const ha_url = ($("setup-ha-url").value || "").trim();
+        const ha_token = ($("setup-ha-token").value || "").trim();
         const res = await fetch("/api/save_config", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ provider, key, model, base_url }),
+          body: JSON.stringify({ provider, key, model, base_url, ha_url, ha_token }),
         });
         const data = await res.json();
         if (data.ok) {
@@ -585,6 +587,10 @@
             openai: "OPENAI",
             openai_compatible: "CUSTOM",
           }[d.provider] || "LLM";
+      if (d.ha_url) {
+        const haUrlEl = $("setup-ha-url");
+        if (haUrlEl) haUrlEl.value = d.ha_url;
+      }
       if (_configured) hideSetup();
       else showSetup();
       applyMode();
