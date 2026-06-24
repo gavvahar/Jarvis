@@ -54,6 +54,12 @@ OIDC_ADMIN_GROUP = os.environ.get("OIDC_ADMIN_GROUP", "jarvis-admins")
 # ─── DB ───────────────────────────────────────────────────────────────────────
 _db_pool: asyncpg.Pool | None = None
 
+
+def _pool() -> asyncpg.Pool:
+    assert _db_pool is not None, "Database pool not initialised"
+    return _db_pool
+
+
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS user_configs (
     user_id     TEXT PRIMARY KEY,
@@ -97,12 +103,12 @@ CREATE INDEX IF NOT EXISTS idx_meetings_user ON meetings (user_id, started_at DE
 async def _db_init():
     global _db_pool
     _db_pool = await asyncpg.create_pool(DATABASE_URL, min_size=2, max_size=10)
-    async with _db_pool.acquire() as conn:
+    async with _pool().acquire() as conn:
         await conn.execute(_SCHEMA)
 
 
 async def _db_ensure_user(user_id: str, email: str, role: str):
-    async with _db_pool.acquire() as conn:
+    async with _pool().acquire() as conn:
         await conn.execute(
             """
             INSERT INTO user_configs (user_id, email, role)
@@ -116,7 +122,7 @@ async def _db_ensure_user(user_id: str, email: str, role: str):
 
 
 async def _db_load_config(user_id: str) -> dict:
-    async with _db_pool.acquire() as conn:
+    async with _pool().acquire() as conn:
         row = await conn.fetchrow(
             "SELECT role, provider, api_key, model, base_url, ha_url, ha_token "
             "FROM user_configs WHERE user_id = $1",
@@ -136,7 +142,7 @@ async def _db_load_config(user_id: str) -> dict:
 
 
 async def _db_save_config(user_id: str, config: dict):
-    async with _db_pool.acquire() as conn:
+    async with _pool().acquire() as conn:
         await conn.execute(
             """
             UPDATE user_configs
@@ -155,7 +161,7 @@ async def _db_save_config(user_id: str, config: dict):
 
 
 async def _db_load_conversation(user_id: str) -> list:
-    async with _db_pool.acquire() as conn:
+    async with _pool().acquire() as conn:
         rows = await conn.fetch(
             """
             SELECT role, content FROM (
@@ -173,7 +179,7 @@ async def _db_load_conversation(user_id: str) -> list:
 
 
 async def _db_append_message(user_id: str, role: str, content):
-    async with _db_pool.acquire() as conn:
+    async with _pool().acquire() as conn:
         await conn.execute(
             "INSERT INTO conversations (user_id, role, content) VALUES ($1, $2, $3)",
             user_id,
@@ -196,12 +202,12 @@ async def _db_append_message(user_id: str, role: str, content):
 
 
 async def _db_clear_conversation(user_id: str):
-    async with _db_pool.acquire() as conn:
+    async with _pool().acquire() as conn:
         await conn.execute("DELETE FROM conversations WHERE user_id = $1", user_id)
 
 
 async def _db_create_meeting(user_id: str) -> int:
-    async with _db_pool.acquire() as conn:
+    async with _pool().acquire() as conn:
         row = await conn.fetchrow(
             "INSERT INTO meetings (user_id) VALUES ($1) RETURNING id", user_id
         )
@@ -209,7 +215,7 @@ async def _db_create_meeting(user_id: str) -> int:
 
 
 async def _db_append_transcript_segment(meeting_id: int, segment: str):
-    async with _db_pool.acquire() as conn:
+    async with _pool().acquire() as conn:
         await conn.execute(
             "UPDATE meetings SET transcript = transcript || $2 WHERE id = $1",
             meeting_id,
@@ -218,7 +224,7 @@ async def _db_append_transcript_segment(meeting_id: int, segment: str):
 
 
 async def _db_finalize_meeting(meeting_id: int, notes: str):
-    async with _db_pool.acquire() as conn:
+    async with _pool().acquire() as conn:
         await conn.execute(
             "UPDATE meetings SET ended_at = NOW(), notes = $2 WHERE id = $1",
             meeting_id,
@@ -969,7 +975,7 @@ async def api_meetings(request: Request):
     user_id = _get_current_user(request)
     if not user_id:
         raise HTTPException(401)
-    async with _db_pool.acquire() as conn:
+    async with _pool().acquire() as conn:
         rows = await conn.fetch(
             "SELECT id, started_at, ended_at, notes FROM meetings "
             "WHERE user_id = $1 ORDER BY started_at DESC LIMIT 20",
@@ -991,7 +997,7 @@ async def api_meeting_detail(request: Request, meeting_id: int):
     user_id = _get_current_user(request)
     if not user_id:
         raise HTTPException(401)
-    async with _db_pool.acquire() as conn:
+    async with _pool().acquire() as conn:
         row = await conn.fetchrow(
             "SELECT id, started_at, ended_at, transcript, notes FROM meetings "
             "WHERE id = $1 AND user_id = $2",
@@ -1519,7 +1525,7 @@ async def _meeting_cleanup_loop():
         await asyncio.sleep(3600)  # check every hour
         try:
             if _db_pool:
-                async with _db_pool.acquire() as conn:
+                async with _pool().acquire() as conn:
                     result = await conn.execute(
                         "DELETE FROM meetings WHERE created_at < NOW() - INTERVAL '48 hours'"
                     )
