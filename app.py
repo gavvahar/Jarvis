@@ -10,17 +10,8 @@ Three providers:
   • openai_compatible — any OpenAI-compatible endpoint (Ollama, OpenRouter, …)
 """
 
-import json
-import os
-import re
-import asyncio
-import secrets
-import tempfile
-import urllib.parse
+import json, os, re, asyncio, secrets, tempfile, urllib.parse, asyncpg, httpx
 from contextlib import asynccontextmanager
-
-import asyncpg
-import httpx
 from fastapi import FastAPI, HTTPException, Request, File, UploadFile
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
