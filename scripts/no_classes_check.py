@@ -16,6 +16,7 @@ EXCLUDE_DIRS = {
     ".pytest_cache",
     ".tox",
     "env",
+    "tests",  # test classes are conventional pytest style
 }
 
 EXCLUDE_FILES = {"test.py", "jc_api.py"}
