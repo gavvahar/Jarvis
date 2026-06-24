@@ -72,11 +72,15 @@ jobs:
                   ["gh", "pr", "edit", "${{ github.event.pull_request.number }}",
                    "--add-assignee", assignee],
                   capture_output=True,
+                  text=True,
               )
               if result.returncode == 0:
                   print(f"Assigned: {assignee}")
+              elif "replaceActorsForAssignable" in result.stderr or "Assigning agents is not supported" in result.stderr:
+                  print(f"Skipped {assignee} (bot/app accounts cannot be assigned)")
               else:
-                  print(f"Skipped {assignee} (not assignable): {result.stderr.decode()[:120]}")
+                  print(result.stderr[:200])
+                  raise SystemExit(result.returncode)
           EOF
 
       - name: Apply labels
