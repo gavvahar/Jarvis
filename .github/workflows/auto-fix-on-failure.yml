@@ -141,3 +141,47 @@ jobs:
               assignees: actor ? [actor] : [],
               labels: ['ci-failure'],
             });
+
+  auto-close:
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - name: Close resolved ci-failure issues
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const branch = context.payload.workflow_run.head_branch;
+            const fullSha = context.payload.workflow_run.head_sha;
+            const shortSha = fullSha.substring(0, 7);
+            const runUrl = context.payload.workflow_run.html_url;
+
+            const { data: issues } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              labels: 'ci-failure',
+            });
+
+            const matching = issues.filter(i => i.title.includes(`\`${branch}\``));
+
+            for (const issue of matching) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                body: [
+                  '## Resolved',
+                  '',
+                  `**Code Quality** passed on \`${branch}\` at [${shortSha}](${runUrl}).`,
+                  'Closing automatically.',
+                ].join('\n'),
+              });
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                state: 'closed',
+              });
+            }
