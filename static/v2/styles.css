@@ -1920,3 +1920,13 @@ body.mode-workspace #camera-surface.show {
 #meeting-notes-msg.err {
   color: #ff6e6e;
 }
+
+.meeting-retention-notice {
+  margin-top: 14px;
+  font-family: var(--label);
+  font-size: 0.65em;
+  letter-spacing: 0.08em;
+  color: var(--amber);
+  opacity: 0.7;
+  text-align: center;
+}
