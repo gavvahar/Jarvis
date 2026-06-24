@@ -30,17 +30,15 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      - name: Install Android SDK components
-        run: |
-          sdkmanager "platforms;android-34" "build-tools;34.0.0" 2>/dev/null
-
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "8.6"
 
       - name: Build Android APK (debug)
         working-directory: android
-        run: gradle assembleDebug --no-daemon
+        run: |
+          echo "sdk.dir=$ANDROID_HOME" > local.properties
+          gradle assembleDebug --no-daemon
 
   pip-audit:
     runs-on: ubuntu-latest
