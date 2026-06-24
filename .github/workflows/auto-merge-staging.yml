@@ -7,25 +7,7 @@ on:
   workflow_dispatch: # Allow manual trigger
 
 jobs:
-  check-time:
-    runs-on: ubuntu-latest
-    outputs:
-      is_midnight_eastern: ${{ steps.check.outputs.is_midnight_eastern }}
-    steps:
-      - name: Check if midnight Eastern time
-        id: check
-        run: |
-          eastern_hour=$(TZ="America/New_York" date +%H)
-          if [ "$eastern_hour" = "00" ] || [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "is_midnight_eastern=true" >> $GITHUB_OUTPUT
-          else
-            echo "Not midnight Eastern (hour: $eastern_hour ET), skipping merge."
-            echo "is_midnight_eastern=false" >> $GITHUB_OUTPUT
-          fi
-
   merge:
-    needs: check-time
-    if: needs.check-time.outputs.is_midnight_eastern == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
