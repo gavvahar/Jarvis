@@ -291,6 +291,20 @@
           </svg>
           HA
         </button>
+        <button id="meeting-btn" title="Record Meeting Notes">
+          <svg
+            viewBox="0 0 20 20"
+            width="13"
+            height="13"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.5"
+          >
+            <rect x="7" y="2" width="6" height="10" rx="3" />
+            <path d="M4 10c0 3.3 2.7 6 6 6s6-2.7 6-6M10 16v3M7 19h6" />
+          </svg>
+          MEETING
+        </button>
       </div>
 
       <!-- ============ TELEMETRY PANELS ============ -->
@@ -499,6 +513,58 @@
             </svg>
           </button>
         </form>
+      </div>
+
+      <!-- ============ MEETING PANEL (live transcript) ============ -->
+      <div id="meeting-panel" class="meeting-hidden">
+        <div class="meeting-head" id="meeting-head">
+          <span class="meeting-title">
+            <span class="meeting-rec-dot"></span>RECORDING
+          </span>
+          <span id="meeting-timer">00:00</span>
+          <button class="meeting-end-btn" id="meeting-end-btn">END MTG</button>
+          <button
+            class="meeting-toggle-btn"
+            id="meeting-panel-close"
+            title="Minimise"
+          >
+            <svg viewBox="0 0 16 16" width="11" height="11">
+              <path
+                d="M3 8 L13 8"
+                stroke="currentColor"
+                stroke-width="1.6"
+                fill="none"
+              />
+            </svg>
+          </button>
+        </div>
+        <div class="meeting-log" id="meeting-log">
+          <div class="meeting-status-line" id="meeting-status-line">
+            Initialising…
+          </div>
+        </div>
+      </div>
+
+      <!-- ============ MEETING NOTES MODAL ============ -->
+      <div id="meeting-notes-modal" class="setup-hidden">
+        <div id="meeting-notes-card">
+          <div class="setup-ring"></div>
+          <div class="setup-word">MEETING NOTES</div>
+          <div class="setup-sub" id="meeting-notes-date"></div>
+          <div id="meeting-notes-content"></div>
+          <div id="meeting-transcript-wrap" style="display: none">
+            <div class="setup-sub" style="margin-top: 14px">TRANSCRIPT</div>
+            <div id="meeting-transcript-content"></div>
+          </div>
+          <div
+            style="display: flex; gap: 8px; margin-top: 18px; flex-wrap: wrap"
+          >
+            <button id="meeting-notes-copy">COPY NOTES</button>
+            <button id="meeting-notes-transcript-btn">SHOW TRANSCRIPT</button>
+            <button id="meeting-notes-close">CLOSE</button>
+          </div>
+          <div id="meeting-notes-msg"></div>
+        </div>
       </div>
 
       <!-- film overlays -->

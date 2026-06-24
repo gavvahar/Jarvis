@@ -83,6 +83,18 @@ CREATE TABLE IF NOT EXISTS conversations (
 );
 
 CREATE INDEX IF NOT EXISTS idx_conversations_user ON conversations (user_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS meetings (
+    id          BIGSERIAL PRIMARY KEY,
+    user_id     TEXT NOT NULL REFERENCES user_configs(user_id) ON DELETE CASCADE,
+    started_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    ended_at    TIMESTAMPTZ,
+    transcript  TEXT NOT NULL DEFAULT '',
+    notes       TEXT NOT NULL DEFAULT '',
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_meetings_user ON meetings (user_id, started_at DESC);
 """
 
 
@@ -192,6 +204,32 @@ async def _db_clear_conversation(user_id: str):
         await conn.execute("DELETE FROM conversations WHERE user_id = $1", user_id)
 
 
+async def _db_create_meeting(user_id: str) -> int:
+    async with _db_pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "INSERT INTO meetings (user_id) VALUES ($1) RETURNING id", user_id
+        )
+    return row["id"]
+
+
+async def _db_append_transcript_segment(meeting_id: int, segment: str):
+    async with _db_pool.acquire() as conn:
+        await conn.execute(
+            "UPDATE meetings SET transcript = transcript || $2 WHERE id = $1",
+            meeting_id,
+            " " + segment,
+        )
+
+
+async def _db_finalize_meeting(meeting_id: int, notes: str):
+    async with _db_pool.acquire() as conn:
+        await conn.execute(
+            "UPDATE meetings SET ended_at = NOW(), notes = $2 WHERE id = $1",
+            meeting_id,
+            notes,
+        )
+
+
 # ─── AUTH ─────────────────────────────────────────────────────────────────────
 _signer: URLSafeTimedSerializer | None = None
 _oidc_config: dict | None = None
@@ -247,6 +285,9 @@ def _get_user_from_environ(environ: dict) -> str | None:
 # {user_id: {config, client, provider, conversation}}
 _user_states: dict[str, dict] = {}
 _user_locks: dict[str, asyncio.Lock] = {}
+
+# {user_id: {meeting_id, segments}}
+_active_meetings: dict[str, dict] = {}
 
 # socket sid → user_id
 _sid_to_user: dict[str, str] = {}
@@ -614,6 +655,48 @@ def _validate(provider, api_key, model, base_url=""):
         return False, f"Couldn't connect: {msg[:160]}"
 
 
+# ─── MEETING NOTES ───────────────────────────────────────────────────────────
+async def _generate_meeting_notes(state: dict, transcript: str) -> str:
+    provider = state["provider"]
+    config = state["config"]
+    client = state["client"]
+    model = config.get("model") or DEFAULT_MODELS.get(provider, "")
+    prompt = (
+        "Analyze this meeting transcript and produce structured notes in exactly this format:\n\n"
+        "## Summary\n[2-3 sentence summary]\n\n"
+        "## Key Decisions\n- [decision]\n\n"
+        "## Action Items\n- [owner]: [action]\n\n"
+        "## Topics Discussed\n- [topic]\n\n"
+        f"Transcript:\n{transcript}"
+    )
+    if provider == "anthropic":
+        msg = await client.messages.create(
+            model=model,
+            max_tokens=1000,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        return msg.content[0].text
+    last = None
+    for extra in ({"max_tokens": 1000}, {"max_completion_tokens": 1000}, {}):
+        try:
+            resp = await client.chat.completions.create(
+                model=model,
+                messages=[{"role": "user", "content": prompt}],
+                stream=False,
+                **extra,
+            )
+            return resp.choices[0].message.content
+        except Exception as e:
+            last = e
+            if any(
+                x in str(e).lower()
+                for x in ("max_tokens", "max_completion_tokens", "unsupported")
+            ):
+                continue
+            raise
+    raise last
+
+
 # ─── SOCKET.IO + FASTAPI ─────────────────────────────────────────────────────
 sio = socketio.AsyncServer(async_mode="asgi", cors_allowed_origins="*")
 
@@ -881,6 +964,51 @@ async def api_save_ha(request: Request):
         await _db_save_config(user_id, config)
 
     return {"ok": True, "ha_configured": _ha_configured(config)}
+
+
+@fast_app.get("/api/meetings")
+async def api_meetings(request: Request):
+    user_id = _get_current_user(request)
+    if not user_id:
+        raise HTTPException(401)
+    async with _db_pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT id, started_at, ended_at, notes FROM meetings "
+            "WHERE user_id = $1 ORDER BY started_at DESC LIMIT 20",
+            user_id,
+        )
+    return [
+        {
+            "id": r["id"],
+            "started_at": r["started_at"].isoformat() if r["started_at"] else None,
+            "ended_at": r["ended_at"].isoformat() if r["ended_at"] else None,
+            "notes": r["notes"],
+        }
+        for r in rows
+    ]
+
+
+@fast_app.get("/api/meetings/{meeting_id}")
+async def api_meeting_detail(request: Request, meeting_id: int):
+    user_id = _get_current_user(request)
+    if not user_id:
+        raise HTTPException(401)
+    async with _db_pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT id, started_at, ended_at, transcript, notes FROM meetings "
+            "WHERE id = $1 AND user_id = $2",
+            meeting_id,
+            user_id,
+        )
+    if not row:
+        raise HTTPException(404)
+    return {
+        "id": row["id"],
+        "started_at": row["started_at"].isoformat() if row["started_at"] else None,
+        "ended_at": row["ended_at"].isoformat() if row["ended_at"] else None,
+        "transcript": row["transcript"],
+        "notes": row["notes"],
+    }
 
 
 # ─── LLM STREAMING ───────────────────────────────────────────────────────────
@@ -1162,6 +1290,114 @@ async def on_user_message(sid, data):
     text = ((data or {}).get("text") or "").strip()
     if text:
         asyncio.create_task(_process_message(sid, text))
+
+
+@sio.on("start_meeting")
+async def on_start_meeting(sid, data=None):
+    user_id = _sid_to_user.get(sid)
+    if not user_id:
+        return
+    if user_id in _active_meetings:
+        await sio.emit(
+            "meeting_error", {"error": "A meeting is already active."}, to=sid
+        )
+        return
+    meeting_id = await _db_create_meeting(user_id)
+    _active_meetings[user_id] = {"meeting_id": meeting_id, "segments": []}
+    await sio.emit("meeting_started", {"meeting_id": meeting_id}, to=sid)
+
+
+@sio.on("meeting_audio_chunk")
+async def on_meeting_audio_chunk(sid, data):
+    user_id = _sid_to_user.get(sid)
+    if not user_id or user_id not in _active_meetings:
+        return
+    if not data:
+        return
+    tmp = None
+    try:
+        audio_bytes = bytes(data) if not isinstance(data, bytes) else data
+        with tempfile.NamedTemporaryFile(suffix=".webm", delete=False) as f:
+            f.write(audio_bytes)
+            tmp = f.name
+
+        def _run_meeting_stt():
+            m = _get_whisper()
+            segs, _ = m.transcribe(
+                tmp,
+                language="en",
+                beam_size=1,
+                vad_filter=True,
+                no_speech_threshold=0.6,
+            )
+            return " ".join(s.text for s in segs).strip()
+
+        async with _whisper_lock:
+            text = await asyncio.to_thread(_run_meeting_stt)
+
+        if text:
+            meeting = _active_meetings.get(user_id)
+            if meeting:
+                meeting["segments"].append(text)
+                await _db_append_transcript_segment(meeting["meeting_id"], text)
+                full = " ".join(meeting["segments"])
+                await sio.emit(
+                    "meeting_transcript_update",
+                    {"segment": text, "full": full},
+                    to=sid,
+                )
+    except Exception as e:
+        print(f"[MEETING] chunk error: {e}", flush=True)
+    finally:
+        if tmp:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+
+
+@sio.on("end_meeting")
+async def on_end_meeting(sid, data=None):
+    user_id = _sid_to_user.get(sid)
+    if not user_id or user_id not in _active_meetings:
+        return
+
+    # Wait for any in-flight chunk transcription to complete before finalizing
+    async with _whisper_lock:
+        pass
+
+    meeting = _active_meetings.pop(user_id, None)
+    if not meeting:
+        return
+
+    meeting_id = meeting["meeting_id"]
+    transcript = " ".join(meeting["segments"]).strip()
+
+    if not transcript:
+        notes = "No speech was detected during this meeting."
+        await _db_finalize_meeting(meeting_id, notes)
+        await sio.emit(
+            "meeting_notes_ready",
+            {"meeting_id": meeting_id, "transcript": "", "notes": notes},
+            to=sid,
+        )
+        return
+
+    state = _user_states.get(user_id)
+    notes = "Notes unavailable — no LLM configured."
+    if state and _user_configured(state):
+        try:
+            notes = await _generate_meeting_notes(state, transcript)
+        except Exception as e:
+            print(f"[MEETING] notes generation error: {e}", flush=True)
+            notes = f"Transcript captured but notes generation failed: {e}"
+
+    await _db_finalize_meeting(meeting_id, notes)
+    await sio.emit(
+        "meeting_notes_ready",
+        {"meeting_id": meeting_id, "transcript": transcript, "notes": notes},
+        to=sid,
+    )
 
 
 @sio.on("reset_chat")
