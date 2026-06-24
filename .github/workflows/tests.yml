@@ -19,6 +19,57 @@ jobs:
             | tar -xz -C /tmp actionlint
           /tmp/actionlint
 
+  android-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.6"
+
+      - name: Build Android APK (debug)
+        working-directory: android
+        run: gradle assembleDebug --no-daemon
+
+  pip-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+          cache: pip
+
+      - name: Audit Python dependencies for CVEs
+        run: |
+          pip install pip-audit -q
+          pip-audit -r requirements.txt
+
+  docker-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: docker build --tag jarvis:ci .
+
+  compose-validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate docker compose config
+        run: docker compose config --quiet
+
   quality:
     runs-on: ubuntu-latest
     steps:
