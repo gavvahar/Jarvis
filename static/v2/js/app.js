@@ -885,6 +885,31 @@
     if (window.__chat) window.__chat.addMsg("Meeting: " + error, "in");
   });
 
+  function showMessageToast(sender, text, reason) {
+    const existing = document.getElementById("msg-alert-toast");
+    if (existing) existing.remove();
+    const toast = document.createElement("div");
+    toast.id = "msg-alert-toast";
+    toast.innerHTML =
+      '<div class="msg-toast-label">MESSAGE</div>' +
+      '<div class="msg-toast-sender">' +
+      sender.replace(/</g, "&lt;") +
+      "</div>" +
+      '<div class="msg-toast-text">' +
+      text.replace(/</g, "&lt;").slice(0, 120) +
+      "</div>" +
+      '<div class="msg-toast-reason">' +
+      reason.replace(/</g, "&lt;") +
+      "</div>";
+    toast.addEventListener("click", () => toast.remove());
+    document.body.appendChild(toast);
+    setTimeout(() => toast && toast.remove(), 12000);
+  }
+
+  socket.on("message_alert", ({ sender, text, reason }) => {
+    showMessageToast(sender, text, reason);
+  });
+
   // Meeting button wires
   if (meetingBtn) {
     meetingBtn.addEventListener("click", () => {
@@ -960,6 +985,62 @@
       if (meetingNotesModal) meetingNotesModal.classList.add("setup-hidden");
     });
   }
+
+  // ===================================================================
+  //  PHONE MESSAGES SETTINGS
+  // ===================================================================
+  const msgSettingsPanel = $("msg-settings");
+  const msgSettingsBtn = $("msg-settings-btn");
+  const msgSettingsClose = $("msg-settings-close");
+  const msgWebhookUrl = $("msg-webhook-url");
+  const msgWebhookToken = $("msg-webhook-token");
+  const msgCopyUrl = $("msg-copy-url");
+  const msgCopyToken = $("msg-copy-token");
+  const msgRegenToken = $("msg-regen-token");
+
+  function openMsgSettings() {
+    if (!msgSettingsPanel) return;
+    msgSettingsPanel.classList.add("msg-settings-open");
+    fetch("/api/messages/token")
+      .then((r) => r.json())
+      .then((d) => {
+        if (msgWebhookUrl) msgWebhookUrl.value = d.url || "";
+        if (msgWebhookToken) msgWebhookToken.value = d.token || "";
+      })
+      .catch(() => {});
+  }
+
+  if (msgSettingsBtn) msgSettingsBtn.addEventListener("click", openMsgSettings);
+  if (msgSettingsClose)
+    msgSettingsClose.addEventListener("click", () => {
+      if (msgSettingsPanel)
+        msgSettingsPanel.classList.remove("msg-settings-open");
+    });
+  if (msgSettingsPanel)
+    msgSettingsPanel.addEventListener("click", (e) => {
+      if (e.target === msgSettingsPanel)
+        msgSettingsPanel.classList.remove("msg-settings-open");
+    });
+
+  if (msgCopyUrl)
+    msgCopyUrl.addEventListener("click", () => {
+      if (msgWebhookUrl)
+        navigator.clipboard.writeText(msgWebhookUrl.value).catch(() => {});
+    });
+  if (msgCopyToken)
+    msgCopyToken.addEventListener("click", () => {
+      if (msgWebhookToken)
+        navigator.clipboard.writeText(msgWebhookToken.value).catch(() => {});
+    });
+  if (msgRegenToken)
+    msgRegenToken.addEventListener("click", () => {
+      fetch("/api/messages/token/regenerate", { method: "POST" })
+        .then((r) => r.json())
+        .then((d) => {
+          if (msgWebhookToken) msgWebhookToken.value = d.token || "";
+        })
+        .catch(() => {});
+    });
 
   // On load, ask the backend whether we're already configured.
   fetch("/api/status")

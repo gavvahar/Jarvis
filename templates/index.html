@@ -306,6 +306,44 @@
           </svg>
           MEETING
         </button>
+        <button id="msg-settings-btn" title="Phone Messages">
+          <svg
+            viewBox="0 0 20 20"
+            width="13"
+            height="13"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.5"
+          >
+            <path d="M2 4h16v11H2z" />
+            <path d="M2 4l8 7 8-7" />
+          </svg>
+          MESSAGES
+        </button>
+      </div>
+
+      <!-- ============ MESSAGES SETTINGS PANEL ============ -->
+      <div id="msg-settings">
+        <div id="msg-settings-card">
+          <h2>PHONE MESSAGES — WEBHOOK</h2>
+          <p class="msg-settings-note">
+            Forward notifications from your phone to Jarvis using this webhook.
+            Jarvis will classify each message and alert you to anything
+            important.
+          </p>
+          <div class="msg-field-label">WEBHOOK URL</div>
+          <div class="msg-field-row">
+            <input id="msg-webhook-url" type="text" readonly />
+            <button id="msg-copy-url">COPY</button>
+          </div>
+          <div class="msg-field-label">BEARER TOKEN</div>
+          <div class="msg-field-row">
+            <input id="msg-webhook-token" type="text" readonly />
+            <button id="msg-copy-token">COPY</button>
+            <button id="msg-regen-token">NEW</button>
+          </div>
+          <button id="msg-settings-close">CLOSE</button>
+        </div>
       </div>
 
       <!-- ============ TELEMETRY PANELS ============ -->

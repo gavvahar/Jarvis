@@ -77,6 +77,19 @@ CREATE TABLE IF NOT EXISTS user_configs (
 );
 
 ALTER TABLE user_configs ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'user';
+ALTER TABLE user_configs ADD COLUMN IF NOT EXISTS webhook_token TEXT NOT NULL DEFAULT '';
+
+CREATE TABLE IF NOT EXISTS phone_messages (
+    id          BIGSERIAL PRIMARY KEY,
+    user_id     TEXT NOT NULL REFERENCES user_configs(user_id) ON DELETE CASCADE,
+    sender      TEXT NOT NULL DEFAULT '',
+    body        TEXT NOT NULL DEFAULT '',
+    important   BOOLEAN NOT NULL DEFAULT FALSE,
+    reason      TEXT NOT NULL DEFAULT '',
+    received_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_phone_messages_user ON phone_messages (user_id, received_at DESC);
 
 CREATE TABLE IF NOT EXISTS conversations (
     id          BIGSERIAL PRIMARY KEY,
@@ -206,6 +219,58 @@ async def _db_append_message(user_id: str, role: str, content):
 async def _db_clear_conversation(user_id: str):
     async with _pool().acquire() as conn:
         await conn.execute("DELETE FROM conversations WHERE user_id = $1", user_id)
+
+
+async def _db_get_or_create_webhook_token(user_id: str) -> str:
+    async with _pool().acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT webhook_token FROM user_configs WHERE user_id = $1", user_id
+        )
+    if row and row["webhook_token"]:
+        return row["webhook_token"]
+    token = secrets.token_hex(32)
+    async with _pool().acquire() as conn:
+        await conn.execute(
+            "UPDATE user_configs SET webhook_token = $2 WHERE user_id = $1",
+            user_id,
+            token,
+        )
+    return token
+
+
+async def _db_regenerate_webhook_token(user_id: str) -> str:
+    token = secrets.token_hex(32)
+    async with _pool().acquire() as conn:
+        await conn.execute(
+            "UPDATE user_configs SET webhook_token = $2 WHERE user_id = $1",
+            user_id,
+            token,
+        )
+    return token
+
+
+async def _db_find_user_by_token(token: str) -> str | None:
+    async with _pool().acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT user_id FROM user_configs WHERE webhook_token = $1 AND webhook_token != ''",
+            token,
+        )
+    return row["user_id"] if row else None
+
+
+async def _db_store_phone_message(
+    user_id: str, sender: str, body: str, important: bool, reason: str
+):
+    async with _pool().acquire() as conn:
+        await conn.execute(
+            "INSERT INTO phone_messages (user_id, sender, body, important, reason) "
+            "VALUES ($1, $2, $3, $4, $5)",
+            user_id,
+            sender,
+            body,
+            important,
+            reason,
+        )
 
 
 async def _db_create_meeting(user_id: str) -> int:
@@ -1027,6 +1092,147 @@ async def api_meeting_detail(request: Request, meeting_id: int):
         "transcript": row["transcript"],
         "notes": row["notes"],
     }
+
+
+# ─── PHONE MESSAGES ──────────────────────────────────────────────────────────
+def _sids_for_user(user_id: str) -> list[str]:
+    return [sid for sid, uid in _sid_to_user.items() if uid == user_id]
+
+
+async def _classify_message(state: dict, sender: str, body: str) -> tuple[bool, str]:
+    """Return (is_important, reason). Falls back to False on any error."""
+    provider = state["provider"]
+    config = state["config"]
+    client = state["client"]
+    model = config.get("model") or DEFAULT_MODELS.get(provider, "")
+    prompt = (
+        "You filter phone messages for importance. Reply with exactly:\n"
+        "  yes: <one-line reason>\n"
+        "or:\n"
+        "  no\n\n"
+        "Flag as important if the message contains: an invitation, event, deadline, "
+        "urgent request, meeting request, or time-sensitive ask. "
+        "Routine greetings, spam, and casual chitchat are NOT important.\n\n"
+        f"Sender: {sender}\n"
+        f"Message: {body}"
+    )
+    try:
+        if provider == "anthropic":
+            msg = await client.messages.create(
+                model=model,
+                max_tokens=60,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            reply = msg.content[0].text.strip().lower()
+        else:
+            last = None
+            reply = "no"
+            for extra in ({"max_tokens": 60}, {"max_completion_tokens": 60}, {}):
+                try:
+                    resp = await client.chat.completions.create(
+                        model=model,
+                        messages=[{"role": "user", "content": prompt}],
+                        stream=False,
+                        **extra,
+                    )
+                    reply = resp.choices[0].message.content.strip().lower()
+                    break
+                except Exception as e:
+                    last = e
+                    if any(
+                        x in str(e).lower()
+                        for x in ("max_tokens", "max_completion_tokens", "unsupported")
+                    ):
+                        continue
+                    raise
+            if last and not reply:
+                raise last
+        if reply.startswith("yes"):
+            reason = reply[3:].lstrip(":").strip()
+            return True, reason or "flagged as important"
+        return False, ""
+    except Exception as e:
+        print(f"[MESSAGES] classify error: {e}", flush=True)
+        return False, ""
+
+
+async def _classify_and_notify(user_id: str, sender: str, body: str, state: dict):
+    important, reason = await _classify_message(state, sender, body)
+    await _db_store_phone_message(user_id, sender, body, important, reason)
+    if important:
+        for sid in _sids_for_user(user_id):
+            await sio.emit(
+                "message_alert",
+                {"sender": sender, "text": body[:300], "reason": reason},
+                to=sid,
+            )
+
+
+@fast_app.get("/api/messages/token")
+async def api_messages_token(request: Request):
+    user_id = _get_current_user(request)
+    if not user_id:
+        raise HTTPException(401)
+    token = await _db_get_or_create_webhook_token(user_id)
+    return {"token": token, "url": f"{APP_URL}/api/messages/ingest"}
+
+
+@fast_app.post("/api/messages/token/regenerate")
+async def api_messages_token_regenerate(request: Request):
+    user_id = _get_current_user(request)
+    if not user_id:
+        raise HTTPException(401)
+    token = await _db_regenerate_webhook_token(user_id)
+    return {"token": token, "url": f"{APP_URL}/api/messages/ingest"}
+
+
+@fast_app.post("/api/messages/ingest")
+async def api_messages_ingest(request: Request):
+    auth = request.headers.get("Authorization", "")
+    if not auth.startswith("Bearer "):
+        raise HTTPException(401)
+    token = auth[7:].strip()
+    user_id = await _db_find_user_by_token(token)
+    if not user_id:
+        raise HTTPException(401)
+
+    data = await request.json()
+    sender = (data.get("sender") or "Unknown").strip()[:200]
+    body = (data.get("text") or "").strip()[:2000]
+    if not body:
+        return {"ok": True}
+
+    state = _user_states.get(user_id)
+    if state and _user_configured(state):
+        asyncio.create_task(_classify_and_notify(user_id, sender, body, state))
+    else:
+        await _db_store_phone_message(user_id, sender, body, False, "")
+
+    return {"ok": True}
+
+
+@fast_app.get("/api/messages")
+async def api_messages(request: Request):
+    user_id = _get_current_user(request)
+    if not user_id:
+        raise HTTPException(401)
+    async with _pool().acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT id, sender, body, important, reason, received_at "
+            "FROM phone_messages WHERE user_id = $1 ORDER BY received_at DESC LIMIT 50",
+            user_id,
+        )
+    return [
+        {
+            "id": r["id"],
+            "sender": r["sender"],
+            "body": r["body"],
+            "important": r["important"],
+            "reason": r["reason"],
+            "received_at": r["received_at"].isoformat(),
+        }
+        for r in rows
+    ]
 
 
 # ─── LLM STREAMING ───────────────────────────────────────────────────────────
