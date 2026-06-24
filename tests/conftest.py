@@ -16,7 +16,9 @@ def api_client():
     from fastapi.testclient import TestClient
 
     async def _fake_db_init():
-        jarvis._db_pool = MagicMock()
+        mock_pool = MagicMock()
+        mock_pool.close = AsyncMock()
+        jarvis._db_pool = mock_pool
 
     with (
         patch.object(jarvis, "_db_init", new=_fake_db_init),
