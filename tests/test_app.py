@@ -9,7 +9,16 @@ stubs out the database so no running PostgreSQL is required.
 from unittest.mock import AsyncMock, patch
 
 import app as jarvis
-from app import _ha_configured, _split_sentences, _user_configured
+from app import (
+    _build_client,
+    _build_system_prompt,
+    _get_user_lock,
+    _ha_configured,
+    _ha_headers,
+    _sids_for_user,
+    _split_sentences,
+    _user_configured,
+)
 
 # ── Pure function tests ────────────────────────────────────────────────────────
 
@@ -74,6 +83,72 @@ class TestUserConfigured:
 
     def test_with_none_client(self):
         assert _user_configured({"client": None}) is False
+
+
+class TestHaHeaders:
+    def test_returns_bearer_token(self):
+        headers = _ha_headers({"ha_token": "secret123"})
+        assert headers["Authorization"] == "Bearer secret123"
+        assert headers["Content-Type"] == "application/json"
+
+
+class TestBuildSystemPrompt:
+    def test_base_prompt_non_empty(self):
+        prompt = _build_system_prompt({"ha_url": "", "ha_token": ""})
+        assert len(prompt) > 50
+
+    def test_ha_section_added_when_configured(self):
+        prompt = _build_system_prompt({"ha_url": "http://ha.local", "ha_token": "tok"})
+        assert "HOME AUTOMATION" in prompt
+
+    def test_ha_section_absent_when_not_configured(self):
+        prompt = _build_system_prompt({"ha_url": "", "ha_token": ""})
+        assert "HOME AUTOMATION" not in prompt
+
+    def test_location_context_included_when_set(self):
+        jarvis._location_context.update(
+            {"city": "Austin", "region": "TX", "temp_f": 95, "condition": "Clear"}
+        )
+        try:
+            prompt = _build_system_prompt({"ha_url": "", "ha_token": ""})
+            assert "Austin" in prompt
+            assert "95" in prompt
+        finally:
+            jarvis._location_context.clear()
+
+
+class TestBuildClient:
+    def test_no_key_returns_none_for_anthropic(self):
+        assert _build_client("anthropic", "") is None
+
+    def test_no_key_returns_none_for_openai(self):
+        assert _build_client("openai", "") is None
+
+
+class TestGetUserLock:
+    def test_returns_same_lock_for_same_user(self):
+        lock1 = _get_user_lock("lockuser")
+        lock2 = _get_user_lock("lockuser")
+        assert lock1 is lock2
+
+    def test_different_users_get_different_locks(self):
+        assert _get_user_lock("user_a") is not _get_user_lock("user_b")
+
+
+class TestSidsForUser:
+    def test_finds_matching_sids(self):
+        jarvis._sid_to_user["s1"] = "alice"
+        jarvis._sid_to_user["s2"] = "bob"
+        jarvis._sid_to_user["s3"] = "alice"
+        try:
+            assert set(_sids_for_user("alice")) == {"s1", "s3"}
+        finally:
+            jarvis._sid_to_user.pop("s1", None)
+            jarvis._sid_to_user.pop("s2", None)
+            jarvis._sid_to_user.pop("s3", None)
+
+    def test_returns_empty_for_unknown_user(self):
+        assert _sids_for_user("nobody") == []
 
 
 # ── Webhook auth tests ─────────────────────────────────────────────────────────
