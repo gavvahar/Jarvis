@@ -67,12 +67,16 @@ jobs:
                   break
 
           assignees = list(code_owners | {pr_author})
-          subprocess.run(
-              ["gh", "pr", "edit", "${{ github.event.pull_request.number }}",
-               "--add-assignee", ",".join(assignees)],
-              check=True
-          )
-          print(f"Assigned: {', '.join(assignees)}")
+          for assignee in assignees:
+              result = subprocess.run(
+                  ["gh", "pr", "edit", "${{ github.event.pull_request.number }}",
+                   "--add-assignee", assignee],
+                  capture_output=True,
+              )
+              if result.returncode == 0:
+                  print(f"Assigned: {assignee}")
+              else:
+                  print(f"Skipped {assignee} (not assignable): {result.stderr.decode()[:120]}")
           EOF
 
       - name: Apply labels
