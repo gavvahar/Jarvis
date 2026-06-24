@@ -10,6 +10,7 @@ jobs:
     permissions:
       pull-requests: write
       contents: read
+      issues: write
 
     steps:
       - uses: actions/checkout@v4
@@ -72,6 +73,87 @@ jobs:
               check=True
           )
           print(f"Assigned: {', '.join(assignees)}")
+          EOF
+
+      - name: Apply labels
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 - <<'EOF'
+          import subprocess, re
+
+          pr_number = "${{ github.event.pull_request.number }}"
+          base_ref = "origin/${{ github.base_ref }}"
+
+          changed = subprocess.run(
+              ["git", "diff", f"{base_ref}...HEAD", "--name-only"],
+              capture_output=True, text=True,
+          ).stdout.splitlines()
+
+          # Area labels from changed file paths
+          area_labels = set()
+          for f in changed:
+              if f.startswith("android/"):
+                  area_labels.add("android")
+              elif f.startswith(("static/", "templates/", "package.json", "package-lock.json")):
+                  area_labels.add("frontend")
+              elif f in ("app.py", "personality.py") or f.startswith("requirements"):
+                  area_labels.add("backend")
+              elif f.startswith(".github/"):
+                  area_labels.add("ci")
+              elif f in ("Dockerfile", "compose.yml", "tox.ini", "environment.yml", "Makefile") or f.endswith(".toml"):
+                  area_labels.add("devops")
+
+          # Type labels from conventional commit prefixes
+          type_map = {
+              "feat": "enhancement",
+              "fix": "bug",
+              "docs": "documentation",
+              "chore": "chore",
+              "refactor": "refactor",
+              "perf": "performance",
+          }
+          type_labels = set()
+          for line in open("/tmp/commits.txt").read().splitlines():
+              m = re.match(r"^([a-z]+)(\([^)]+\))?[!]?:", line)
+              if m and m.group(1) in type_map:
+                  type_labels.add(type_map[m.group(1)])
+
+          all_labels = area_labels | type_labels
+          if not all_labels:
+              print("No labels detected")
+              raise SystemExit(0)
+
+          # Ensure labels exist; create with standard colours if missing
+          label_meta = {
+              "android":       ("0075ca", "Android companion app"),
+              "frontend":      ("0e8a16", "UI / JS / CSS"),
+              "backend":       ("e4e669", "Python server and API"),
+              "devops":        ("d93f0b", "Docker / CI / infra"),
+              "ci":            ("f9d0c4", "GitHub Actions"),
+              "enhancement":   ("a2eeef", "New feature or request"),
+              "bug":           ("d73a4a", "Something isn't working"),
+              "documentation": ("0075ca", "Documentation improvements"),
+              "chore":         ("cfd3d7", "Maintenance"),
+              "refactor":      ("e4e669", "Code refactoring"),
+              "performance":   ("fbca04", "Performance improvement"),
+          }
+          for label in all_labels:
+              if label in label_meta:
+                  color, desc = label_meta[label]
+                  subprocess.run(
+                      ["gh", "label", "create", label,
+                       "--color", color, "--description", desc, "--force"],
+                      capture_output=True,
+                  )
+
+          subprocess.run(
+              ["gh", "pr", "edit", pr_number,
+               "--add-label", ",".join(all_labels)],
+              check=True,
+          )
+          print(f"Labels applied: {', '.join(sorted(all_labels))}")
           EOF
 
       # Method 1: git-cliff (Conventional Commits)
