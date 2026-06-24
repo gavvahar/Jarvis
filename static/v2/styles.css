@@ -21,6 +21,14 @@
   box-sizing: border-box;
 }
 
+/* eliminate 300ms tap delay and double-tap zoom on interactive elements */
+button,
+input,
+select,
+textarea {
+  touch-action: manipulation;
+}
+
 html,
 body {
   width: 100%;
@@ -1929,4 +1937,127 @@ body.mode-workspace #camera-surface.show {
   color: var(--amber);
   opacity: 0.7;
   text-align: center;
+}
+
+/* ===========================================================
+   MOBILE RESPONSIVE
+   =========================================================== */
+
+/* ---- tablet / phone landscape (≤768px) ---- */
+@media (max-width: 768px) {
+  /* Schematic blueprints: scale down so they don't crowd the orb */
+  #schematics .schem {
+    transform: scale(0.6);
+  }
+
+  /* Chat panel: stay within viewport */
+  #chat-panel {
+    left: 12px;
+    width: min(360px, calc(100vw - 24px));
+  }
+
+  /* Meeting panel: pull away from edge */
+  #meeting-panel {
+    right: 12px;
+    width: min(260px, calc(100vw - 24px));
+  }
+}
+
+/* ---- phone portrait (≤480px) ---- */
+@media (max-width: 480px) {
+  /* Touch devices don't need a crosshair cursor */
+  html,
+  body {
+    cursor: default;
+  }
+
+  /* Hide decorative schematic blueprints — too small to read */
+  #schematics {
+    display: none;
+  }
+
+  /* Topbar: keep live-dot + JARVIS name + action buttons; hide decorative labels */
+  #topbar > span:not(.sys-name):not(:first-child) {
+    display: none;
+  }
+  #topbar {
+    gap: 10px;
+    top: 16px;
+  }
+
+  /* Bottombar: too many segments for a phone width */
+  #bottombar {
+    display: none;
+  }
+
+  /* Corner brackets: tighter inset on small screens */
+  .bk-tl {
+    top: 10px;
+    left: 10px;
+  }
+  .bk-tr {
+    top: 10px;
+    right: 10px;
+  }
+  .bk-bl {
+    bottom: 10px;
+    left: 10px;
+  }
+  .bk-br {
+    bottom: 10px;
+    right: 10px;
+  }
+
+  /* Chat panel: full-width, fills available screen height.
+     dvh shrinks when the virtual keyboard appears, keeping the input bar visible. */
+  #chat-panel {
+    left: 8px;
+    right: 8px;
+    width: auto;
+    top: 56px;
+    height: calc(100dvh - 70px);
+    max-height: none;
+    min-height: 0;
+  }
+  /* No dragging on phones — hide the grip and reset cursor */
+  .chat-head {
+    cursor: default;
+  }
+  .chat-grip {
+    display: none;
+  }
+  /* Prevent iOS zoom on chat input focus */
+  #chat-text {
+    font-size: 16px;
+  }
+
+  /* Meeting panel: anchor to bottom edge, full width */
+  #meeting-panel {
+    left: 8px;
+    right: 8px;
+    bottom: 8px;
+    width: auto;
+    max-height: 50dvh;
+  }
+
+  /* Standby tag: allow wrapping on very narrow screens */
+  .standby-tag {
+    white-space: normal;
+    text-align: center;
+    padding: 0 20px;
+    bottom: 3vmin;
+    font-size: 9px;
+  }
+
+  /* Workspace surface cards: stack vertically */
+  #workspace-surface {
+    flex-direction: column;
+    padding: 60px 12px 12px;
+    align-items: stretch;
+    overflow-y: auto;
+  }
+  .ws-card {
+    max-width: 100%;
+    width: 100%;
+  }
 }
