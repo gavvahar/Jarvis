@@ -1042,6 +1042,20 @@
         .catch(() => {});
     });
 
+  document.querySelectorAll(".msg-tab").forEach((tab) => {
+    tab.addEventListener("click", () => {
+      document
+        .querySelectorAll(".msg-tab")
+        .forEach((t) => t.classList.remove("msg-tab-active"));
+      document
+        .querySelectorAll(".msg-tab-content")
+        .forEach((c) => c.classList.add("msg-tab-hidden"));
+      tab.classList.add("msg-tab-active");
+      const target = document.getElementById("msg-tab-" + tab.dataset.tab);
+      if (target) target.classList.remove("msg-tab-hidden");
+    });
+  });
+
   // On load, ask the backend whether we're already configured.
   fetch("/api/status")
     .then((r) => r.json())

@@ -2187,9 +2187,70 @@ body.mode-workspace #camera-surface.show {
 }
 #msg-settings-close {
   display: block;
-  margin-top: 10px;
+  margin-top: 16px;
   width: 100%;
   text-align: center;
+}
+.msg-tab-bar {
+  display: flex;
+  gap: 0;
+  margin: 16px 0 0;
+  border-bottom: 1px solid var(--line);
+}
+.msg-tab {
+  font-family: var(--label);
+  font-size: 9px;
+  letter-spacing: 0.15em;
+  background: transparent;
+  border: 1px solid var(--line);
+  border-bottom: none;
+  color: rgba(127, 220, 255, 0.45);
+  padding: 6px 14px;
+  cursor: pointer;
+  margin-right: 4px;
+  margin-bottom: -1px;
+}
+.msg-tab.msg-tab-active {
+  border-color: var(--cyan);
+  color: var(--cyan-bright);
+  background: rgba(31, 182, 239, 0.07);
+}
+.msg-tab-content {
+  padding: 12px 0 0;
+}
+.msg-tab-hidden {
+  display: none;
+}
+.msg-ios-steps {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: rgba(127, 220, 255, 0.75);
+  line-height: 1.7;
+  padding-left: 18px;
+  margin: 0 0 8px;
+}
+.msg-ios-steps li {
+  margin-bottom: 6px;
+}
+.msg-ios-steps ul {
+  margin-top: 4px;
+  padding-left: 16px;
+  list-style: none;
+}
+.msg-ios-steps ul li::before {
+  content: "→ ";
+  color: var(--cyan);
+}
+.msg-ios-steps code {
+  color: var(--amber);
+  font-size: 10px;
+}
+.msg-ios-steps strong {
+  color: var(--cyan-bright);
+}
+.msg-ios-steps em {
+  color: var(--cyan);
+  font-style: normal;
 }
 .msg-settings-note {
   font-family: var(--label);
