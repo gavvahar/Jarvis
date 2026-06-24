@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="background">#02060a</color>
+    <color name="cyan">#1fb6ef</color>
+    <color name="cyan_bright">#7fdcff</color>
+    <color name="cyan_dim">#1583b8</color>
+    <color name="amber">#ffb648</color>
+    <color name="ic_launcher_background">#02060a</color>
+</resources>

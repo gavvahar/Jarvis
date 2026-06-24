@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Jarvis Messages</string>
+    <string name="listener_label">Jarvis Message Monitor</string>
+    <string name="app_title">J·A·R·V·I·S</string>
+    <string name="app_subtitle">MESSAGE MONITOR</string>
+    <string name="status_active">● LISTENER ACTIVE</string>
+    <string name="status_inactive">○ NOTIFICATION ACCESS REQUIRED</string>
+    <string name="grant_access">GRANT NOTIFICATION ACCESS</string>
+    <string name="label_url">WEBHOOK URL</string>
+    <string name="label_token">BEARER TOKEN</string>
+    <string name="hint_url">https://jarvis.example.com/api/messages/ingest</string>
+    <string name="hint_token">paste token from Jarvis → Messages panel</string>
+    <string name="save">SAVE</string>
+</resources>
