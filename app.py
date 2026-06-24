@@ -720,9 +720,11 @@ async def lifespan(application: FastAPI):
         print(f"[STT] Whisper model load failed: {e}", flush=True)
     t1 = asyncio.create_task(_telemetry_loop())
     t2 = asyncio.create_task(_weather_loop())
+    t3 = asyncio.create_task(_meeting_cleanup_loop())
     yield
     t1.cancel()
     t2.cancel()
+    t3.cancel()
     if _db_pool:
         await _db_pool.close()
 
@@ -1519,3 +1521,18 @@ async def _weather_loop():
         except Exception:
             pass
         await asyncio.sleep(600)
+
+
+async def _meeting_cleanup_loop():
+    while True:
+        await asyncio.sleep(3600)  # check every hour
+        try:
+            if _db_pool:
+                async with _db_pool.acquire() as conn:
+                    result = await conn.execute(
+                        "DELETE FROM meetings WHERE created_at < NOW() - INTERVAL '48 hours'"
+                    )
+                if result != "DELETE 0":
+                    print(f"[MEETING] Cleanup: {result}", flush=True)
+        except Exception as e:
+            print(f"[MEETING] Cleanup error: {e}", flush=True)

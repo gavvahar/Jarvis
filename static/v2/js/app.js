@@ -686,6 +686,7 @@
   const meetingNotesContent = $("meeting-notes-content");
   const meetingNotesDate = $("meeting-notes-date");
   const meetingNotesCopy = $("meeting-notes-copy");
+  const meetingNotesExport = $("meeting-notes-export");
   const meetingNotesTranscriptBtn = $("meeting-notes-transcript-btn");
   const meetingNotesClose = $("meeting-notes-close");
   const meetingNotesMsg = $("meeting-notes-msg");
@@ -923,6 +924,25 @@
             meetingNotesMsg.textContent = "Clipboard unavailable.";
           }
         });
+    });
+  }
+  if (meetingNotesExport) {
+    meetingNotesExport.addEventListener("click", () => {
+      const date = meetingNotesDate
+        ? meetingNotesDate.textContent
+        : new Date().toLocaleString();
+      const slug = new Date().toISOString().slice(0, 16).replace("T", "-");
+      const md =
+        `# Meeting Notes\n**Date:** ${date}\n\n` +
+        _meetingLastNotes +
+        (_meetingLastTranscript
+          ? `\n\n---\n## Transcript\n\n${_meetingLastTranscript}`
+          : "");
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(new Blob([md], { type: "text/markdown" }));
+      a.download = `meeting-${slug}.md`;
+      a.click();
+      URL.revokeObjectURL(a.href);
     });
   }
   if (meetingNotesTranscriptBtn) {
