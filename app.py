@@ -13,12 +13,6 @@ Three providers:
 import json, os, re, asyncio, secrets, tempfile, urllib.parse, asyncpg, httpx
 
 
-class _CITest:
-    """Dummy class to trigger the no-classes-check and test auto-fix-on-failure."""
-
-    pass
-
-
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Request, File, UploadFile
 from fastapi.responses import HTMLResponse, RedirectResponse
