@@ -120,9 +120,24 @@ jobs:
               ].join('\n');
             }
 
+            const actor = context.payload.workflow_run.actor?.login;
+
+            // Create the label if it doesn't exist yet (422 = already exists, safe to ignore)
+            try {
+              await github.rest.issues.createLabel({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                name: 'ci-failure',
+                color: 'd93f0b',
+                description: 'CI pipeline failure requiring manual fix',
+              });
+            } catch (e) {}
+
             await github.rest.issues.create({
               owner: context.repo.owner,
               repo: context.repo.repo,
               title: `CI: tests and auto-format failed on \`${branch}\` (${shortSha})`,
               body,
+              assignees: actor ? [actor] : [],
+              labels: ['ci-failure'],
             });
