@@ -237,6 +237,16 @@ _signer: URLSafeTimedSerializer | None = None
 _oidc_config: dict | None = None
 
 
+def _get_signer() -> URLSafeTimedSerializer:
+    assert _signer is not None, "Session signer not initialised"
+    return _signer
+
+
+def _get_oidc_config() -> dict:
+    assert _oidc_config is not None, "OIDC not configured"
+    return _oidc_config
+
+
 async def _fetch_oidc_config():
     global _oidc_config
     if not OIDC_DISCOVERY_URL:
@@ -255,12 +265,12 @@ async def _fetch_oidc_config():
 
 
 def _sign_session(user_id: str) -> str:
-    return _signer.dumps(user_id)
+    return _get_signer().dumps(user_id)
 
 
 def _verify_session(value: str) -> str | None:
     try:
-        return _signer.loads(value, max_age=86400 * 30)
+        return _get_signer().loads(value, max_age=86400 * 30)
     except (BadSignature, SignatureExpired):
         return None
 
@@ -601,6 +611,7 @@ def _openai_create_sync(client, model, messages, stream, max_out=500):
             ):
                 continue
             raise
+    assert last is not None
     raise last
 
 
@@ -696,6 +707,7 @@ async def _generate_meeting_notes(state: dict, transcript: str) -> str:
             ):
                 continue
             raise
+    assert last is not None
     raise last
 
 
@@ -782,7 +794,7 @@ async def auth_callback(request: Request):
     try:
         async with httpx.AsyncClient(timeout=10) as c:
             r = await c.post(
-                _oidc_config["token_endpoint"],
+                _get_oidc_config()["token_endpoint"],
                 data={
                     "grant_type": "authorization_code",
                     "code": code,
@@ -795,7 +807,7 @@ async def auth_callback(request: Request):
             tokens = r.json()
 
             r = await c.get(
-                _oidc_config["userinfo_endpoint"],
+                _get_oidc_config()["userinfo_endpoint"],
                 headers={"Authorization": f"Bearer {tokens['access_token']}"},
             )
             r.raise_for_status()
@@ -1068,6 +1080,7 @@ async def _openai_stream_async(client, model, messages, max_out=500, **extra_kwa
             ):
                 continue
             raise
+    assert last is not None
     raise last
 
 
