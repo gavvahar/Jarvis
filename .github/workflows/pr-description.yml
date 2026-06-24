@@ -67,12 +67,20 @@ jobs:
                   break
 
           assignees = list(code_owners | {pr_author})
-          subprocess.run(
-              ["gh", "pr", "edit", "${{ github.event.pull_request.number }}",
-               "--add-assignee", ",".join(assignees)],
-              check=True
-          )
-          print(f"Assigned: {', '.join(assignees)}")
+          for assignee in assignees:
+              result = subprocess.run(
+                  ["gh", "pr", "edit", "${{ github.event.pull_request.number }}",
+                   "--add-assignee", assignee],
+                  capture_output=True,
+                  text=True,
+              )
+              if result.returncode == 0:
+                  print(f"Assigned: {assignee}")
+              elif "replaceActorsForAssignable" in result.stderr or "Assigning agents is not supported" in result.stderr:
+                  print(f"Skipped {assignee} (bot/app accounts cannot be assigned)")
+              else:
+                  print(result.stderr[:200])
+                  raise SystemExit(result.returncode)
           EOF
 
       - name: Apply labels
