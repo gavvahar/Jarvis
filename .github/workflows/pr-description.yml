@@ -168,6 +168,8 @@ jobs:
       - name: "[1] git-cliff"
         id: gitcliff
         continue-on-error: true
+        env:
+          HEAD_REF: ${{ github.head_ref }}
         run: |
           CLIFF_VER=$(curl -sf "https://api.github.com/repos/orhun/git-cliff/releases/latest" \
             | python3 -c "import sys,json; print(json.load(sys.stdin)['tag_name'].lstrip('v'))")
@@ -183,8 +185,8 @@ jobs:
           grep -q "^### " /tmp/pr_body.txt || { echo "No conventional commits found"; exit 1; }
 
           python3 - <<'EOF'
-          import re, sys
-          raw = open("/tmp/first_subject.txt").read().strip() or "${{ github.head_ref }}"
+          import re, sys, os
+          raw = open("/tmp/first_subject.txt").read().strip() or os.environ.get("HEAD_REF", "")
           clean = re.sub(r'^[a-z]+(\([^)]+\))?: ', '', raw)
           title = (clean[0].upper() + clean[1:])[:70] if clean else raw[:70]
           open("/tmp/pr_title.txt", "w").write(title)
