@@ -15,13 +15,14 @@
     <!-- vendored locally so the orb + comms work with no internet -->
     <script src="/static/v2/vendor/three.min.js"></script>
     <script src="/static/v2/vendor/socket.io.min.js"></script>
-    <!-- Tune the orb for ordinary / GPU-less machines: fewer particles + a gentle
-     frame cap. The full JARVIS uses 60k; 18k looks nearly identical and runs
-     smoothly on integrated graphics (or the WebGL software renderer). -->
+    <!-- Tune the orb for the device: mobile gets fewer particles + a lower
+     frame cap to stay smooth on GPU-limited hardware. -->
     <script>
-      window.__orbCount = 18000;
-      window.__orbMaxFps = 45;
-      window.__device = "pc";
+      var _mobile =
+        window.innerWidth <= 480 || /Mobi|Android/i.test(navigator.userAgent);
+      window.__orbCount = _mobile ? 5000 : 18000;
+      window.__orbMaxFps = _mobile ? 30 : 45;
+      window.__device = _mobile ? "mobile" : "pc";
     </script>
   </head>
   <body class="mode-standby" data-tab="Standby Tab">

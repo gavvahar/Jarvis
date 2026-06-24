@@ -320,6 +320,33 @@
   color: #ff9a7a;
 }
 
+/* ---- phone portrait (≤480px) ---- */
+@media (max-width: 480px) {
+  /* Prevent iOS zoom on input/select focus (requires font-size ≥ 16px) */
+  #setup-form select,
+  #setup-form input[type="text"],
+  #setup-form input[type="password"],
+  #ha-settings-form input {
+    font-size: 16px;
+  }
+
+  /* Tighter padding on small screens */
+  #setup-card {
+    padding: 28px 20px 22px;
+  }
+  #ha-settings-card {
+    padding: 24px 18px 20px;
+  }
+
+  /* Stack the key row so the CONNECT button isn't a sliver */
+  .setup-keyrow {
+    flex-direction: column;
+  }
+  #setup-go {
+    width: 100%;
+  }
+}
+
 /* ── HA Settings button in topbar ─────────────────────────────────────────── */
 #ha-settings-btn {
   display: flex;
