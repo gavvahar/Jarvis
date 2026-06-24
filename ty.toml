@@ -1,0 +1,5 @@
+[rules]
+# Third-party packages live in Docker/conda, not the tox lint venv
+unresolved-import = "ignore"
+# **kwargs spreading into OpenAI/starlette constructors produces false positives
+invalid-argument-type = "ignore"
