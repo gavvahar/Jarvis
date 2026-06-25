@@ -1,5 +1,5 @@
 """
-app.py — J.A.R.V.I.S. Starter Kit backend (FastAPI + python-socketio).
+app.py — J.A.R.V.I.S. backend (FastAPI + python-socketio).
 
 Multi-user: each user authenticates via Authentik (OIDC) and gets their own
 config and conversation history stored in PostgreSQL.
@@ -1395,7 +1395,7 @@ async def lifespan(application: FastAPI):
     _signer = URLSafeTimedSerializer(SECRET_KEY)
     await _db_init()
     await _fetch_oidc_config()
-    print("J.A.R.V.I.S. Starter Kit - online. Open http://localhost:5000", flush=True)
+    print("J.A.R.V.I.S. - online. Open http://localhost:5000", flush=True)
     try:
         await asyncio.to_thread(_get_whisper)
         print("[STT] Whisper model ready.", flush=True)

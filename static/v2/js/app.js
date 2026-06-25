@@ -1,5 +1,5 @@
 /* ===========================================================
-   APP BRIDGE — J.A.R.V.I.S. Starter Kit
+   APP BRIDGE — J.A.R.V.I.S.
    The integration layer for the stripped-down build:
      • Socket.IO link to the tiny Claude proxy backend
      • VOICE OUT  : window.speechSynthesis (Windows voices)
