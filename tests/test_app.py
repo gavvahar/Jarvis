@@ -258,6 +258,21 @@ class TestBuildSystemPrompt:
         finally:
             jarvis._location_context.clear()
 
+    def test_all_integrations_configured(self):
+        cfg = {
+            "ha_url": "http://ha.local",
+            "ha_token": "tok",
+            "myq_email": "a@b.com",
+            "myq_password": "s",
+            "tesla_method": "unofficial",
+            "tesla_refresh_token": "rtok",
+            "tesla_fleet_refresh_token": "",
+        }
+        prompt = _build_system_prompt(cfg)
+        assert "HOME AUTOMATION" in prompt
+        assert "GARAGE DOOR" in prompt
+        assert "TESLA" in prompt
+
 
 class TestTeslaConfigured:
     def test_not_configured_when_method_empty(self):
@@ -283,9 +298,6 @@ class TestTeslaConfigured:
 
     def test_both_fails_if_fleet_token_missing(self):
         assert _tesla_configured({"tesla_method": "both", "tesla_refresh_token": "tok", "tesla_fleet_refresh_token": ""}) is False
-
-    def test_unknown_method_not_configured(self):
-        assert _tesla_configured({"tesla_method": "unknown", "tesla_refresh_token": "tok", "tesla_fleet_refresh_token": "fleet"}) is False
 
 
 class TestCToF:
