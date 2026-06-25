@@ -106,9 +106,7 @@ class TestBuildSystemPrompt:
         assert "HOME AUTOMATION" not in prompt
 
     def test_location_context_included_when_set(self):
-        jarvis._location_context.update(
-            {"city": "Austin", "region": "TX", "temp_f": 95, "condition": "Clear"}
-        )
+        jarvis._location_context.update({"city": "Austin", "region": "TX", "temp_f": 95, "condition": "Clear"})
         try:
             prompt = _build_system_prompt({"ha_url": "", "ha_token": ""})
             assert "Austin" in prompt
@@ -156,9 +154,7 @@ class TestSidsForUser:
 
 class TestMessagesIngest:
     def test_no_auth_header_returns_401(self, api_client):
-        resp = api_client.post(
-            "/api/messages/ingest", json={"sender": "Alice", "text": "Hi"}
-        )
+        resp = api_client.post("/api/messages/ingest", json={"sender": "Alice", "text": "Hi"})
         assert resp.status_code == 401
 
     def test_wrong_auth_scheme_returns_401(self, api_client):
@@ -170,9 +166,7 @@ class TestMessagesIngest:
         assert resp.status_code == 401
 
     def test_unknown_token_returns_401(self, api_client):
-        with patch.object(
-            jarvis, "_db_find_user_by_token", new=AsyncMock(return_value=None)
-        ):
+        with patch.object(jarvis, "_db_find_user_by_token", new=AsyncMock(return_value=None)):
             resp = api_client.post(
                 "/api/messages/ingest",
                 headers={"Authorization": "Bearer notarealtoken"},
@@ -182,9 +176,7 @@ class TestMessagesIngest:
 
     def test_valid_token_empty_body_returns_200(self, api_client):
         with (
-            patch.object(
-                jarvis, "_db_find_user_by_token", new=AsyncMock(return_value="user1")
-            ),
+            patch.object(jarvis, "_db_find_user_by_token", new=AsyncMock(return_value="user1")),
             patch.object(jarvis, "_db_store_phone_message", new=AsyncMock()),
         ):
             resp = api_client.post(
@@ -197,9 +189,7 @@ class TestMessagesIngest:
 
     def test_valid_token_with_message_returns_200(self, api_client):
         with (
-            patch.object(
-                jarvis, "_db_find_user_by_token", new=AsyncMock(return_value="user1")
-            ),
+            patch.object(jarvis, "_db_find_user_by_token", new=AsyncMock(return_value="user1")),
             patch.object(jarvis, "_db_store_phone_message", new=AsyncMock()),
         ):
             resp = api_client.post(
