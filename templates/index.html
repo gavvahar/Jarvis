@@ -588,8 +588,8 @@
             <p class="tesla-note">
               Get a Tesla refresh token from
               <strong>Auth App for Tesla</strong> (iOS / Android) or the
-              <code>tesla-auth</code> CLI, then paste it below. The token
-              never leaves your server.
+              <code>tesla-auth</code> CLI, then paste it below. The token never
+              leaves your server.
             </p>
             <form id="tesla-unofficial-form" autocomplete="off">
               <label class="setup-label" for="tesla-refresh-token"
@@ -619,16 +619,13 @@
           </div>
 
           <!-- Fleet tab -->
-          <div
-            class="tesla-tab-content tesla-tab-hidden"
-            id="tesla-tab-fleet"
-          >
+          <div class="tesla-tab-content tesla-tab-hidden" id="tesla-tab-fleet">
             <p class="tesla-note" id="tesla-fleet-note">
               Connect via Tesla's official Fleet API. Requires
               <code>TESLA_CLIENT_ID</code> and
               <code>TESLA_CLIENT_SECRET</code> set in your server's
-              <code>.env</code> by the admin. Vehicle commands also require
-              a virtual key paired via the Tesla app.
+              <code>.env</code> by the admin. Vehicle commands also require a
+              virtual key paired via the Tesla app.
             </p>
             <div id="tesla-fleet-status-row" style="margin-top: 10px">
               <span id="tesla-fleet-dot" class="disconnected"></span>

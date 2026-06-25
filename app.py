@@ -785,7 +785,7 @@ def _tesla_configured(config: dict) -> bool:
 async def _tesla_unofficial_access_token(user_id: str, config: dict) -> str:
     cached = _tesla_tokens.get(user_id, {})
     expiry = cached.get("unofficial_expiry")
-    if cached.get("unofficial_access") and expiry and expiry > datetime.datetime.utcnow() + datetime.timedelta(minutes=5):
+    if cached.get("unofficial_access") and expiry and expiry > datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(minutes=5):
         return cached["unofficial_access"]
     async with httpx.AsyncClient(timeout=15) as c:
         r = await c.post(
@@ -801,7 +801,7 @@ async def _tesla_unofficial_access_token(user_id: str, config: dict) -> str:
         data = r.json()
     access_token = data["access_token"]
     new_refresh = data.get("refresh_token")
-    expiry_dt = datetime.datetime.utcnow() + datetime.timedelta(seconds=data.get("expires_in", 28800))
+    expiry_dt = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(seconds=data.get("expires_in", 28800))
     _tesla_tokens.setdefault(user_id, {})
     _tesla_tokens[user_id].update({"unofficial_access": access_token, "unofficial_expiry": expiry_dt})
     if new_refresh and new_refresh != config.get("tesla_refresh_token"):
@@ -809,7 +809,8 @@ async def _tesla_unofficial_access_token(user_id: str, config: dict) -> str:
         async with _pool().acquire() as conn:
             await conn.execute(
                 "UPDATE user_configs SET tesla_refresh_token = $2 WHERE user_id = $1",
-                user_id, new_refresh,
+                user_id,
+                new_refresh,
             )
     return access_token
 
@@ -817,7 +818,7 @@ async def _tesla_unofficial_access_token(user_id: str, config: dict) -> str:
 async def _tesla_fleet_access_token(user_id: str, config: dict) -> str:
     cached = _tesla_tokens.get(user_id, {})
     expiry = cached.get("fleet_expiry")
-    if cached.get("fleet_access") and expiry and expiry > datetime.datetime.utcnow() + datetime.timedelta(minutes=5):
+    if cached.get("fleet_access") and expiry and expiry > datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(minutes=5):
         return cached["fleet_access"]
     async with httpx.AsyncClient(timeout=15) as c:
         r = await c.post(
@@ -833,7 +834,7 @@ async def _tesla_fleet_access_token(user_id: str, config: dict) -> str:
         data = r.json()
     access_token = data["access_token"]
     new_refresh = data.get("refresh_token")
-    expiry_dt = datetime.datetime.utcnow() + datetime.timedelta(seconds=data.get("expires_in", 28800))
+    expiry_dt = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(seconds=data.get("expires_in", 28800))
     _tesla_tokens.setdefault(user_id, {})
     _tesla_tokens[user_id].update({"fleet_access": access_token, "fleet_expiry": expiry_dt})
     if new_refresh and new_refresh != config.get("tesla_fleet_refresh_token"):
@@ -841,7 +842,8 @@ async def _tesla_fleet_access_token(user_id: str, config: dict) -> str:
         async with _pool().acquire() as conn:
             await conn.execute(
                 "UPDATE user_configs SET tesla_fleet_refresh_token = $2 WHERE user_id = $1",
-                user_id, new_refresh,
+                user_id,
+                new_refresh,
             )
     return access_token
 
@@ -1952,7 +1954,9 @@ async def api_tesla_save_unofficial(request: Request):
         async with _pool().acquire() as conn:
             await conn.execute(
                 "UPDATE user_configs SET tesla_refresh_token = $2, tesla_method = $3 WHERE user_id = $1",
-                user_id, refresh_token, new_method,
+                user_id,
+                refresh_token,
+                new_method,
             )
 
     return {"ok": True, "tesla_configured": True, "tesla_method": new_method}
@@ -1976,15 +1980,17 @@ async def api_tesla_fleet_auth(request: Request):
         for k in list(_tesla_auth_pending.keys())[:100]:
             _tesla_auth_pending.pop(k, None)
 
-    params = urllib.parse.urlencode({
-        "client_id": TESLA_CLIENT_ID,
-        "redirect_uri": f"{APP_URL}/auth/tesla/callback",
-        "response_type": "code",
-        "scope": "openid offline_access vehicle_device_data vehicle_cmds vehicle_charging_cmds",
-        "state": state_token,
-        "code_challenge": code_challenge,
-        "code_challenge_method": "S256",
-    })
+    params = urllib.parse.urlencode(
+        {
+            "client_id": TESLA_CLIENT_ID,
+            "redirect_uri": f"{APP_URL}/auth/tesla/callback",
+            "response_type": "code",
+            "scope": "openid offline_access vehicle_device_data vehicle_cmds vehicle_charging_cmds",
+            "state": state_token,
+            "code_challenge": code_challenge,
+            "code_challenge_method": "S256",
+        }
+    )
     return RedirectResponse(f"{_TESLA_AUTH_BASE}/authorize?{params}")
 
 
@@ -2029,7 +2035,9 @@ async def auth_tesla_callback(request: Request):
         async with _pool().acquire() as conn:
             await conn.execute(
                 "UPDATE user_configs SET tesla_fleet_refresh_token = $2, tesla_method = $3 WHERE user_id = $1",
-                user_id, fleet_refresh, new_method,
+                user_id,
+                fleet_refresh,
+                new_method,
             )
     _tesla_tokens.pop(user_id, None)
 

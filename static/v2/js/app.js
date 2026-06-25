@@ -1328,10 +1328,14 @@
     const hasUnofficial = method === "unofficial" || method === "both";
     const hasFleet = method === "fleet" || method === "both";
     if (teslaUnofficialDot) {
-      teslaUnofficialDot.className = hasUnofficial ? "connected" : "disconnected";
+      teslaUnofficialDot.className = hasUnofficial
+        ? "connected"
+        : "disconnected";
     }
     if (teslaUnofficialText)
-      teslaUnofficialText.textContent = hasUnofficial ? "CONNECTED" : "NOT CONNECTED";
+      teslaUnofficialText.textContent = hasUnofficial
+        ? "CONNECTED"
+        : "NOT CONNECTED";
     if (teslaFleetDot) {
       teslaFleetDot.className = hasFleet ? "connected" : "disconnected";
     }
@@ -1349,20 +1353,32 @@
   function hideTeslaSettings() {
     if (teslaSettingsEl) teslaSettingsEl.classList.add("setup-hidden");
     if (teslaRefreshTokenInput) teslaRefreshTokenInput.value = "";
-    if (teslaUnofficialMsg) { teslaUnofficialMsg.textContent = ""; teslaUnofficialMsg.className = ""; }
-    if (teslaFleetMsg) { teslaFleetMsg.textContent = ""; teslaFleetMsg.className = ""; }
+    if (teslaUnofficialMsg) {
+      teslaUnofficialMsg.textContent = "";
+      teslaUnofficialMsg.className = "";
+    }
+    if (teslaFleetMsg) {
+      teslaFleetMsg.textContent = "";
+      teslaFleetMsg.className = "";
+    }
   }
 
   if (teslaBtn) teslaBtn.addEventListener("click", showTeslaSettings);
-  if (teslaSettingsClose) teslaSettingsClose.addEventListener("click", hideTeslaSettings);
-  teslaSettingsEl && teslaSettingsEl.addEventListener("click", (e) => {
-    if (e.target === teslaSettingsEl) hideTeslaSettings();
-  });
+  if (teslaSettingsClose)
+    teslaSettingsClose.addEventListener("click", hideTeslaSettings);
+  teslaSettingsEl &&
+    teslaSettingsEl.addEventListener("click", (e) => {
+      if (e.target === teslaSettingsEl) hideTeslaSettings();
+    });
 
   document.querySelectorAll(".tesla-tab").forEach((tab) => {
     tab.addEventListener("click", () => {
-      document.querySelectorAll(".tesla-tab").forEach((t) => t.classList.remove("tesla-tab-active"));
-      document.querySelectorAll(".tesla-tab-content").forEach((c) => c.classList.add("tesla-tab-hidden"));
+      document
+        .querySelectorAll(".tesla-tab")
+        .forEach((t) => t.classList.remove("tesla-tab-active"));
+      document
+        .querySelectorAll(".tesla-tab-content")
+        .forEach((c) => c.classList.add("tesla-tab-hidden"));
       tab.classList.add("tesla-tab-active");
       const target = $("tesla-tab-" + tab.dataset.ttab);
       if (target) target.classList.remove("tesla-tab-hidden");
@@ -1374,11 +1390,18 @@
       e.preventDefault();
       const refresh_token = (teslaRefreshTokenInput.value || "").trim();
       if (!refresh_token) {
-        if (teslaUnofficialMsg) { teslaUnofficialMsg.className = "err"; teslaUnofficialMsg.textContent = "Please paste your Tesla refresh token."; }
+        if (teslaUnofficialMsg) {
+          teslaUnofficialMsg.className = "err";
+          teslaUnofficialMsg.textContent =
+            "Please paste your Tesla refresh token.";
+        }
         return;
       }
       if (teslaUnofficialSave) teslaUnofficialSave.disabled = true;
-      if (teslaUnofficialMsg) { teslaUnofficialMsg.className = ""; teslaUnofficialMsg.textContent = "Verifying…"; }
+      if (teslaUnofficialMsg) {
+        teslaUnofficialMsg.className = "";
+        teslaUnofficialMsg.textContent = "Verifying…";
+      }
       try {
         const res = await fetch("/api/tesla/save_unofficial", {
           method: "POST",
@@ -1387,15 +1410,24 @@
         });
         const data = await res.json();
         if (data.ok) {
-          if (teslaUnofficialMsg) { teslaUnofficialMsg.className = "ok"; teslaUnofficialMsg.textContent = "Connected. Tesla online."; }
+          if (teslaUnofficialMsg) {
+            teslaUnofficialMsg.className = "ok";
+            teslaUnofficialMsg.textContent = "Connected. Tesla online.";
+          }
           setTeslaStatus(data.tesla_method || "unofficial");
           if (teslaRefreshTokenInput) teslaRefreshTokenInput.value = "";
           setTimeout(hideTeslaSettings, 1200);
         } else {
-          if (teslaUnofficialMsg) { teslaUnofficialMsg.className = "err"; teslaUnofficialMsg.textContent = data.error || "Could not connect."; }
+          if (teslaUnofficialMsg) {
+            teslaUnofficialMsg.className = "err";
+            teslaUnofficialMsg.textContent = data.error || "Could not connect.";
+          }
         }
       } catch {
-        if (teslaUnofficialMsg) { teslaUnofficialMsg.className = "err"; teslaUnofficialMsg.textContent = "Could not reach the server."; }
+        if (teslaUnofficialMsg) {
+          teslaUnofficialMsg.className = "err";
+          teslaUnofficialMsg.textContent = "Could not reach the server.";
+        }
       } finally {
         if (teslaUnofficialSave) teslaUnofficialSave.disabled = false;
       }
@@ -1413,10 +1445,16 @@
         const data = await res.json();
         if (data.ok) {
           setTeslaStatus(data.tesla_method || "");
-          if (teslaUnofficialMsg) { teslaUnofficialMsg.className = "ok"; teslaUnofficialMsg.textContent = "Unofficial API disconnected."; }
+          if (teslaUnofficialMsg) {
+            teslaUnofficialMsg.className = "ok";
+            teslaUnofficialMsg.textContent = "Unofficial API disconnected.";
+          }
         }
       } catch {
-        if (teslaUnofficialMsg) { teslaUnofficialMsg.className = "err"; teslaUnofficialMsg.textContent = "Could not reach the server."; }
+        if (teslaUnofficialMsg) {
+          teslaUnofficialMsg.className = "err";
+          teslaUnofficialMsg.textContent = "Could not reach the server.";
+        }
       }
     });
   }
@@ -1432,10 +1470,16 @@
         const data = await res.json();
         if (data.ok) {
           setTeslaStatus(data.tesla_method || "");
-          if (teslaFleetMsg) { teslaFleetMsg.className = "ok"; teslaFleetMsg.textContent = "Fleet API disconnected."; }
+          if (teslaFleetMsg) {
+            teslaFleetMsg.className = "ok";
+            teslaFleetMsg.textContent = "Fleet API disconnected.";
+          }
         }
       } catch {
-        if (teslaFleetMsg) { teslaFleetMsg.className = "err"; teslaFleetMsg.textContent = "Could not reach the server."; }
+        if (teslaFleetMsg) {
+          teslaFleetMsg.className = "err";
+          teslaFleetMsg.textContent = "Could not reach the server.";
+        }
       }
     });
   }
