@@ -21,6 +21,14 @@
   box-sizing: border-box;
 }
 
+/* eliminate 300ms tap delay and double-tap zoom on interactive elements */
+button,
+input,
+select,
+textarea {
+  touch-action: manipulation;
+}
+
 html,
 body {
   width: 100%;
@@ -1929,4 +1937,492 @@ body.mode-workspace #camera-surface.show {
   color: var(--amber);
   opacity: 0.7;
   text-align: center;
+}
+
+/* ===========================================================
+   MOBILE RESPONSIVE
+   =========================================================== */
+
+/* ---- tablet / phone landscape (≤768px) ---- */
+@media (max-width: 768px) {
+  /* Schematic blueprints: scale down so they don't crowd the orb */
+  #schematics .schem {
+    transform: scale(0.6);
+  }
+
+  /* Chat panel: stay within viewport */
+  #chat-panel {
+    left: 12px;
+    width: min(360px, calc(100vw - 24px));
+  }
+
+  /* Meeting panel: pull away from edge */
+  #meeting-panel {
+    right: 12px;
+    width: min(260px, calc(100vw - 24px));
+  }
+}
+
+/* ---- phone portrait (≤480px) ---- */
+@media (max-width: 480px) {
+  /* Touch devices don't need a crosshair cursor */
+  html,
+  body {
+    cursor: default;
+  }
+
+  /* Hide decorative schematic blueprints — too small to read */
+  #schematics {
+    display: none;
+  }
+
+  /* Topbar: keep live-dot + JARVIS name + action buttons; hide decorative labels */
+  #topbar > span:not(.sys-name):not(:first-child) {
+    display: none;
+  }
+  #topbar {
+    gap: 10px;
+    top: 16px;
+  }
+
+  /* Bottombar: too many segments for a phone width */
+  #bottombar {
+    display: none;
+  }
+
+  /* Corner brackets: tighter inset on small screens */
+  .bk-tl {
+    top: 10px;
+    left: 10px;
+  }
+  .bk-tr {
+    top: 10px;
+    right: 10px;
+  }
+  .bk-bl {
+    bottom: 10px;
+    left: 10px;
+  }
+  .bk-br {
+    bottom: 10px;
+    right: 10px;
+  }
+
+  /* Chat panel: full-width, fills available screen height.
+     dvh shrinks when the virtual keyboard appears, keeping the input bar visible. */
+  #chat-panel {
+    left: 8px;
+    right: 8px;
+    width: auto;
+    top: 56px;
+    height: calc(100dvh - 70px);
+    max-height: none;
+    min-height: 0;
+  }
+  /* No dragging on phones — hide the grip and reset cursor */
+  .chat-head {
+    cursor: default;
+  }
+  .chat-grip {
+    display: none;
+  }
+  /* Prevent iOS zoom on chat input focus */
+  #chat-text {
+    font-size: 16px;
+  }
+
+  /* Meeting panel: anchor to bottom edge, full width */
+  #meeting-panel {
+    left: 8px;
+    right: 8px;
+    bottom: 8px;
+    width: auto;
+    max-height: 50dvh;
+  }
+
+  /* Standby tag: allow wrapping on very narrow screens */
+  .standby-tag {
+    white-space: normal;
+    text-align: center;
+    padding: 0 20px;
+    bottom: 3vmin;
+    font-size: 9px;
+  }
+
+  /* Workspace surface cards: stack vertically */
+  #workspace-surface {
+    flex-direction: column;
+    padding: 60px 12px 12px;
+    align-items: stretch;
+    overflow-y: auto;
+  }
+  .ws-card {
+    max-width: 100%;
+    width: 100%;
+  }
+}
+
+/* ── Message alert toast ──────────────────────────────────────────────────── */
+#msg-alert-toast {
+  position: fixed;
+  top: 56px;
+  right: 16px;
+  z-index: 9999;
+  width: 280px;
+  background: rgba(2, 6, 10, 0.92);
+  border: 1px solid var(--cyan);
+  box-shadow: 0 0 16px rgba(31, 182, 239, 0.35);
+  padding: 12px 14px;
+  cursor: pointer;
+  animation: toast-in 0.25s ease;
+}
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.msg-toast-label {
+  font-family: var(--label);
+  font-size: 9px;
+  letter-spacing: 0.15em;
+  color: var(--amber);
+  margin-bottom: 4px;
+}
+.msg-toast-sender {
+  font-family: var(--mono);
+  font-size: 13px;
+  color: var(--cyan-bright);
+  margin-bottom: 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.msg-toast-text {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: rgba(127, 220, 255, 0.75);
+  line-height: 1.4;
+  margin-bottom: 6px;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+}
+.msg-toast-reason {
+  font-family: var(--label);
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  color: var(--amber);
+  opacity: 0.8;
+}
+
+/* ── Messages settings panel ─────────────────────────────────────────────── */
+#msg-settings {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 900;
+  background: rgba(2, 6, 10, 0.88);
+  align-items: center;
+  justify-content: center;
+}
+#msg-settings.msg-settings-open {
+  display: flex;
+}
+#msg-settings-card {
+  background: rgba(2, 6, 10, 0.96);
+  border: 1px solid var(--cyan);
+  box-shadow: 0 0 32px rgba(31, 182, 239, 0.2);
+  padding: 28px 32px;
+  width: 420px;
+  max-width: 92vw;
+}
+#msg-settings-card h2 {
+  font-family: var(--label);
+  font-size: 11px;
+  letter-spacing: 0.2em;
+  color: var(--cyan-bright);
+  margin: 0 0 20px;
+}
+.msg-field-label {
+  font-family: var(--label);
+  font-size: 9px;
+  letter-spacing: 0.15em;
+  color: var(--cyan-dim);
+  margin-bottom: 4px;
+}
+.msg-field-row {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+.msg-field-row input {
+  flex: 1;
+  background: rgba(31, 182, 239, 0.06);
+  border: 1px solid var(--line);
+  color: var(--cyan-bright);
+  font-family: var(--mono);
+  font-size: 11px;
+  padding: 6px 8px;
+}
+.msg-field-row button,
+#msg-settings-close {
+  font-family: var(--label);
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  background: transparent;
+  border: 1px solid var(--cyan);
+  color: var(--cyan-bright);
+  padding: 6px 10px;
+  cursor: pointer;
+}
+.msg-field-row button:hover,
+#msg-settings-close:hover {
+  background: rgba(31, 182, 239, 0.12);
+}
+#msg-settings-close {
+  display: block;
+  margin-top: 16px;
+  width: 100%;
+  text-align: center;
+}
+.msg-tab-bar {
+  display: flex;
+  gap: 0;
+  margin: 16px 0 0;
+  border-bottom: 1px solid var(--line);
+}
+.msg-tab {
+  font-family: var(--label);
+  font-size: 9px;
+  letter-spacing: 0.15em;
+  background: transparent;
+  border: 1px solid var(--line);
+  border-bottom: none;
+  color: rgba(127, 220, 255, 0.45);
+  padding: 6px 14px;
+  cursor: pointer;
+  margin-right: 4px;
+  margin-bottom: -1px;
+}
+.msg-tab.msg-tab-active {
+  border-color: var(--cyan);
+  color: var(--cyan-bright);
+  background: rgba(31, 182, 239, 0.07);
+}
+.msg-tab-content {
+  padding: 12px 0 0;
+}
+.msg-tab-hidden {
+  display: none;
+}
+.msg-ios-steps {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: rgba(127, 220, 255, 0.75);
+  line-height: 1.7;
+  padding-left: 18px;
+  margin: 0 0 8px;
+}
+.msg-ios-steps li {
+  margin-bottom: 6px;
+}
+.msg-ios-steps ul {
+  margin-top: 4px;
+  padding-left: 16px;
+  list-style: none;
+}
+.msg-ios-steps ul li::before {
+  content: "→ ";
+  color: var(--cyan);
+}
+.msg-ios-steps code {
+  color: var(--amber);
+  font-size: 10px;
+}
+.msg-ios-steps strong {
+  color: var(--cyan-bright);
+}
+.msg-ios-steps em {
+  color: var(--cyan);
+  font-style: normal;
+}
+.msg-settings-note {
+  font-family: var(--label);
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  color: rgba(127, 220, 255, 0.5);
+  line-height: 1.6;
+  margin-bottom: 16px;
+}
+
+/* ── Doorbell / Security ──────────────────────────────────────────────────── */
+#doorbell-btn {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  background: rgba(255, 187, 51, 0.1);
+  border: 1px solid rgba(255, 187, 51, 0.5);
+  border-radius: 5px;
+  color: rgba(255, 187, 51, 0.9);
+  font-family: "Share Tech Mono", monospace;
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  cursor: pointer;
+  pointer-events: auto;
+  text-shadow: 0 0 8px rgba(255, 187, 51, 0.4);
+  box-shadow: 0 0 6px rgba(255, 187, 51, 0.1);
+  transition:
+    background 0.2s,
+    color 0.2s,
+    box-shadow 0.2s;
+}
+#doorbell-btn:hover {
+  background: rgba(255, 187, 51, 0.2);
+  box-shadow: 0 0 12px rgba(255, 187, 51, 0.3);
+}
+#doorbell-btn.doorbell-active {
+  border-color: rgba(255, 120, 0, 0.7);
+  color: #ffaa44;
+  animation: doorbell-pulse 1.5s ease-in-out infinite;
+}
+@keyframes doorbell-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 6px rgba(255, 140, 0, 0.2);
+  }
+  50% {
+    box-shadow: 0 0 18px rgba(255, 140, 0, 0.55);
+  }
+}
+
+/* Doorbell alert toast */
+#doorbell-toast {
+  position: fixed;
+  top: 56px;
+  left: 16px;
+  z-index: 9999;
+  width: 260px;
+  background: rgba(2, 6, 10, 0.92);
+  border: 1px solid rgba(255, 187, 51, 0.6);
+  box-shadow: 0 0 16px rgba(255, 140, 0, 0.3);
+  padding: 12px 14px;
+  cursor: pointer;
+  animation: toast-in 0.25s ease;
+}
+.doorbell-toast-label {
+  font-family: var(--label);
+  font-size: 9px;
+  letter-spacing: 0.15em;
+  color: rgba(255, 187, 51, 0.9);
+  margin-bottom: 4px;
+}
+.doorbell-toast-text {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: rgba(255, 220, 130, 0.9);
+  line-height: 1.4;
+}
+
+/* Doorbell settings panel */
+#doorbell-settings {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 900;
+  background: rgba(2, 6, 10, 0.88);
+  align-items: center;
+  justify-content: center;
+}
+#doorbell-settings.doorbell-settings-open {
+  display: flex;
+}
+#doorbell-settings-card {
+  background: rgba(2, 6, 10, 0.96);
+  border: 1px solid rgba(255, 187, 51, 0.45);
+  box-shadow: 0 0 32px rgba(255, 140, 0, 0.15);
+  padding: 28px 32px;
+  width: 480px;
+  max-width: 92vw;
+  max-height: 85vh;
+  overflow-y: auto;
+}
+#doorbell-settings-card h2 {
+  font-family: var(--label);
+  font-size: 11px;
+  letter-spacing: 0.2em;
+  color: rgba(255, 187, 51, 0.9);
+  margin: 0 0 20px;
+}
+.doorbell-settings-note {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: rgba(127, 220, 255, 0.65);
+  line-height: 1.5;
+  margin-bottom: 12px;
+}
+.doorbell-tab-bar {
+  display: flex;
+  gap: 0;
+  margin: 16px 0 0;
+  border-bottom: 1px solid var(--line);
+}
+.doorbell-tab {
+  font-family: var(--label);
+  font-size: 9px;
+  letter-spacing: 0.15em;
+  background: transparent;
+  border: 1px solid var(--line);
+  border-bottom: none;
+  color: rgba(127, 220, 255, 0.45);
+  padding: 6px 12px;
+  cursor: pointer;
+  margin-right: 4px;
+  margin-bottom: -1px;
+}
+.doorbell-tab.doorbell-tab-active {
+  border-color: rgba(255, 187, 51, 0.55);
+  color: rgba(255, 187, 51, 0.9);
+  background: rgba(255, 140, 0, 0.06);
+}
+.doorbell-tab-content {
+  padding: 12px 0 0;
+}
+.doorbell-tab-hidden {
+  display: none;
+}
+.doorbell-yaml {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: rgba(190, 240, 190, 0.85);
+  background: rgba(0, 0, 0, 0.45);
+  border: 1px solid rgba(100, 200, 100, 0.18);
+  padding: 10px 12px;
+  margin: 6px 0;
+  white-space: pre;
+  overflow-x: auto;
+  line-height: 1.55;
+}
+#doorbell-settings-close {
+  display: block;
+  margin-top: 16px;
+  width: 100%;
+  text-align: center;
+  font-family: var(--label);
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  background: transparent;
+  border: 1px solid rgba(255, 187, 51, 0.45);
+  color: rgba(255, 187, 51, 0.9);
+  padding: 8px 10px;
+  cursor: pointer;
+}
+#doorbell-settings-close:hover {
+  background: rgba(255, 140, 0, 0.1);
 }

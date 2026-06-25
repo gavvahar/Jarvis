@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Hexagon outline -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#1fb6ef"
+        android:strokeWidth="3"
+        android:pathData="M54,18 L87,36 L87,72 L54,90 L21,72 L21,36 Z" />
+    <!-- Message lines -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#7fdcff"
+        android:strokeWidth="3"
+        android:strokeLineCap="round"
+        android:pathData="M36,46 L72,46 M36,54 L64,54 M36,62 L56,62" />
+</vector>

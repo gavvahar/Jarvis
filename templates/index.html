@@ -15,13 +15,14 @@
     <!-- vendored locally so the orb + comms work with no internet -->
     <script src="/static/v2/vendor/three.min.js"></script>
     <script src="/static/v2/vendor/socket.io.min.js"></script>
-    <!-- Tune the orb for ordinary / GPU-less machines: fewer particles + a gentle
-     frame cap. The full JARVIS uses 60k; 18k looks nearly identical and runs
-     smoothly on integrated graphics (or the WebGL software renderer). -->
+    <!-- Tune the orb for the device: mobile gets fewer particles + a lower
+     frame cap to stay smooth on GPU-limited hardware. -->
     <script>
-      window.__orbCount = 18000;
-      window.__orbMaxFps = 45;
-      window.__device = "pc";
+      var _mobile =
+        window.innerWidth <= 480 || /Mobi|Android/i.test(navigator.userAgent);
+      window.__orbCount = _mobile ? 5000 : 18000;
+      window.__orbMaxFps = _mobile ? 30 : 45;
+      window.__device = _mobile ? "mobile" : "pc";
     </script>
   </head>
   <body class="mode-standby" data-tab="Standby Tab">
@@ -305,6 +306,252 @@
           </svg>
           MEETING
         </button>
+        <button id="msg-settings-btn" title="Phone Messages">
+          <svg
+            viewBox="0 0 20 20"
+            width="13"
+            height="13"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.5"
+          >
+            <path d="M2 4h16v11H2z" />
+            <path d="M2 4l8 7 8-7" />
+          </svg>
+          MESSAGES
+        </button>
+        <button id="doorbell-btn" title="Doorbell &amp; Security Alerts">
+          <svg
+            viewBox="0 0 20 20"
+            width="13"
+            height="13"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.5"
+          >
+            <path
+              d="M10 2C7 2 5 4.5 5 7v5l-2 2v1h14v-1l-2-2V7c0-2.5-2-5-5-5z"
+            />
+            <path d="M8 16a2 2 0 0 0 4 0" />
+          </svg>
+          DOORBELL
+        </button>
+        <button id="garage-btn" title="MyQ Garage Door">
+          <svg
+            viewBox="0 0 20 20"
+            width="13"
+            height="13"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.5"
+          >
+            <rect x="2" y="8" width="16" height="10" rx="1" />
+            <path d="M2 8l8-6 8 6" />
+            <line x1="6" y1="12" x2="14" y2="12" />
+            <line x1="6" y1="15" x2="14" y2="15" />
+          </svg>
+          GARAGE
+        </button>
+      </div>
+
+      <!-- ============ MESSAGES SETTINGS PANEL ============ -->
+      <div id="msg-settings">
+        <div id="msg-settings-card">
+          <h2>PHONE MESSAGES — WEBHOOK</h2>
+          <p class="msg-settings-note">
+            Forward notifications from your phone to Jarvis using this webhook.
+            Jarvis will classify each message and alert you to anything
+            important.
+          </p>
+          <div class="msg-field-label">WEBHOOK URL</div>
+          <div class="msg-field-row">
+            <input id="msg-webhook-url" type="text" readonly />
+            <button id="msg-copy-url">COPY</button>
+          </div>
+          <div class="msg-field-label">BEARER TOKEN</div>
+          <div class="msg-field-row">
+            <input id="msg-webhook-token" type="text" readonly />
+            <button id="msg-copy-token">COPY</button>
+            <button id="msg-regen-token">NEW</button>
+          </div>
+
+          <div class="msg-tab-bar">
+            <button class="msg-tab msg-tab-active" data-tab="android">
+              ANDROID
+            </button>
+            <button class="msg-tab" data-tab="ios">iOS</button>
+          </div>
+
+          <div class="msg-tab-content" id="msg-tab-android">
+            <p class="msg-settings-note">
+              Build and install the companion app from the
+              <code>android/</code> folder in the Jarvis repo (open it in
+              Android Studio). Enter the URL and token above, then tap
+              <strong>Grant Notification Access</strong> and enable
+              <em>Jarvis Messages</em> in the list.
+            </p>
+            <p class="msg-settings-note">
+              Works with Google Messages (RCS + SMS), Samsung Messages, Signal,
+              WhatsApp, Telegram, and Messenger.
+            </p>
+          </div>
+
+          <div class="msg-tab-content msg-tab-hidden" id="msg-tab-ios">
+            <p class="msg-settings-note">
+              Use the iOS Shortcuts app. Captures both SMS and iMessage
+              notification previews — enough for importance classification.
+            </p>
+            <ol class="msg-ios-steps">
+              <li>
+                Open <strong>Shortcuts</strong> →
+                <strong>Automation</strong> tab → tap <strong>+</strong> →
+                <strong>New Automation</strong>
+              </li>
+              <li>
+                Scroll to <strong>App</strong> → choose
+                <strong>Messages</strong> → tick
+                <strong>Receives a Notification</strong> → Next
+              </li>
+              <li>
+                Add action: <strong>Get Contents of URL</strong>
+                <ul>
+                  <li>URL → paste from WEBHOOK URL above</li>
+                  <li>Method → POST</li>
+                  <li>
+                    Headers → add
+                    <code>Authorization</code>:
+                    <code>Bearer &lt;token&gt;</code>
+                  </li>
+                  <li>Request Body → JSON</li>
+                  <li>
+                    Add field <code>sender</code> → tap value →
+                    <em>Shortcut Input</em> → <em>Notification Title</em>
+                  </li>
+                  <li>
+                    Add field <code>text</code> → tap value →
+                    <em>Shortcut Input</em> → <em>Notification Content</em>
+                  </li>
+                </ul>
+              </li>
+              <li>Tap <strong>Next</strong></li>
+              <li>
+                Turn off <strong>Ask Before Running</strong> → tap
+                <strong>Done</strong>
+              </li>
+            </ol>
+          </div>
+
+          <button id="msg-settings-close">CLOSE</button>
+        </div>
+      </div>
+
+      <!-- ============ DOORBELL SETTINGS PANEL ============ -->
+      <div id="doorbell-settings">
+        <div id="doorbell-settings-card">
+          <h2>DOORBELL — SECURITY ALERTS</h2>
+          <p class="doorbell-settings-note">
+            Create Home Assistant automations that POST to Jarvis when your
+            doorbell fires. Jarvis announces it by voice and shows an alert.
+            Uses the same bearer token as Phone Messages.
+          </p>
+          <div class="msg-field-label">WEBHOOK URL</div>
+          <div class="msg-field-row">
+            <input id="doorbell-webhook-url" type="text" readonly />
+            <button id="doorbell-copy-url">COPY</button>
+          </div>
+          <div class="msg-field-label">BEARER TOKEN</div>
+          <div class="msg-field-row">
+            <input id="doorbell-webhook-token" type="text" readonly />
+            <button id="doorbell-copy-token">COPY</button>
+          </div>
+
+          <div class="doorbell-tab-bar">
+            <button class="doorbell-tab doorbell-tab-active" data-dtab="press">
+              DOORBELL
+            </button>
+            <button class="doorbell-tab" data-dtab="motion">MOTION</button>
+            <button class="doorbell-tab" data-dtab="person">PERSON</button>
+            <button class="doorbell-tab" data-dtab="package">PACKAGE</button>
+          </div>
+
+          <div class="doorbell-tab-content" id="doorbell-tab-press">
+            <p class="doorbell-settings-note">
+              Fires when the doorbell button is pressed.
+            </p>
+            <pre class="doorbell-yaml" id="yaml-press"></pre>
+          </div>
+          <div
+            class="doorbell-tab-content doorbell-tab-hidden"
+            id="doorbell-tab-motion"
+          >
+            <p class="doorbell-settings-note">
+              Fires on motion detection. Suppressed between
+              11&nbsp;pm–7&nbsp;am.
+            </p>
+            <pre class="doorbell-yaml" id="yaml-motion"></pre>
+          </div>
+          <div
+            class="doorbell-tab-content doorbell-tab-hidden"
+            id="doorbell-tab-person"
+          >
+            <p class="doorbell-settings-note">
+              Fires when a person is specifically detected.
+            </p>
+            <pre class="doorbell-yaml" id="yaml-person"></pre>
+          </div>
+          <div
+            class="doorbell-tab-content doorbell-tab-hidden"
+            id="doorbell-tab-package"
+          >
+            <p class="doorbell-settings-note">
+              Fires when a package delivery is detected.
+            </p>
+            <pre class="doorbell-yaml" id="yaml-package"></pre>
+          </div>
+
+          <button id="doorbell-settings-close">CLOSE</button>
+        </div>
+      </div>
+
+      <!-- ============ GARAGE SETTINGS PANEL ============ -->
+      <div id="garage-settings" class="setup-hidden">
+        <div id="garage-settings-card" class="setup-card-inner">
+          <div class="setup-ring"></div>
+          <div class="setup-word">SETTINGS</div>
+          <div class="setup-sub">GARAGE DOOR — MYQ</div>
+          <form id="garage-settings-form" autocomplete="off">
+            <label class="setup-label" for="myq-email">MYQ EMAIL</label>
+            <input
+              id="myq-email"
+              type="email"
+              placeholder="you@example.com"
+              autocomplete="off"
+              spellcheck="false"
+            />
+            <label
+              class="setup-label"
+              for="myq-password"
+              style="margin-top: 10px"
+              >MYQ PASSWORD</label
+            >
+            <input
+              id="myq-password"
+              type="password"
+              placeholder="Leave blank to keep existing password"
+              autocomplete="off"
+              spellcheck="false"
+            />
+            <div id="garage-status-row">
+              <span id="garage-status-dot"></span>
+              <span id="garage-status-text">—</span>
+            </div>
+            <div style="display: flex; gap: 8px; margin-top: 14px">
+              <button type="submit" id="garage-save">SAVE</button>
+              <button type="button" id="garage-cancel">CANCEL</button>
+            </div>
+          </form>
+          <div id="garage-msg"></div>
+        </div>
       </div>
 
       <!-- ============ TELEMETRY PANELS ============ -->

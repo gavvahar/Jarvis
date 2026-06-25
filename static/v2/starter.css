@@ -320,6 +320,33 @@
   color: #ff9a7a;
 }
 
+/* ---- phone portrait (≤480px) ---- */
+@media (max-width: 480px) {
+  /* Prevent iOS zoom on input/select focus (requires font-size ≥ 16px) */
+  #setup-form select,
+  #setup-form input[type="text"],
+  #setup-form input[type="password"],
+  #ha-settings-form input {
+    font-size: 16px;
+  }
+
+  /* Tighter padding on small screens */
+  #setup-card {
+    padding: 28px 20px 22px;
+  }
+  #ha-settings-card {
+    padding: 24px 18px 20px;
+  }
+
+  /* Stack the key row so the CONNECT button isn't a sliver */
+  .setup-keyrow {
+    flex-direction: column;
+  }
+  #setup-go {
+    width: 100%;
+  }
+}
+
 /* ── HA Settings button in topbar ─────────────────────────────────────────── */
 #ha-settings-btn {
   display: flex;
@@ -350,4 +377,111 @@
 #ha-settings-btn.ha-live {
   border-color: rgba(127, 255, 196, 0.4);
   color: #7fffc4;
+}
+
+/* ── Garage button in topbar ──────────────────────────────────────────────── */
+#garage-btn {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  background: rgba(127, 233, 255, 0.12);
+  border: 1px solid rgba(127, 233, 255, 0.55);
+  border-radius: 5px;
+  color: rgba(127, 233, 255, 0.95);
+  font-family: "Share Tech Mono", monospace;
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  cursor: pointer;
+  pointer-events: auto;
+  text-shadow: 0 0 8px rgba(127, 233, 255, 0.6);
+  box-shadow: 0 0 6px rgba(127, 233, 255, 0.15);
+  transition:
+    background 0.2s,
+    color 0.2s,
+    box-shadow 0.2s;
+}
+#garage-btn:hover {
+  background: rgba(127, 233, 255, 0.22);
+  color: var(--cyan-bright, #aef1ff);
+  box-shadow: 0 0 12px rgba(127, 233, 255, 0.35);
+}
+#garage-btn.garage-live {
+  border-color: rgba(127, 255, 196, 0.4);
+  color: #7fffc4;
+}
+
+/* ── Garage settings modal ────────────────────────────────────────────────── */
+#garage-status-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+  font-family: "Share Tech Mono", monospace;
+  font-size: 10.5px;
+  letter-spacing: 0.18em;
+  color: rgba(127, 233, 255, 0.55);
+}
+#garage-status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: rgba(127, 233, 255, 0.3);
+  flex-shrink: 0;
+}
+#garage-status-dot.connected {
+  background: #7fffc4;
+  box-shadow: 0 0 6px #7fffc4;
+}
+#garage-status-dot.disconnected {
+  background: #ff9a7a;
+}
+#garage-settings-form button {
+  flex: 1;
+  padding: 11px;
+  background: rgba(127, 233, 255, 0.12);
+  border: 1px solid rgba(127, 233, 255, 0.4);
+  border-radius: 8px;
+  color: #eafcff;
+  font-family: "Oxanium", sans-serif;
+  font-weight: 500;
+  letter-spacing: 0.12em;
+  font-size: 12px;
+  cursor: pointer;
+  transition:
+    background 0.2s,
+    box-shadow 0.2s;
+}
+#garage-settings-form button:hover {
+  background: rgba(127, 233, 255, 0.22);
+  box-shadow: 0 0 16px rgba(127, 233, 255, 0.3);
+}
+#garage-settings-form button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+#garage-cancel {
+  border-color: rgba(127, 233, 255, 0.2) !important;
+}
+#garage-msg {
+  min-height: 16px;
+  margin-top: 12px;
+  font-family: "Share Tech Mono", monospace;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  color: rgba(127, 233, 255, 0.7);
+}
+#garage-msg.ok {
+  color: #7fffc4;
+}
+#garage-msg.err {
+  color: #ff9a7a;
+}
+@media (max-width: 480px) {
+  #garage-settings-form input {
+    font-size: 16px;
+  }
+  #garage-settings-card {
+    padding: 24px 18px 20px;
+  }
 }
