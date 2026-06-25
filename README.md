@@ -128,10 +128,10 @@ click **CONNECT**.
 
 Requires a registered Tesla developer app. The admin must set these in `.env`:
 
-| Variable               | What it is                                      |
-| ---------------------- | ----------------------------------------------- |
-| `TESLA_CLIENT_ID`      | Client ID from developer.tesla.com              |
-| `TESLA_CLIENT_SECRET`  | Client secret from developer.tesla.com          |
+| Variable              | What it is                             |
+| --------------------- | -------------------------------------- |
+| `TESLA_CLIENT_ID`     | Client ID from developer.tesla.com     |
+| `TESLA_CLIENT_SECRET` | Client secret from developer.tesla.com |
 
 Once set, users click **CONNECT WITH TESLA** in the Fleet API tab and complete
 Tesla's OAuth flow. Note: vehicle commands via the Fleet API additionally
