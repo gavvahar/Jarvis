@@ -10,7 +10,7 @@ Three providers:
   • openai_compatible — any OpenAI-compatible endpoint (Ollama, OpenRouter, …)
 """
 
-import json, os, re, asyncio, secrets, tempfile, urllib.parse, asyncpg, httpx
+import json, os, re, asyncio, secrets, tempfile, urllib.parse, asyncpg, httpx, datetime
 
 
 from contextlib import asynccontextmanager
@@ -112,6 +112,16 @@ CREATE TABLE IF NOT EXISTS meetings (
 );
 
 CREATE INDEX IF NOT EXISTS idx_meetings_user ON meetings (user_id, started_at DESC);
+
+CREATE TABLE IF NOT EXISTS doorbell_events (
+    id          BIGSERIAL PRIMARY KEY,
+    user_id     TEXT NOT NULL REFERENCES user_configs(user_id) ON DELETE CASCADE,
+    event_type  TEXT NOT NULL,
+    source      TEXT NOT NULL DEFAULT '',
+    received_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_doorbell_events_user ON doorbell_events (user_id, received_at DESC);
 """
 
 
@@ -299,6 +309,35 @@ async def _db_finalize_meeting(meeting_id: int, notes: str):
         )
 
 
+async def _db_store_doorbell_event(user_id: str, event_type: str, source: str):
+    async with _pool().acquire() as conn:
+        await conn.execute(
+            "INSERT INTO doorbell_events (user_id, event_type, source) VALUES ($1, $2, $3)",
+            user_id,
+            event_type,
+            source,
+        )
+
+
+async def _db_get_recent_doorbell_events(user_id: str, hours: float = 24) -> list:
+    async with _pool().acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT event_type, source, received_at FROM doorbell_events "
+            "WHERE user_id = $1 AND received_at > NOW() - $2 "
+            "ORDER BY received_at DESC LIMIT 50",
+            user_id,
+            datetime.timedelta(hours=hours),
+        )
+    return [
+        {
+            "event_type": r["event_type"],
+            "source": r["source"],
+            "received_at": r["received_at"].isoformat(),
+        }
+        for r in rows
+    ]
+
+
 # ─── AUTH ─────────────────────────────────────────────────────────────────────
 _signer: URLSafeTimedSerializer | None = None
 _oidc_config: dict | None = None
@@ -410,6 +449,7 @@ async def _get_user_state(user_id: str) -> dict:
             "provider": provider,
             "conversation": conversation,
             "role": config.get("role", "user"),
+            "user_id": user_id,
         }
     return _user_states[user_id]
 
@@ -515,6 +555,23 @@ HA_TOOLS_ANTHROPIC = [
             "required": ["domain", "service"],
         },
     },
+    {
+        "name": "get_doorbell_events",
+        "description": (
+            "Get recent doorbell and motion events from the front door. "
+            "Use this to answer questions about who came to the door, recent motion, "
+            "deliveries, or 'any activity while I was out?'"
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "hours": {
+                    "type": "number",
+                    "description": "How many hours back to look (default 24).",
+                }
+            },
+        },
+    },
 ]
 
 HA_TOOLS_OPENAI = [
@@ -567,6 +624,26 @@ HA_TOOLS_OPENAI = [
                     },
                 },
                 "required": ["domain", "service"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_doorbell_events",
+            "description": (
+                "Get recent doorbell and motion events from the front door. "
+                "Use this to answer questions about who came to the door, recent motion, "
+                "deliveries, or 'any activity while I was out?'"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "hours": {
+                        "type": "number",
+                        "description": "How many hours back to look (default 24).",
+                    }
+                },
             },
         },
     },
@@ -640,7 +717,7 @@ async def _ha_call_service(
     )
 
 
-async def _execute_ha_tool(config: dict, name, args):
+async def _execute_ha_tool(config: dict, name, args, user_id: str = ""):
     try:
         if name == "get_ha_states":
             return await _ha_get_states(config, args.get("domain"))
@@ -652,6 +729,20 @@ async def _execute_ha_tool(config: dict, name, args):
                 args.get("entity_id"),
                 args.get("service_data"),
             )
+        if name == "get_doorbell_events":
+            if not user_id:
+                return "No user context available."
+            hours = float(args.get("hours", 24))
+            events = await _db_get_recent_doorbell_events(user_id, hours)
+            if not events:
+                return f"No doorbell events in the past {hours:.0f} hours."
+            lines = []
+            for e in events:
+                line = f"{e['received_at']}: {e['event_type']}"
+                if e["source"]:
+                    line += f" ({e['source']})"
+                lines.append(line)
+            return "\n".join(lines)
         return f"Unknown tool: {name}"
     except Exception as e:
         return f"Error: {e}"
@@ -1211,6 +1302,73 @@ async def api_messages_ingest(request: Request):
     return {"ok": True}
 
 
+@fast_app.post("/api/doorbell/event")
+async def api_doorbell_event(request: Request):
+    auth = request.headers.get("Authorization", "")
+    if not auth.startswith("Bearer "):
+        raise HTTPException(401)
+    token = auth[7:].strip()
+    user_id = await _db_find_user_by_token(token)
+    if not user_id:
+        raise HTTPException(401)
+
+    data = await request.json()
+    event_type = (data.get("event_type") or "motion").strip()[:50]
+    source = (data.get("source") or "").strip()[:200]
+
+    await _db_store_doorbell_event(user_id, event_type, source)
+
+    hour = datetime.datetime.now().hour
+    quiet = hour >= 23 or hour < 7
+    if not (event_type == "motion" and quiet):
+        speak_map = {
+            "doorbell_press": "Someone is at the front door, sir.",
+            "motion": "Motion detected at the front door.",
+            "person": "A person has been detected at the front door, sir.",
+            "package": "A package has been delivered to the front door, sir.",
+        }
+        speak_text = speak_map.get(event_type, "Doorbell alert.")
+        for sid in _sids_for_user(user_id):
+            await sio.emit(
+                "doorbell_alert",
+                {"event_type": event_type, "source": source, "speak": speak_text},
+                to=sid,
+            )
+
+    return {"ok": True}
+
+
+@fast_app.get("/api/doorbell/token")
+async def api_doorbell_token(request: Request):
+    user_id = _get_current_user(request)
+    if not user_id:
+        raise HTTPException(401)
+    token = await _db_get_or_create_webhook_token(user_id)
+    return {"token": token, "url": f"{APP_URL}/api/doorbell/event"}
+
+
+@fast_app.get("/api/doorbell/events")
+async def api_doorbell_events(request: Request):
+    user_id = _get_current_user(request)
+    if not user_id:
+        raise HTTPException(401)
+    async with _pool().acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT id, event_type, source, received_at "
+            "FROM doorbell_events WHERE user_id = $1 ORDER BY received_at DESC LIMIT 50",
+            user_id,
+        )
+    return [
+        {
+            "id": r["id"],
+            "event_type": r["event_type"],
+            "source": r["source"],
+            "received_at": r["received_at"].isoformat(),
+        }
+        for r in rows
+    ]
+
+
 @fast_app.get("/api/messages")
 async def api_messages(request: Request):
     user_id = _get_current_user(request)
@@ -1343,7 +1501,7 @@ async def _stream_reply(state: dict, on_text):
             for block in final.content:
                 if block.type == "tool_use":
                     result = await _execute_ha_tool(
-                        config, block.name, dict(block.input)
+                        config, block.name, dict(block.input), state.get("user_id", "")
                     )
                     results.append(
                         {
@@ -1398,7 +1556,9 @@ async def _stream_reply(state: dict, on_text):
             tool_msgs = []
             for acc in tool_calls_acc.values():
                 args = json.loads(acc["args"] or "{}")
-                result = await _execute_ha_tool(config, acc["name"], args)
+                result = await _execute_ha_tool(
+                    config, acc["name"], args, state.get("user_id", "")
+                )
                 tc_list.append(
                     {
                         "id": acc["id"],
