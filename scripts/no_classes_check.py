@@ -1,9 +1,7 @@
 #!/usr/bin/env python3
 """Pre-commit check that rejects Python class definitions in the codebase."""
 
-import ast
-import os
-import sys
+import ast, os, sys
 
 EXCLUDE_DIRS = {
     ".git",
