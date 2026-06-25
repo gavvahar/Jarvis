@@ -37,15 +37,11 @@ DEFAULT_MODELS = {
 VALID_PROVIDERS = set(DEFAULT_MODELS.keys())
 
 # ─── ENV ──────────────────────────────────────────────────────────────────────
-DATABASE_URL = os.environ.get(
-    "DATABASE_URL", "postgresql://jarvis:jarvis@postgres/jarvis"
-)
+DATABASE_URL = os.environ.get("DATABASE_URL", "postgresql://jarvis:jarvis@postgres/jarvis")
 AUTHENTIK_URL = os.environ.get("AUTHENTIK_URL", "").rstrip("/")
 _OIDC_APP_SLUG = os.environ.get("OIDC_APP_SLUG", "").strip()
 OIDC_DISCOVERY_URL = os.environ.get("OIDC_DISCOVERY_URL", "") or (
-    f"{AUTHENTIK_URL}/application/o/{_OIDC_APP_SLUG}/.well-known/openid-configuration"
-    if AUTHENTIK_URL and _OIDC_APP_SLUG
-    else ""
+    f"{AUTHENTIK_URL}/application/o/{_OIDC_APP_SLUG}/.well-known/openid-configuration" if AUTHENTIK_URL and _OIDC_APP_SLUG else ""
 )
 OIDC_CLIENT_ID = os.environ.get("OIDC_CLIENT_ID", "")
 OIDC_CLIENT_SECRET = os.environ.get("OIDC_CLIENT_SECRET", "")
@@ -149,8 +145,7 @@ async def _db_ensure_user(user_id: str, email: str, role: str):
 async def _db_load_config(user_id: str) -> dict:
     async with _pool().acquire() as conn:
         row = await conn.fetchrow(
-            "SELECT role, provider, api_key, model, base_url, ha_url, ha_token "
-            "FROM user_configs WHERE user_id = $1",
+            "SELECT role, provider, api_key, model, base_url, ha_url, ha_token FROM user_configs WHERE user_id = $1",
             user_id,
         )
     if row is None:
@@ -233,9 +228,7 @@ async def _db_clear_conversation(user_id: str):
 
 async def _db_get_or_create_webhook_token(user_id: str) -> str:
     async with _pool().acquire() as conn:
-        row = await conn.fetchrow(
-            "SELECT webhook_token FROM user_configs WHERE user_id = $1", user_id
-        )
+        row = await conn.fetchrow("SELECT webhook_token FROM user_configs WHERE user_id = $1", user_id)
     if row and row["webhook_token"]:
         return row["webhook_token"]
     token = secrets.token_hex(32)
@@ -268,13 +261,10 @@ async def _db_find_user_by_token(token: str) -> str | None:
     return row["user_id"] if row else None
 
 
-async def _db_store_phone_message(
-    user_id: str, sender: str, body: str, important: bool, reason: str
-):
+async def _db_store_phone_message(user_id: str, sender: str, body: str, important: bool, reason: str):
     async with _pool().acquire() as conn:
         await conn.execute(
-            "INSERT INTO phone_messages (user_id, sender, body, important, reason) "
-            "VALUES ($1, $2, $3, $4, $5)",
+            "INSERT INTO phone_messages (user_id, sender, body, important, reason) VALUES ($1, $2, $3, $4, $5)",
             user_id,
             sender,
             body,
@@ -285,9 +275,7 @@ async def _db_store_phone_message(
 
 async def _db_create_meeting(user_id: str) -> int:
     async with _pool().acquire() as conn:
-        row = await conn.fetchrow(
-            "INSERT INTO meetings (user_id) VALUES ($1) RETURNING id", user_id
-        )
+        row = await conn.fetchrow("INSERT INTO meetings (user_id) VALUES ($1) RETURNING id", user_id)
     return row["id"]
 
 
@@ -322,9 +310,7 @@ async def _db_store_doorbell_event(user_id: str, event_type: str, source: str):
 async def _db_get_recent_doorbell_events(user_id: str, hours: float = 24) -> list:
     async with _pool().acquire() as conn:
         rows = await conn.fetch(
-            "SELECT event_type, source, received_at FROM doorbell_events "
-            "WHERE user_id = $1 AND received_at > NOW() - $2 "
-            "ORDER BY received_at DESC LIMIT 50",
+            "SELECT event_type, source, received_at FROM doorbell_events WHERE user_id = $1 AND received_at > NOW() - $2 ORDER BY received_at DESC LIMIT 50",
             user_id,
             datetime.timedelta(hours=hours),
         )
@@ -356,9 +342,7 @@ def _get_oidc_config() -> dict:
 async def _fetch_oidc_config():
     global _oidc_config
     if not OIDC_DISCOVERY_URL:
-        print(
-            "[AUTH] OIDC_DISCOVERY_URL not set — authentication disabled.", flush=True
-        )
+        print("[AUTH] OIDC_DISCOVERY_URL not set — authentication disabled.", flush=True)
         return
     try:
         async with httpx.AsyncClient(timeout=10) as c:
@@ -440,9 +424,7 @@ async def _get_user_state(user_id: str) -> dict:
             provider = "anthropic"
         if not config.get("model"):
             config["model"] = DEFAULT_MODELS.get(provider, "")
-        client = _build_client(
-            provider, config.get("api_key", ""), config.get("base_url", "")
-        )
+        client = _build_client(provider, config.get("api_key", ""), config.get("base_url", ""))
         _user_states[user_id] = {
             "config": config,
             "client": client,
@@ -528,10 +510,7 @@ HA_TOOLS_ANTHROPIC = [
     },
     {
         "name": "call_ha_service",
-        "description": (
-            "Call a Home Assistant service to control a device, run a script, "
-            "or trigger an automation."
-        ),
+        "description": ("Call a Home Assistant service to control a device, run a script, or trigger an automation."),
         "input_schema": {
             "type": "object",
             "properties": {
@@ -599,10 +578,7 @@ HA_TOOLS_OPENAI = [
         "type": "function",
         "function": {
             "name": "call_ha_service",
-            "description": (
-                "Call a Home Assistant service to control a device, run a script, "
-                "or trigger an automation."
-            ),
+            "description": ("Call a Home Assistant service to control a device, run a script, or trigger an automation."),
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -701,20 +677,14 @@ async def _ha_get_states(config: dict, domain=None):
     return "\n".join(lines) if lines else "No entities found."
 
 
-async def _ha_call_service(
-    config: dict, domain, service, entity_id=None, service_data=None
-):
+async def _ha_call_service(config: dict, domain, service, entity_id=None, service_data=None):
     url = config["ha_url"].rstrip("/") + f"/api/services/{domain}/{service}"
     payload = dict(service_data or {})
     if entity_id:
         payload["entity_id"] = entity_id
     async with httpx.AsyncClient(timeout=8) as c:
         r = await c.post(url, headers=_ha_headers(config), json=payload)
-    return (
-        "Done."
-        if r.status_code in (200, 201)
-        else f"HA returned {r.status_code}: {r.text[:120]}"
-    )
+    return "Done." if r.status_code in (200, 201) else f"HA returned {r.status_code}: {r.text[:120]}"
 
 
 async def _execute_ha_tool(config: dict, name, args, user_id: str = ""):
@@ -753,9 +723,7 @@ def _openai_create_sync(client, model, messages, stream, max_out=500):
     last = None
     for extra in ({"max_tokens": max_out}, {"max_completion_tokens": max_out}, {}):
         try:
-            return client.chat.completions.create(
-                model=model, messages=messages, stream=stream, **extra
-            )
+            return client.chat.completions.create(model=model, messages=messages, stream=stream, **extra)
         except Exception as e:
             last = e
             if any(
@@ -803,20 +771,11 @@ def _validate(provider, api_key, model, base_url=""):
     except Exception as e:
         msg = str(e)
         low = msg.lower()
-        if (
-            "authentication" in low
-            or "401" in low
-            or ("invalid" in low and "key" in low)
-        ):
+        if "authentication" in low or "401" in low or ("invalid" in low and "key" in low):
             return False, "That key was rejected. Check it and try again."
         if "404" in low or "not_found" in low or ("model" in low and "exist" in low):
             return False, f"The model '{model}' wasn't found for this key/provider."
-        if (
-            "credit" in low
-            or "billing" in low
-            or "quota" in low
-            or "insufficient" in low
-        ):
+        if "credit" in low or "billing" in low or "quota" in low or "insufficient" in low:
             return False, "The key is valid but the account has no available credit."
         if "connection" in low or "could not" in low or "getaddrinfo" in low:
             return (
@@ -859,10 +818,7 @@ async def _generate_meeting_notes(state: dict, transcript: str) -> str:
             return resp.choices[0].message.content
         except Exception as e:
             last = e
-            if any(
-                x in str(e).lower()
-                for x in ("max_tokens", "max_completion_tokens", "unsupported")
-            ):
+            if any(x in str(e).lower() for x in ("max_tokens", "max_completion_tokens", "unsupported")):
                 continue
             raise
     assert last is not None
@@ -914,9 +870,7 @@ async def _refresh_session(request: Request, call_next):
     if request.url.path not in _NO_REFRESH_PATHS and _signer:
         user_id = _get_current_user(request)
         if user_id:
-            response.set_cookie(
-                "jarvis_session", _sign_session(user_id), **_SESSION_COOKIE_OPTS
-            )
+            response.set_cookie("jarvis_session", _sign_session(user_id), **_SESSION_COOKIE_OPTS)
     return response
 
 
@@ -945,9 +899,7 @@ async def auth_callback(request: Request):
     state = request.query_params.get("state")
     stored_state = request.cookies.get("oidc_state")
     if not code or not state or state != stored_state:
-        raise HTTPException(
-            400, "Invalid OAuth2 callback — state mismatch or missing code"
-        )
+        raise HTTPException(400, "Invalid OAuth2 callback — state mismatch or missing code")
 
     try:
         async with httpx.AsyncClient(timeout=10) as c:
@@ -982,9 +934,7 @@ async def auth_callback(request: Request):
     _user_states.pop(user_id, None)
 
     response = RedirectResponse("/", status_code=303)
-    response.set_cookie(
-        "jarvis_session", _sign_session(user_id), **_SESSION_COOKIE_OPTS
-    )
+    response.set_cookie("jarvis_session", _sign_session(user_id), **_SESSION_COOKIE_OPTS)
     response.delete_cookie("oidc_state")
     return response
 
@@ -1147,8 +1097,7 @@ async def api_meetings(request: Request):
         raise HTTPException(401)
     async with _pool().acquire() as conn:
         rows = await conn.fetch(
-            "SELECT id, started_at, ended_at, notes FROM meetings "
-            "WHERE user_id = $1 ORDER BY started_at DESC LIMIT 20",
+            "SELECT id, started_at, ended_at, notes FROM meetings WHERE user_id = $1 ORDER BY started_at DESC LIMIT 20",
             user_id,
         )
     return [
@@ -1169,8 +1118,7 @@ async def api_meeting_detail(request: Request, meeting_id: int):
         raise HTTPException(401)
     async with _pool().acquire() as conn:
         row = await conn.fetchrow(
-            "SELECT id, started_at, ended_at, transcript, notes FROM meetings "
-            "WHERE id = $1 AND user_id = $2",
+            "SELECT id, started_at, ended_at, transcript, notes FROM meetings WHERE id = $1 AND user_id = $2",
             meeting_id,
             user_id,
         )
@@ -1230,10 +1178,7 @@ async def _classify_message(state: dict, sender: str, body: str) -> tuple[bool, 
                     break
                 except Exception as e:
                     last = e
-                    if any(
-                        x in str(e).lower()
-                        for x in ("max_tokens", "max_completion_tokens", "unsupported")
-                    ):
+                    if any(x in str(e).lower() for x in ("max_tokens", "max_completion_tokens", "unsupported")):
                         continue
                     raise
             if last and not reply:
@@ -1354,8 +1299,7 @@ async def api_doorbell_events(request: Request):
         raise HTTPException(401)
     async with _pool().acquire() as conn:
         rows = await conn.fetch(
-            "SELECT id, event_type, source, received_at "
-            "FROM doorbell_events WHERE user_id = $1 ORDER BY received_at DESC LIMIT 50",
+            "SELECT id, event_type, source, received_at FROM doorbell_events WHERE user_id = $1 ORDER BY received_at DESC LIMIT 50",
             user_id,
         )
     return [
@@ -1376,8 +1320,7 @@ async def api_messages(request: Request):
         raise HTTPException(401)
     async with _pool().acquire() as conn:
         rows = await conn.fetch(
-            "SELECT id, sender, body, important, reason, received_at "
-            "FROM phone_messages WHERE user_id = $1 ORDER BY received_at DESC LIMIT 50",
+            "SELECT id, sender, body, important, reason, received_at FROM phone_messages WHERE user_id = $1 ORDER BY received_at DESC LIMIT 50",
             user_id,
         )
     return [
@@ -1411,11 +1354,7 @@ def _build_system_prompt(config: dict) -> str:
         if ctx.get("pressure_kpa"):
             parts.append(f"pressure: {ctx['pressure_kpa']} kPa")
         if parts:
-            system += (
-                "\n\nCURRENT ENVIRONMENT — use naturally when relevant, don't announce it unprompted:\n"
-                + ", ".join(parts)
-                + "."
-            )
+            system += "\n\nCURRENT ENVIRONMENT — use naturally when relevant, don't announce it unprompted:\n" + ", ".join(parts) + "."
     if _ha_configured(config):
         system += (
             "\n\nHOME AUTOMATION — you are connected to Home Assistant via tools. "
@@ -1430,9 +1369,7 @@ async def _openai_stream_async(client, model, messages, max_out=500, **extra_kwa
     last = None
     for extra in ({"max_tokens": max_out}, {"max_completion_tokens": max_out}, {}):
         try:
-            return await client.chat.completions.create(
-                model=model, messages=messages, stream=True, **extra, **extra_kwargs
-            )
+            return await client.chat.completions.create(model=model, messages=messages, stream=True, **extra, **extra_kwargs)
         except Exception as e:
             last = e
             if any(
@@ -1500,9 +1437,7 @@ async def _stream_reply(state: dict, on_text):
             results = []
             for block in final.content:
                 if block.type == "tool_use":
-                    result = await _execute_ha_tool(
-                        config, block.name, dict(block.input), state.get("user_id", "")
-                    )
+                    result = await _execute_ha_tool(config, block.name, dict(block.input), state.get("user_id", ""))
                     results.append(
                         {
                             "type": "tool_result",
@@ -1544,11 +1479,7 @@ async def _stream_reply(state: dict, on_text):
                             tool_calls_acc[idx]["args"] += tc.function.arguments
                         if tc.id and not tool_calls_acc[idx]["id"]:
                             tool_calls_acc[idx]["id"] = tc.id
-                        if (
-                            tc.function
-                            and tc.function.name
-                            and not tool_calls_acc[idx]["name"]
-                        ):
+                        if tc.function and tc.function.name and not tool_calls_acc[idx]["name"]:
                             tool_calls_acc[idx]["name"] = tc.function.name
             if finish_reason != "tool_calls" or not ha_tools:
                 return full
@@ -1556,9 +1487,7 @@ async def _stream_reply(state: dict, on_text):
             tool_msgs = []
             for acc in tool_calls_acc.values():
                 args = json.loads(acc["args"] or "{}")
-                result = await _execute_ha_tool(
-                    config, acc["name"], args, state.get("user_id", "")
-                )
+                result = await _execute_ha_tool(config, acc["name"], args, state.get("user_id", ""))
                 tc_list.append(
                     {
                         "id": acc["id"],
@@ -1566,12 +1495,8 @@ async def _stream_reply(state: dict, on_text):
                         "function": {"name": acc["name"], "arguments": acc["args"]},
                     }
                 )
-                tool_msgs.append(
-                    {"role": "tool", "tool_call_id": acc["id"], "content": result}
-                )
-            local_msgs.append(
-                {"role": "assistant", "content": None, "tool_calls": tc_list}
-            )
+                tool_msgs.append({"role": "tool", "tool_call_id": acc["id"], "content": result})
+            local_msgs.append({"role": "assistant", "content": None, "tool_calls": tc_list})
             local_msgs.extend(tool_msgs)
 
     return full
@@ -1615,9 +1540,7 @@ async def _process_message(sid: str, text: str):
     try:
         full = await _stream_reply(state, on_text)
         if sent_buf.strip():
-            await sio.emit(
-                "speak_sentence", {"text": sent_buf.strip(), "seq": seq}, to=sid
-            )
+            await sio.emit("speak_sentence", {"text": sent_buf.strip(), "seq": seq}, to=sid)
         reply = full.strip() or "…"
         state["conversation"].append({"role": "assistant", "content": reply})
         await _db_append_message(user_id, "assistant", reply)
@@ -1641,9 +1564,7 @@ async def _process_message(sid: str, text: str):
             conv.pop()
             await _db_clear_conversation(user_id)
             for msg_entry in conv:
-                await _db_append_message(
-                    user_id, msg_entry["role"], msg_entry["content"]
-                )
+                await _db_append_message(user_id, msg_entry["role"], msg_entry["content"])
         await sio.emit("speak_sentence", {"text": msg, "seq": 0}, to=sid)
         await sio.emit("response_done", {"text": msg}, to=sid)
         await sio.emit("status", {"state": "idle"}, to=sid)
@@ -1683,9 +1604,7 @@ async def on_start_meeting(sid, data=None):
     if not user_id:
         return
     if user_id in _active_meetings:
-        await sio.emit(
-            "meeting_error", {"error": "A meeting is already active."}, to=sid
-        )
+        await sio.emit("meeting_error", {"error": "A meeting is already active."}, to=sid)
         return
     meeting_id = await _db_create_meeting(user_id)
     _active_meetings[user_id] = {"meeting_id": meeting_id, "segments": []}
@@ -1819,13 +1738,7 @@ async def _telemetry_loop():
             dt = max(now - last_t, 0.1)
             down = (net.bytes_recv - last_net.bytes_recv) * 8 / 1e6 / dt
             up = (net.bytes_sent - last_net.bytes_sent) * 8 / 1e6 / dt
-            pps = int(
-                (
-                    (net.packets_recv + net.packets_sent)
-                    - (last_net.packets_recv + last_net.packets_sent)
-                )
-                / dt
-            )
+            pps = int(((net.packets_recv + net.packets_sent) - (last_net.packets_recv + last_net.packets_sent)) / dt)
             last_net, last_t = net, now
             await sio.emit(
                 "hud_update",
@@ -1855,10 +1768,7 @@ async def _weather_loop():
                 lat, lon = loc.get("lat"), loc.get("lon")
                 if lat is not None and lon is not None:
                     wx_r = await client.get(
-                        f"https://api.open-meteo.com/v1/forecast"
-                        f"?latitude={lat}&longitude={lon}"
-                        f"&current=temperature_2m,surface_pressure,weather_code"
-                        f"&temperature_unit=fahrenheit",
+                        f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current=temperature_2m,surface_pressure,weather_code&temperature_unit=fahrenheit",
                         headers={"User-Agent": "JARVIS-Starter/1.0"},
                     )
                     cur = wx_r.json().get("current", {})
@@ -1880,16 +1790,8 @@ async def _weather_loop():
                         95: "Thunderstorm",
                     }.get(code, "—")
                     weather_data = {
-                        "temp_f": (
-                            round(cur["temperature_2m"])
-                            if cur.get("temperature_2m") is not None
-                            else None
-                        ),
-                        "pressure_kpa": (
-                            round(cur["surface_pressure"] / 10, 1)
-                            if cur.get("surface_pressure")
-                            else None
-                        ),
+                        "temp_f": (round(cur["temperature_2m"]) if cur.get("temperature_2m") is not None else None),
+                        "pressure_kpa": (round(cur["surface_pressure"] / 10, 1) if cur.get("surface_pressure") else None),
                         "city": loc.get("city", "—"),
                         "region": loc.get("region", ""),
                         "condition": cond,
@@ -1907,9 +1809,7 @@ async def _meeting_cleanup_loop():
         try:
             if _db_pool:
                 async with _pool().acquire() as conn:
-                    result = await conn.execute(
-                        "DELETE FROM meetings WHERE created_at < NOW() - INTERVAL '48 hours'"
-                    )
+                    result = await conn.execute("DELETE FROM meetings WHERE created_at < NOW() - INTERVAL '48 hours'")
                 if result != "DELETE 0":
                     print(f"[MEETING] Cleanup: {result}", flush=True)
         except Exception as e:
