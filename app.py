@@ -74,6 +74,8 @@ CREATE TABLE IF NOT EXISTS user_configs (
 
 ALTER TABLE user_configs ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'user';
 ALTER TABLE user_configs ADD COLUMN IF NOT EXISTS webhook_token TEXT NOT NULL DEFAULT '';
+ALTER TABLE user_configs ADD COLUMN IF NOT EXISTS myq_email TEXT NOT NULL DEFAULT '';
+ALTER TABLE user_configs ADD COLUMN IF NOT EXISTS myq_password TEXT NOT NULL DEFAULT '';
 
 CREATE TABLE IF NOT EXISTS phone_messages (
     id          BIGSERIAL PRIMARY KEY,
@@ -145,7 +147,7 @@ async def _db_ensure_user(user_id: str, email: str, role: str):
 async def _db_load_config(user_id: str) -> dict:
     async with _pool().acquire() as conn:
         row = await conn.fetchrow(
-            "SELECT role, provider, api_key, model, base_url, ha_url, ha_token FROM user_configs WHERE user_id = $1",
+            "SELECT role, provider, api_key, model, base_url, ha_url, ha_token, myq_email, myq_password FROM user_configs WHERE user_id = $1",
             user_id,
         )
     if row is None:
@@ -157,6 +159,8 @@ async def _db_load_config(user_id: str) -> dict:
             "base_url": "",
             "ha_url": "",
             "ha_token": "",
+            "myq_email": "",
+            "myq_password": "",
         }
     return dict(row)
 
@@ -167,7 +171,8 @@ async def _db_save_config(user_id: str, config: dict):
             """
             UPDATE user_configs
             SET provider=$2, api_key=$3, model=$4, base_url=$5,
-                ha_url=$6, ha_token=$7, updated_at=NOW()
+                ha_url=$6, ha_token=$7, myq_email=$8, myq_password=$9,
+                updated_at=NOW()
             WHERE user_id=$1
             """,
             user_id,
@@ -177,6 +182,8 @@ async def _db_save_config(user_id: str, config: dict):
             config["base_url"],
             config["ha_url"],
             config["ha_token"],
+            config.get("myq_email", ""),
+            config.get("myq_password", ""),
         )
 
 
@@ -626,8 +633,123 @@ HA_TOOLS_OPENAI = [
 ]
 
 
+MYQ_TOOLS_ANTHROPIC = [
+    {
+        "name": "get_garage_status",
+        "description": "Get the current open/closed state of your MyQ Chamberlain smart garage door(s).",
+        "input_schema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "set_garage_door",
+        "description": "Open or close a MyQ Chamberlain smart garage door.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "enum": ["open", "close"],
+                    "description": "Whether to open or close the door.",
+                },
+                "device": {
+                    "type": "string",
+                    "description": "Garage door name. Omit if you only have one.",
+                },
+            },
+            "required": ["action"],
+        },
+    },
+]
+
+MYQ_TOOLS_OPENAI = [
+    {
+        "type": "function",
+        "function": {
+            "name": "get_garage_status",
+            "description": "Get the current open/closed state of your MyQ Chamberlain smart garage door(s).",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "set_garage_door",
+            "description": "Open or close a MyQ Chamberlain smart garage door.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "enum": ["open", "close"],
+                        "description": "Whether to open or close the door.",
+                    },
+                    "device": {
+                        "type": "string",
+                        "description": "Garage door name. Omit if you only have one.",
+                    },
+                },
+                "required": ["action"],
+            },
+        },
+    },
+]
+
+
+def _get_myq_tools(config: dict, provider: str) -> list:
+    if not _myq_configured(config):
+        return []
+    return MYQ_TOOLS_ANTHROPIC if provider == "anthropic" else MYQ_TOOLS_OPENAI
+
+
 def _ha_configured(config: dict) -> bool:
     return bool(config.get("ha_url") and config.get("ha_token"))
+
+
+# ─── MYQ / CHAMBERLAIN GARAGE ─────────────────────────────────────────────────
+def _myq_configured(config: dict) -> bool:
+    return bool(config.get("myq_email") and config.get("myq_password"))
+
+
+async def _myq_get_status(config: dict) -> str:
+    try:
+        import aiohttp
+        import pymyq
+
+        async with aiohttp.ClientSession() as session:
+            myq = await pymyq.login(config["myq_email"], config["myq_password"], session)
+            if not myq.covers:
+                return "No garage doors found in your MyQ account."
+            lines = [f"{d.name}: {d.state}" for d in myq.covers.values()]
+            return "\n".join(lines)
+    except Exception as e:
+        return f"Could not reach MyQ: {e}"
+
+
+async def _myq_set_door(config: dict, device_name: str | None, action: str) -> str:
+    try:
+        import aiohttp
+        import pymyq
+
+        async with aiohttp.ClientSession() as session:
+            myq = await pymyq.login(config["myq_email"], config["myq_password"], session)
+            if not myq.covers:
+                return "No garage doors found in your MyQ account."
+            if device_name:
+                device = next(
+                    (d for d in myq.covers.values() if device_name.lower() in d.name.lower()),
+                    None,
+                )
+                if device is None:
+                    names = ", ".join(d.name for d in myq.covers.values())
+                    return f"No garage door matching '{device_name}'. Available: {names}."
+            else:
+                device = next(iter(myq.covers.values()))
+            if action == "open":
+                await device.open(wait_for_state=None)
+            else:
+                await device.close(wait_for_state=None)
+            return f"{device.name}: {action} command sent."
+    except Exception as e:
+        return f"Could not reach MyQ: {e}"
 
 
 def _ha_headers(config: dict) -> dict:
@@ -713,6 +835,10 @@ async def _execute_ha_tool(config: dict, name, args, user_id: str = ""):
                     line += f" ({e['source']})"
                 lines.append(line)
             return "\n".join(lines)
+        if name == "get_garage_status":
+            return await _myq_get_status(config)
+        if name == "set_garage_door":
+            return await _myq_set_door(config, args.get("device"), args.get("action", "close"))
         return f"Unknown tool: {name}"
     except Exception as e:
         return f"Error: {e}"
@@ -967,6 +1093,7 @@ async def api_status(request: Request):
         "model": config.get("model", ""),
         "ha_configured": _ha_configured(config),
         "ha_url": config.get("ha_url", ""),
+        "myq_configured": _myq_configured(config),
         "role": state.get("role", "user"),
     }
 
@@ -1088,6 +1215,32 @@ async def api_save_ha(request: Request):
         await _db_save_config(user_id, config)
 
     return {"ok": True, "ha_configured": _ha_configured(config)}
+
+
+@fast_app.post("/api/save_myq")
+async def api_save_myq(request: Request):
+    user_id = _get_current_user(request)
+    if not user_id:
+        raise HTTPException(401)
+
+    data = await request.json()
+    myq_email = (data.get("myq_email") or "").strip()
+    myq_password = (data.get("myq_password") or "").strip()
+
+    if myq_email and myq_password:
+        result = await _myq_get_status({"myq_email": myq_email, "myq_password": myq_password})
+        if result.startswith("Could not reach MyQ"):
+            return {"ok": False, "error": result}
+
+    state = await _get_user_state(user_id)
+    config = state["config"]
+
+    async with _get_user_lock(user_id):
+        config["myq_email"] = myq_email
+        config["myq_password"] = myq_password
+        await _db_save_config(user_id, config)
+
+    return {"ok": True, "myq_configured": _myq_configured(config)}
 
 
 @fast_app.get("/api/meetings")
@@ -1362,6 +1515,12 @@ def _build_system_prompt(config: dict) -> str:
             "devices, run scripts, and trigger automations. When given a home control "
             "command, use your tools and then confirm briefly in JARVIS voice."
         )
+    if _myq_configured(config):
+        system += (
+            "\n\nGARAGE DOOR — you are connected to the MyQ Chamberlain smart garage. "
+            "Use get_garage_status to check whether the door is open or closed, "
+            "and set_garage_door to open or close it on command."
+        )
     return system
 
 
@@ -1407,7 +1566,7 @@ async def _stream_reply(state: dict, on_text):
     client = state["client"]
     model = config.get("model") or DEFAULT_MODELS.get(provider, "")
     system = _build_system_prompt(config)
-    ha_tools = _get_ha_tools(config, provider)
+    ha_tools = _get_ha_tools(config, provider) + _get_myq_tools(config, provider)
     local_msgs = list(state["conversation"])
 
     for _ in range(4):
