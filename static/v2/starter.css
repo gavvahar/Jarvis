@@ -503,7 +503,10 @@
   pointer-events: auto;
   text-shadow: 0 0 8px rgba(127, 233, 255, 0.6);
   box-shadow: 0 0 6px rgba(127, 233, 255, 0.15);
-  transition: background 0.2s, color 0.2s, box-shadow 0.2s;
+  transition:
+    background 0.2s,
+    color 0.2s,
+    box-shadow 0.2s;
 }
 #msg-settings-btn:hover {
   background: rgba(127, 233, 255, 0.22);
@@ -528,7 +531,10 @@
   pointer-events: auto;
   text-shadow: 0 0 8px rgba(127, 233, 255, 0.6);
   box-shadow: 0 0 6px rgba(127, 233, 255, 0.15);
-  transition: background 0.2s, color 0.2s, box-shadow 0.2s;
+  transition:
+    background 0.2s,
+    color 0.2s,
+    box-shadow 0.2s;
 }
 #tesla-btn:hover {
   background: rgba(127, 233, 255, 0.22);
@@ -548,7 +554,11 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  background: radial-gradient(ellipse at center, rgba(6, 18, 28, 0.86), rgba(2, 6, 12, 0.97));
+  background: radial-gradient(
+    ellipse at center,
+    rgba(6, 18, 28, 0.86),
+    rgba(2, 6, 12, 0.97)
+  );
   backdrop-filter: blur(6px);
   transition: opacity 0.5s ease;
 }
@@ -563,8 +573,14 @@
   text-align: center;
   border: 1px solid rgba(127, 233, 255, 0.22);
   border-radius: 14px;
-  background: linear-gradient(160deg, rgba(10, 26, 40, 0.72), rgba(6, 16, 26, 0.82));
-  box-shadow: 0 0 60px rgba(20, 120, 180, 0.25), inset 0 0 40px rgba(20, 120, 180, 0.06);
+  background: linear-gradient(
+    160deg,
+    rgba(10, 26, 40, 0.72),
+    rgba(6, 16, 26, 0.82)
+  );
+  box-shadow:
+    0 0 60px rgba(20, 120, 180, 0.25),
+    inset 0 0 40px rgba(20, 120, 180, 0.06);
   font-family: "Oxanium", system-ui, sans-serif;
   color: #cfeffb;
 }
@@ -584,7 +600,9 @@
   font-size: 9.5px;
   letter-spacing: 0.14em;
   cursor: pointer;
-  transition: background 0.2s, color 0.2s;
+  transition:
+    background 0.2s,
+    color 0.2s;
 }
 .tesla-tab.tesla-tab-active {
   background: rgba(127, 233, 255, 0.18);
@@ -653,7 +671,9 @@
   text-decoration: none;
   display: inline-flex;
   align-items: center;
-  transition: background 0.2s, box-shadow 0.2s;
+  transition:
+    background 0.2s,
+    box-shadow 0.2s;
 }
 #tesla-settings-card button:hover,
 .setup-link-btn:hover {
