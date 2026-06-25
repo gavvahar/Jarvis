@@ -109,6 +109,51 @@ Once connected, he can:
 - Trigger scripts and automations ("Run the bedtime routine")
 - Tell you about recent doorbell and motion activity
 
+## TESLA
+
+J.A.R.V.I.S. can check and control your Tesla vehicles by voice. Two API
+options are available — choose either or both.
+
+### Option A — Unofficial API (recommended for most users)
+
+No developer account needed. Get a Tesla refresh token from one of these apps:
+
+- **Auth App for Tesla** (iOS / Android) — easiest
+- **tesla-auth** CLI — run it once, copy the refresh token it prints
+
+Then open the TESLA settings panel in J.A.R.V.I.S., paste the token, and
+click **CONNECT**.
+
+### Option B — Fleet API (official)
+
+Requires a registered Tesla developer app. The admin must set these in `.env`:
+
+| Variable               | What it is                                      |
+| ---------------------- | ----------------------------------------------- |
+| `TESLA_CLIENT_ID`      | Client ID from developer.tesla.com              |
+| `TESLA_CLIENT_SECRET`  | Client secret from developer.tesla.com          |
+
+Once set, users click **CONNECT WITH TESLA** in the Fleet API tab and complete
+Tesla's OAuth flow. Note: vehicle commands via the Fleet API additionally
+require a virtual key to be paired with the car via the Tesla mobile app.
+
+### Using both
+
+If both are connected, J.A.R.V.I.S. prefers the Unofficial API (no virtual
+key required for commands) and falls back to the Fleet API if needed.
+
+### What he can do
+
+- "What's my Tesla's battery level?"
+- "Lock the car" / "Unlock the car"
+- "Turn on the heat" / "Set the temperature to 72"
+- "Start charging" / "Stop charging"
+- "Open the trunk" / "Open the frunk"
+- "Honk the horn" / "Flash the lights"
+
+Commands auto-wake the vehicle — mention to the user it may take up to
+30 seconds if the car is sleeping.
+
 ## GARAGE DOOR (MYQ / CHAMBERLAIN)
 
 Connect your MyQ Chamberlain smart garage from the settings panel using your
