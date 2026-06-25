@@ -45,6 +45,7 @@ set_env = { VIRTUALENV_OVERRIDE_APP_DATA = "{work_dir}/.virtualenv" }
 # --- Linting ----------------------------------------------------------------
 
 [tool.tox.env.lint]
+skip_install = true
 base_python = "python3"
 deps = ["ruff", "ty"]
 commands = [
@@ -68,10 +69,12 @@ commands = [["python3", "scripts/no_classes_check.py"]]
 # --- Formatting -------------------------------------------------------------
 
 [tool.tox.env.format]
+skip_install = true
 deps = ["ruff", "ty"]
 allowlist_externals = ["npx"]
 commands = [
-    ["ruff", "format", "."],
+    ["ruff", "format", "--no-cache", "."],
+    ["ruff", "check", "--no-cache", "--fix", "."],
     ["npx", "prettier", "--write", "**/*.{css,js,html,json,yml,yaml,md}"],
 ]
 
@@ -83,6 +86,7 @@ commands = [["npx", "prettier", "--check", "**/*.{css,js,html,json,yml,yaml,md}"
 # --- Testing ----------------------------------------------------------------
 
 [tool.tox.env.tests]
+skip_install = true
 deps = ["-r requirements.txt", "pytest", "pytest-cov", "httpx"]
 commands = [["pytest", "tests/", "-v", "--cov=app", "--cov-report=term-missing", "--cov-fail-under=25"]]
 
