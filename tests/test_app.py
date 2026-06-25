@@ -249,6 +249,15 @@ class TestBuildSystemPrompt:
         finally:
             jarvis._location_context.clear()
 
+    def test_location_context_city_without_region(self):
+        jarvis._location_context.update({"city": "London", "temp_f": 60, "condition": "Overcast", "pressure_kpa": 101.3})
+        try:
+            prompt = _build_system_prompt({"ha_url": "", "ha_token": ""})
+            assert "London" in prompt
+            assert "101.3" in prompt
+        finally:
+            jarvis._location_context.clear()
+
 
 class TestTeslaConfigured:
     def test_not_configured_when_method_empty(self):
@@ -272,6 +281,12 @@ class TestTeslaConfigured:
     def test_both_fails_if_unofficial_token_missing(self):
         assert _tesla_configured({"tesla_method": "both", "tesla_refresh_token": "", "tesla_fleet_refresh_token": "fleet_tok"}) is False
 
+    def test_both_fails_if_fleet_token_missing(self):
+        assert _tesla_configured({"tesla_method": "both", "tesla_refresh_token": "tok", "tesla_fleet_refresh_token": ""}) is False
+
+    def test_unknown_method_not_configured(self):
+        assert _tesla_configured({"tesla_method": "unknown", "tesla_refresh_token": "tok", "tesla_fleet_refresh_token": "fleet"}) is False
+
 
 class TestCToF:
     def test_freezing(self):
@@ -282,6 +297,12 @@ class TestCToF:
 
     def test_body_temp(self):
         assert abs(_c_to_f(37) - 98.6) < 0.1
+
+    def test_crossover(self):
+        assert _c_to_f(-40) == -40.0
+
+    def test_negative(self):
+        assert _c_to_f(-10) == 14.0
 
 
 class TestGetTeslaTools:
@@ -303,6 +324,18 @@ class TestGetTeslaTools:
         tools = _get_tesla_tools(cfg, "openai")
         assert len(tools) > 0
         assert tools[0]["type"] == "function"
+
+    def test_returns_nine_tools(self):
+        cfg = {"tesla_method": "fleet", "tesla_refresh_token": "", "tesla_fleet_refresh_token": "fleet_tok"}
+        tools = _get_tesla_tools(cfg, "anthropic")
+        assert len(tools) == 9
+
+    def test_tool_names_include_trunk(self):
+        cfg = {"tesla_method": "unofficial", "tesla_refresh_token": "tok", "tesla_fleet_refresh_token": ""}
+        names = {t["name"] for t in _get_tesla_tools(cfg, "anthropic")}
+        assert "actuate_trunk" in names
+        assert "honk_horn" in names
+        assert "flash_lights" in names
 
 
 class TestBuildClient:
