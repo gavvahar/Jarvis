@@ -10,7 +10,7 @@ Three providers:
   • openai_compatible — any OpenAI-compatible endpoint (Ollama, OpenRouter, …)
 """
 
-import json, os, re, asyncio, secrets, tempfile, urllib.parse, asyncpg, httpx, datetime
+import json, os, re, asyncio, secrets, tempfile, urllib.parse, asyncpg, httpx, datetime, hashlib, base64
 
 
 from contextlib import asynccontextmanager
@@ -48,6 +48,8 @@ OIDC_CLIENT_SECRET = os.environ.get("OIDC_CLIENT_SECRET", "")
 APP_URL = os.environ.get("APP_URL", "http://localhost:5000").rstrip("/")
 SECRET_KEY = os.environ.get("SECRET_KEY", "change-me")
 OIDC_ADMIN_GROUP = os.environ.get("OIDC_ADMIN_GROUP", "jarvis-admins")
+TESLA_CLIENT_ID = os.environ.get("TESLA_CLIENT_ID", "")
+TESLA_CLIENT_SECRET = os.environ.get("TESLA_CLIENT_SECRET", "")
 
 # ─── DB ───────────────────────────────────────────────────────────────────────
 _db_pool: asyncpg.Pool | None = None
@@ -76,6 +78,9 @@ ALTER TABLE user_configs ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'us
 ALTER TABLE user_configs ADD COLUMN IF NOT EXISTS webhook_token TEXT NOT NULL DEFAULT '';
 ALTER TABLE user_configs ADD COLUMN IF NOT EXISTS myq_email TEXT NOT NULL DEFAULT '';
 ALTER TABLE user_configs ADD COLUMN IF NOT EXISTS myq_password TEXT NOT NULL DEFAULT '';
+ALTER TABLE user_configs ADD COLUMN IF NOT EXISTS tesla_method TEXT NOT NULL DEFAULT '';
+ALTER TABLE user_configs ADD COLUMN IF NOT EXISTS tesla_refresh_token TEXT NOT NULL DEFAULT '';
+ALTER TABLE user_configs ADD COLUMN IF NOT EXISTS tesla_fleet_refresh_token TEXT NOT NULL DEFAULT '';
 
 CREATE TABLE IF NOT EXISTS phone_messages (
     id          BIGSERIAL PRIMARY KEY,
@@ -147,7 +152,7 @@ async def _db_ensure_user(user_id: str, email: str, role: str):
 async def _db_load_config(user_id: str) -> dict:
     async with _pool().acquire() as conn:
         row = await conn.fetchrow(
-            "SELECT role, provider, api_key, model, base_url, ha_url, ha_token, myq_email, myq_password FROM user_configs WHERE user_id = $1",
+            "SELECT role, provider, api_key, model, base_url, ha_url, ha_token, myq_email, myq_password, tesla_method, tesla_refresh_token, tesla_fleet_refresh_token FROM user_configs WHERE user_id = $1",
             user_id,
         )
     if row is None:
@@ -161,6 +166,9 @@ async def _db_load_config(user_id: str) -> dict:
             "ha_token": "",
             "myq_email": "",
             "myq_password": "",
+            "tesla_method": "",
+            "tesla_refresh_token": "",
+            "tesla_fleet_refresh_token": "",
         }
     return dict(row)
 
@@ -400,6 +408,11 @@ _active_meetings: dict[str, dict] = {}
 
 # socket sid → user_id
 _sid_to_user: dict[str, str] = {}
+
+# {user_id: {unofficial_access, unofficial_expiry, fleet_access, fleet_expiry}}
+_tesla_tokens: dict[str, dict] = {}
+# {state_token: {user_id, code_verifier}}
+_tesla_auth_pending: dict[str, dict] = {}
 
 _location_context: dict = {}
 
@@ -752,6 +765,423 @@ async def _myq_set_door(config: dict, device_name: str | None, action: str) -> s
         return f"Could not reach MyQ: {e}"
 
 
+# ─── TESLA ────────────────────────────────────────────────────────────────────
+_TESLA_AUTH_BASE = "https://auth.tesla.com/oauth2/v3"
+_TESLA_OWNER_BASE = "https://owner-api.teslamotors.com"
+_TESLA_FLEET_BASE = "https://fleet-api.prd.na.vn.cloud.tesla.com"
+
+
+def _tesla_configured(config: dict) -> bool:
+    method = config.get("tesla_method", "")
+    if not method:
+        return False
+    if method in ("unofficial", "both") and not config.get("tesla_refresh_token"):
+        return False
+    if method in ("fleet", "both") and not config.get("tesla_fleet_refresh_token"):
+        return False
+    return True
+
+
+async def _tesla_unofficial_access_token(user_id: str, config: dict) -> str:
+    cached = _tesla_tokens.get(user_id, {})
+    expiry = cached.get("unofficial_expiry")
+    if cached.get("unofficial_access") and expiry and expiry > datetime.datetime.utcnow() + datetime.timedelta(minutes=5):
+        return cached["unofficial_access"]
+    async with httpx.AsyncClient(timeout=15) as c:
+        r = await c.post(
+            f"{_TESLA_AUTH_BASE}/token",
+            json={
+                "grant_type": "refresh_token",
+                "client_id": "ownerapi",
+                "refresh_token": config["tesla_refresh_token"],
+                "scope": "openid email offline_access",
+            },
+        )
+        r.raise_for_status()
+        data = r.json()
+    access_token = data["access_token"]
+    new_refresh = data.get("refresh_token")
+    expiry_dt = datetime.datetime.utcnow() + datetime.timedelta(seconds=data.get("expires_in", 28800))
+    _tesla_tokens.setdefault(user_id, {})
+    _tesla_tokens[user_id].update({"unofficial_access": access_token, "unofficial_expiry": expiry_dt})
+    if new_refresh and new_refresh != config.get("tesla_refresh_token"):
+        config["tesla_refresh_token"] = new_refresh
+        async with _pool().acquire() as conn:
+            await conn.execute(
+                "UPDATE user_configs SET tesla_refresh_token = $2 WHERE user_id = $1",
+                user_id, new_refresh,
+            )
+    return access_token
+
+
+async def _tesla_fleet_access_token(user_id: str, config: dict) -> str:
+    cached = _tesla_tokens.get(user_id, {})
+    expiry = cached.get("fleet_expiry")
+    if cached.get("fleet_access") and expiry and expiry > datetime.datetime.utcnow() + datetime.timedelta(minutes=5):
+        return cached["fleet_access"]
+    async with httpx.AsyncClient(timeout=15) as c:
+        r = await c.post(
+            f"{_TESLA_AUTH_BASE}/token",
+            json={
+                "grant_type": "refresh_token",
+                "client_id": TESLA_CLIENT_ID,
+                "client_secret": TESLA_CLIENT_SECRET,
+                "refresh_token": config["tesla_fleet_refresh_token"],
+            },
+        )
+        r.raise_for_status()
+        data = r.json()
+    access_token = data["access_token"]
+    new_refresh = data.get("refresh_token")
+    expiry_dt = datetime.datetime.utcnow() + datetime.timedelta(seconds=data.get("expires_in", 28800))
+    _tesla_tokens.setdefault(user_id, {})
+    _tesla_tokens[user_id].update({"fleet_access": access_token, "fleet_expiry": expiry_dt})
+    if new_refresh and new_refresh != config.get("tesla_fleet_refresh_token"):
+        config["tesla_fleet_refresh_token"] = new_refresh
+        async with _pool().acquire() as conn:
+            await conn.execute(
+                "UPDATE user_configs SET tesla_fleet_refresh_token = $2 WHERE user_id = $1",
+                user_id, new_refresh,
+            )
+    return access_token
+
+
+async def _tesla_unofficial_vehicles(user_id: str, config: dict) -> list:
+    token = await _tesla_unofficial_access_token(user_id, config)
+    async with httpx.AsyncClient(timeout=15) as c:
+        r = await c.get(
+            f"{_TESLA_OWNER_BASE}/api/1/vehicles",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        r.raise_for_status()
+    return r.json().get("response", [])
+
+
+async def _tesla_unofficial_wake(user_id: str, config: dict, vehicle_id: int, token: str) -> bool:
+    for _ in range(10):
+        async with httpx.AsyncClient(timeout=15) as c:
+            r = await c.post(
+                f"{_TESLA_OWNER_BASE}/api/1/vehicles/{vehicle_id}/wake_up",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+        if r.status_code == 200 and r.json().get("response", {}).get("state") == "online":
+            return True
+        await asyncio.sleep(3)
+    return False
+
+
+async def _tesla_unofficial_cmd(user_id: str, config: dict, vehicle_id: int, command: str, data: dict | None = None) -> dict:
+    token = await _tesla_unofficial_access_token(user_id, config)
+    await _tesla_unofficial_wake(user_id, config, vehicle_id, token)
+    async with httpx.AsyncClient(timeout=30) as c:
+        r = await c.post(
+            f"{_TESLA_OWNER_BASE}/api/1/vehicles/{vehicle_id}/command/{command}",
+            headers={"Authorization": f"Bearer {token}"},
+            json=data or {},
+        )
+        r.raise_for_status()
+    return r.json().get("response", {})
+
+
+async def _tesla_fleet_vehicles(user_id: str, config: dict) -> list:
+    token = await _tesla_fleet_access_token(user_id, config)
+    async with httpx.AsyncClient(timeout=15) as c:
+        r = await c.get(
+            f"{_TESLA_FLEET_BASE}/api/1/vehicles",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        r.raise_for_status()
+    return r.json().get("response", [])
+
+
+async def _tesla_fleet_wake(user_id: str, config: dict, vin: str, token: str) -> bool:
+    for _ in range(10):
+        async with httpx.AsyncClient(timeout=15) as c:
+            r = await c.post(
+                f"{_TESLA_FLEET_BASE}/api/1/vehicles/{vin}/wake_up",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+        if r.status_code == 200 and r.json().get("response", {}).get("state") == "online":
+            return True
+        await asyncio.sleep(3)
+    return False
+
+
+async def _tesla_fleet_cmd(user_id: str, config: dict, vin: str, command: str, data: dict | None = None) -> dict:
+    token = await _tesla_fleet_access_token(user_id, config)
+    await _tesla_fleet_wake(user_id, config, vin, token)
+    async with httpx.AsyncClient(timeout=30) as c:
+        r = await c.post(
+            f"{_TESLA_FLEET_BASE}/api/1/vehicles/{vin}/command/{command}",
+            headers={"Authorization": f"Bearer {token}"},
+            json=data or {},
+        )
+        r.raise_for_status()
+    return r.json().get("response", {})
+
+
+async def _tesla_pick_vehicle(user_id: str, config: dict, name_hint: str | None = None) -> tuple:
+    """Returns (method, vehicle_dict). Unofficial is always preferred when available."""
+    method = config.get("tesla_method", "unofficial")
+
+    def _match(vehicles):
+        if name_hint:
+            return next((v for v in vehicles if name_hint.lower() in v.get("display_name", "").lower()), vehicles[0])
+        return vehicles[0]
+
+    if method in ("unofficial", "both"):
+        try:
+            vehicles = await _tesla_unofficial_vehicles(user_id, config)
+            if vehicles:
+                return "unofficial", _match(vehicles)
+        except Exception:
+            if method == "unofficial":
+                raise
+
+    vehicles = await _tesla_fleet_vehicles(user_id, config)
+    if not vehicles:
+        raise ValueError("No Tesla vehicle found in your account.")
+    return "fleet", _match(vehicles)
+
+
+def _c_to_f(c) -> float:
+    return c * 9 / 5 + 32
+
+
+async def _execute_tesla_tool(config: dict, name: str, args: dict, user_id: str = "") -> str:
+    try:
+        name_hint = args.get("vehicle")
+        method, vehicle = await _tesla_pick_vehicle(user_id, config, name_hint)
+        display = vehicle.get("display_name", "Tesla")
+
+        if method == "unofficial":
+            vid = vehicle["id"]
+            token = await _tesla_unofficial_access_token(user_id, config)
+
+            if name == "get_vehicle_status":
+                if vehicle.get("state") != "online":
+                    return f"{display} is {vehicle.get('state', 'asleep')}. Send a command to auto-wake it, or ask me to check again in a moment."
+                async with httpx.AsyncClient(timeout=15) as c:
+                    r = await c.get(
+                        f"{_TESLA_OWNER_BASE}/api/1/vehicles/{vid}/vehicle_data",
+                        headers={"Authorization": f"Bearer {token}"},
+                    )
+                    r.raise_for_status()
+                d = r.json().get("response", {})
+                ch = d.get("charge_state", {})
+                cl = d.get("climate_state", {})
+                vs = d.get("vehicle_state", {})
+                lines = [
+                    f"{display}",
+                    f"Battery: {ch.get('battery_level', '?')}% — {round(ch.get('est_battery_range', 0))} mi est. range",
+                    f"Charge state: {ch.get('charging_state', 'unknown')}",
+                    f"Doors: {'Locked' if vs.get('locked') else 'Unlocked'}",
+                ]
+                if cl.get("inside_temp") is not None:
+                    lines.append(f"Climate: {'On' if cl.get('is_climate_on') else 'Off'} — {_c_to_f(cl['inside_temp']):.0f}°F inside")
+                if cl.get("outside_temp") is not None:
+                    lines.append(f"Outside temp: {_c_to_f(cl['outside_temp']):.0f}°F")
+                if vs.get("odometer"):
+                    lines.append(f"Odometer: {vs['odometer']:,.0f} mi")
+                return "\n".join(lines)
+
+            if name == "set_climate":
+                action = args.get("action", "start")
+                if action == "stop":
+                    resp = await _tesla_unofficial_cmd(user_id, config, vid, "auto_conditioning_stop")
+                else:
+                    resp = await _tesla_unofficial_cmd(user_id, config, vid, "auto_conditioning_start")
+                    temp_f = args.get("temperature_f")
+                    if temp_f is not None:
+                        temp_c = (float(temp_f) - 32) * 5 / 9
+                        await _tesla_unofficial_cmd(user_id, config, vid, "set_temps", {"driver_temp": temp_c, "passenger_temp": temp_c})
+                return f"Climate {'started' if action == 'start' else 'stopped'} on {display}." if resp.get("result") else f"Command failed: {resp.get('reason', 'unknown')}"
+
+            if name == "actuate_trunk":
+                which = args.get("which", "rear")
+                resp = await _tesla_unofficial_cmd(user_id, config, vid, "actuate_trunk", {"which_trunk": which})
+                label = "Rear trunk" if which == "rear" else "Frunk"
+                return f"{label} opened on {display}." if resp.get("result") else f"Command failed: {resp.get('reason', 'unknown')}"
+
+            _CMD = {
+                "lock_vehicle": ("door_lock", "Doors locked"),
+                "unlock_vehicle": ("door_unlock", "Doors unlocked"),
+                "start_charging": ("charge_start", "Charging started"),
+                "stop_charging": ("charge_stop", "Charging stopped"),
+                "honk_horn": ("honk_horn", "Horn honked"),
+                "flash_lights": ("flash_lights", "Lights flashed"),
+            }
+            if name in _CMD:
+                cmd, label = _CMD[name]
+                resp = await _tesla_unofficial_cmd(user_id, config, vid, cmd)
+                return f"{label} on {display}." if resp.get("result") else f"Command failed: {resp.get('reason', 'unknown')}"
+
+        else:  # fleet
+            vin = vehicle.get("vin", "")
+            token = await _tesla_fleet_access_token(user_id, config)
+
+            if name == "get_vehicle_status":
+                if vehicle.get("state") != "online":
+                    return f"{display} is {vehicle.get('state', 'asleep')}. Send a command to auto-wake it."
+                async with httpx.AsyncClient(timeout=15) as c:
+                    r = await c.get(
+                        f"{_TESLA_FLEET_BASE}/api/1/vehicles/{vin}/vehicle_data",
+                        headers={"Authorization": f"Bearer {token}"},
+                    )
+                    r.raise_for_status()
+                d = r.json().get("response", {})
+                ch = d.get("charge_state", {})
+                cl = d.get("climate_state", {})
+                vs = d.get("vehicle_state", {})
+                lines = [
+                    f"{display}",
+                    f"Battery: {ch.get('battery_level', '?')}% — {round(ch.get('est_battery_range', 0))} mi est. range",
+                    f"Charge state: {ch.get('charging_state', 'unknown')}",
+                    f"Doors: {'Locked' if vs.get('locked') else 'Unlocked'}",
+                ]
+                if cl.get("inside_temp") is not None:
+                    lines.append(f"Climate: {'On' if cl.get('is_climate_on') else 'Off'} — {_c_to_f(cl['inside_temp']):.0f}°F inside")
+                return "\n".join(lines)
+
+            if name == "set_climate":
+                action = args.get("action", "start")
+                cmd = "auto_conditioning_start" if action == "start" else "auto_conditioning_stop"
+                await _tesla_fleet_cmd(user_id, config, vin, cmd)
+                temp_f = args.get("temperature_f")
+                if action == "start" and temp_f is not None:
+                    temp_c = (float(temp_f) - 32) * 5 / 9
+                    await _tesla_fleet_cmd(user_id, config, vin, "set_temps", {"driver_temp": temp_c, "passenger_temp": temp_c})
+                return f"Climate {'started' if action == 'start' else 'stopped'} on {display}."
+
+            if name == "actuate_trunk":
+                which = args.get("which", "rear")
+                await _tesla_fleet_cmd(user_id, config, vin, "actuate_trunk", {"which_trunk": which})
+                return f"{'Rear trunk' if which == 'rear' else 'Frunk'} command sent to {display}."
+
+            _CMD_FLEET = {
+                "lock_vehicle": ("door_lock", "Doors locked"),
+                "unlock_vehicle": ("door_unlock", "Doors unlocked"),
+                "start_charging": ("charge_start", "Charging started"),
+                "stop_charging": ("charge_stop", "Charging stopped"),
+                "honk_horn": ("honk_horn", "Horn honked"),
+                "flash_lights": ("flash_lights", "Lights flashed"),
+            }
+            if name in _CMD_FLEET:
+                cmd, label = _CMD_FLEET[name]
+                await _tesla_fleet_cmd(user_id, config, vin, cmd)
+                return f"{label} on {display}."
+
+        return f"Unknown Tesla tool: {name}"
+    except Exception as e:
+        return f"Tesla error: {e}"
+
+
+TESLA_TOOLS_ANTHROPIC = [
+    {
+        "name": "get_vehicle_status",
+        "description": "Get the current status of a Tesla vehicle: battery level, estimated range, charge state, locked/unlocked, climate, and odometer.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "vehicle": {"type": "string", "description": "Vehicle display name. Omit if you only have one Tesla."},
+            },
+        },
+    },
+    {
+        "name": "lock_vehicle",
+        "description": "Lock all doors on the Tesla.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"vehicle": {"type": "string", "description": "Vehicle name. Omit for a single Tesla."}},
+        },
+    },
+    {
+        "name": "unlock_vehicle",
+        "description": "Unlock all doors on the Tesla.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"vehicle": {"type": "string", "description": "Vehicle name. Omit for a single Tesla."}},
+        },
+    },
+    {
+        "name": "set_climate",
+        "description": "Start or stop the Tesla's climate control. Optionally set the temperature.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "action": {"type": "string", "enum": ["start", "stop"], "description": "Start or stop climate."},
+                "temperature_f": {"type": "number", "description": "Target temperature in °F (60–85). Only used when starting."},
+                "vehicle": {"type": "string", "description": "Vehicle name. Omit for a single Tesla."},
+            },
+            "required": ["action"],
+        },
+    },
+    {
+        "name": "start_charging",
+        "description": "Start charging the Tesla. The car must already be plugged in.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"vehicle": {"type": "string", "description": "Vehicle name. Omit for a single Tesla."}},
+        },
+    },
+    {
+        "name": "stop_charging",
+        "description": "Stop charging the Tesla.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"vehicle": {"type": "string", "description": "Vehicle name. Omit for a single Tesla."}},
+        },
+    },
+    {
+        "name": "honk_horn",
+        "description": "Honk the Tesla's horn.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"vehicle": {"type": "string", "description": "Vehicle name. Omit for a single Tesla."}},
+        },
+    },
+    {
+        "name": "flash_lights",
+        "description": "Flash the Tesla's headlights.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"vehicle": {"type": "string", "description": "Vehicle name. Omit for a single Tesla."}},
+        },
+    },
+    {
+        "name": "actuate_trunk",
+        "description": "Open the Tesla's rear trunk or front trunk (frunk).",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "which": {"type": "string", "enum": ["rear", "front"], "description": "'rear' for the main boot, 'front' for the frunk. Default: rear."},
+                "vehicle": {"type": "string", "description": "Vehicle name. Omit for a single Tesla."},
+            },
+        },
+    },
+]
+
+TESLA_TOOLS_OPENAI = [
+    {
+        "type": "function",
+        "function": {
+            "name": t["name"],
+            "description": t["description"],
+            "parameters": t["input_schema"],
+        },
+    }
+    for t in TESLA_TOOLS_ANTHROPIC
+]
+
+_TESLA_TOOL_NAMES = {t["name"] for t in TESLA_TOOLS_ANTHROPIC}
+
+
+def _get_tesla_tools(config: dict, provider: str) -> list:
+    if not _tesla_configured(config):
+        return []
+    return TESLA_TOOLS_ANTHROPIC if provider == "anthropic" else TESLA_TOOLS_OPENAI
+
+
 def _ha_headers(config: dict) -> dict:
     return {
         "Authorization": f"Bearer {config['ha_token']}",
@@ -839,6 +1269,8 @@ async def _execute_ha_tool(config: dict, name, args, user_id: str = ""):
             return await _myq_get_status(config)
         if name == "set_garage_door":
             return await _myq_set_door(config, args.get("device"), args.get("action", "close"))
+        if name in _TESLA_TOOL_NAMES:
+            return await _execute_tesla_tool(config, name, args, user_id)
         return f"Unknown tool: {name}"
     except Exception as e:
         return f"Error: {e}"
@@ -1094,6 +1526,9 @@ async def api_status(request: Request):
         "ha_configured": _ha_configured(config),
         "ha_url": config.get("ha_url", ""),
         "myq_configured": _myq_configured(config),
+        "tesla_configured": _tesla_configured(config),
+        "tesla_method": config.get("tesla_method", ""),
+        "tesla_fleet_enabled": bool(TESLA_CLIENT_ID),
         "role": state.get("role", "user"),
     }
 
@@ -1466,6 +1901,183 @@ async def api_doorbell_events(request: Request):
     ]
 
 
+# ─── TESLA ROUTES ────────────────────────────────────────────────────────────
+@fast_app.get("/api/tesla/status")
+async def api_tesla_status(request: Request):
+    user_id = _get_current_user(request)
+    if not user_id:
+        raise HTTPException(401)
+    state = await _get_user_state(user_id)
+    config = state["config"]
+    return {
+        "tesla_configured": _tesla_configured(config),
+        "tesla_method": config.get("tesla_method", ""),
+        "tesla_fleet_enabled": bool(TESLA_CLIENT_ID),
+    }
+
+
+@fast_app.post("/api/tesla/save_unofficial")
+async def api_tesla_save_unofficial(request: Request):
+    user_id = _get_current_user(request)
+    if not user_id:
+        raise HTTPException(401)
+
+    data = await request.json()
+    refresh_token = (data.get("refresh_token") or "").strip()
+    if not refresh_token:
+        return {"ok": False, "error": "No refresh token provided."}
+
+    _tesla_tokens.pop(user_id, None)
+    try:
+        test_config = {"tesla_refresh_token": refresh_token}
+        token = await _tesla_unofficial_access_token(user_id, test_config)
+        async with httpx.AsyncClient(timeout=10) as c:
+            r = await c.get(
+                f"{_TESLA_OWNER_BASE}/api/1/vehicles",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+            r.raise_for_status()
+    except Exception as e:
+        _tesla_tokens.pop(user_id, None)
+        return {"ok": False, "error": f"Could not connect to Tesla: {e}"}
+
+    state = await _get_user_state(user_id)
+    config = state["config"]
+    current_method = config.get("tesla_method", "")
+    new_method = "both" if current_method in ("fleet",) and config.get("tesla_fleet_refresh_token") else "unofficial"
+
+    async with _get_user_lock(user_id):
+        config["tesla_refresh_token"] = refresh_token
+        config["tesla_method"] = new_method
+        async with _pool().acquire() as conn:
+            await conn.execute(
+                "UPDATE user_configs SET tesla_refresh_token = $2, tesla_method = $3 WHERE user_id = $1",
+                user_id, refresh_token, new_method,
+            )
+
+    return {"ok": True, "tesla_configured": True, "tesla_method": new_method}
+
+
+@fast_app.get("/api/tesla/fleet/auth")
+async def api_tesla_fleet_auth(request: Request):
+    user_id = _get_current_user(request)
+    if not user_id:
+        raise HTTPException(401)
+    if not TESLA_CLIENT_ID:
+        raise HTTPException(503, "Tesla Fleet API not configured — set TESLA_CLIENT_ID and TESLA_CLIENT_SECRET in .env")
+
+    state_token = secrets.token_urlsafe(32)
+    code_verifier = secrets.token_urlsafe(64)
+    digest = hashlib.sha256(code_verifier.encode()).digest()
+    code_challenge = base64.urlsafe_b64encode(digest).rstrip(b"=").decode()
+
+    _tesla_auth_pending[state_token] = {"user_id": user_id, "code_verifier": code_verifier}
+    if len(_tesla_auth_pending) > 200:
+        for k in list(_tesla_auth_pending.keys())[:100]:
+            _tesla_auth_pending.pop(k, None)
+
+    params = urllib.parse.urlencode({
+        "client_id": TESLA_CLIENT_ID,
+        "redirect_uri": f"{APP_URL}/auth/tesla/callback",
+        "response_type": "code",
+        "scope": "openid offline_access vehicle_device_data vehicle_cmds vehicle_charging_cmds",
+        "state": state_token,
+        "code_challenge": code_challenge,
+        "code_challenge_method": "S256",
+    })
+    return RedirectResponse(f"{_TESLA_AUTH_BASE}/authorize?{params}")
+
+
+@fast_app.get("/auth/tesla/callback")
+async def auth_tesla_callback(request: Request):
+    code = request.query_params.get("code")
+    state_token = request.query_params.get("state")
+    pending = _tesla_auth_pending.pop(state_token, None) if state_token else None
+    if not pending or not code:
+        raise HTTPException(400, "Invalid Tesla OAuth callback — state mismatch or missing code")
+
+    user_id = pending["user_id"]
+    code_verifier = pending["code_verifier"]
+
+    try:
+        async with httpx.AsyncClient(timeout=15) as c:
+            r = await c.post(
+                f"{_TESLA_AUTH_BASE}/token",
+                json={
+                    "grant_type": "authorization_code",
+                    "client_id": TESLA_CLIENT_ID,
+                    "client_secret": TESLA_CLIENT_SECRET,
+                    "code": code,
+                    "redirect_uri": f"{APP_URL}/auth/tesla/callback",
+                    "code_verifier": code_verifier,
+                },
+            )
+            r.raise_for_status()
+            tokens = r.json()
+    except Exception as e:
+        raise HTTPException(502, f"Tesla token exchange failed: {e}") from e
+
+    fleet_refresh = tokens.get("refresh_token", "")
+    state = await _get_user_state(user_id)
+    config = state["config"]
+    current_method = config.get("tesla_method", "")
+    new_method = "both" if current_method == "unofficial" and config.get("tesla_refresh_token") else "fleet"
+
+    async with _get_user_lock(user_id):
+        config["tesla_fleet_refresh_token"] = fleet_refresh
+        config["tesla_method"] = new_method
+        async with _pool().acquire() as conn:
+            await conn.execute(
+                "UPDATE user_configs SET tesla_fleet_refresh_token = $2, tesla_method = $3 WHERE user_id = $1",
+                user_id, fleet_refresh, new_method,
+            )
+    _tesla_tokens.pop(user_id, None)
+
+    return RedirectResponse("/?tesla_connected=1", status_code=303)
+
+
+@fast_app.post("/api/tesla/disconnect")
+async def api_tesla_disconnect(request: Request):
+    user_id = _get_current_user(request)
+    if not user_id:
+        raise HTTPException(401)
+
+    data = await request.json()
+    which = data.get("which", "all")
+
+    state = await _get_user_state(user_id)
+    config = state["config"]
+
+    async with _get_user_lock(user_id):
+        if which in ("unofficial", "all"):
+            config["tesla_refresh_token"] = ""
+        if which in ("fleet", "all"):
+            config["tesla_fleet_refresh_token"] = ""
+
+        has_unofficial = bool(config.get("tesla_refresh_token"))
+        has_fleet = bool(config.get("tesla_fleet_refresh_token"))
+        if has_unofficial and has_fleet:
+            config["tesla_method"] = "both"
+        elif has_unofficial:
+            config["tesla_method"] = "unofficial"
+        elif has_fleet:
+            config["tesla_method"] = "fleet"
+        else:
+            config["tesla_method"] = ""
+
+        async with _pool().acquire() as conn:
+            await conn.execute(
+                "UPDATE user_configs SET tesla_refresh_token = $2, tesla_fleet_refresh_token = $3, tesla_method = $4 WHERE user_id = $1",
+                user_id,
+                config["tesla_refresh_token"],
+                config["tesla_fleet_refresh_token"],
+                config["tesla_method"],
+            )
+    _tesla_tokens.pop(user_id, None)
+
+    return {"ok": True, "tesla_configured": _tesla_configured(config), "tesla_method": config.get("tesla_method", "")}
+
+
 @fast_app.get("/api/messages")
 async def api_messages(request: Request):
     user_id = _get_current_user(request)
@@ -1521,6 +2133,14 @@ def _build_system_prompt(config: dict) -> str:
             "Use get_garage_status to check whether the door is open or closed, "
             "and set_garage_door to open or close it on command."
         )
+    if _tesla_configured(config):
+        system += (
+            "\n\nTESLA — you are connected to the user's Tesla vehicle via tools. "
+            "Use get_vehicle_status to check battery, range, lock state, and climate. "
+            "Use lock_vehicle, unlock_vehicle, set_climate, start_charging, stop_charging, "
+            "honk_horn, flash_lights, and actuate_trunk to control the vehicle. "
+            "Commands auto-wake the car, which may take up to 30 seconds — mention this if relevant."
+        )
     return system
 
 
@@ -1566,7 +2186,7 @@ async def _stream_reply(state: dict, on_text):
     client = state["client"]
     model = config.get("model") or DEFAULT_MODELS.get(provider, "")
     system = _build_system_prompt(config)
-    ha_tools = _get_ha_tools(config, provider) + _get_myq_tools(config, provider)
+    ha_tools = _get_ha_tools(config, provider) + _get_myq_tools(config, provider) + _get_tesla_tools(config, provider)
     local_msgs = list(state["conversation"])
 
     for _ in range(4):

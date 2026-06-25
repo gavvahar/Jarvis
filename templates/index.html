@@ -352,6 +352,21 @@
           </svg>
           GARAGE
         </button>
+        <button id="tesla-btn" title="Tesla Vehicle Control">
+          <svg
+            viewBox="0 0 20 20"
+            width="13"
+            height="13"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.5"
+          >
+            <path d="M3 5c2.3 1.2 4.5 1.8 7 1.8s4.7-.6 7-1.8" />
+            <path d="M10 6.8V17" />
+            <path d="M6 5.5L10 17l4-11.5" />
+          </svg>
+          TESLA
+        </button>
       </div>
 
       <!-- ============ MESSAGES SETTINGS PANEL ============ -->
@@ -551,6 +566,91 @@
             </div>
           </form>
           <div id="garage-msg"></div>
+        </div>
+      </div>
+
+      <!-- ============ TESLA SETTINGS MODAL ============ -->
+      <div id="tesla-settings" class="setup-hidden">
+        <div id="tesla-settings-card" class="setup-card-inner">
+          <div class="setup-ring"></div>
+          <div class="setup-word">SETTINGS</div>
+          <div class="setup-sub">TESLA VEHICLE</div>
+
+          <div class="tesla-tab-bar">
+            <button class="tesla-tab tesla-tab-active" data-ttab="unofficial">
+              UNOFFICIAL API
+            </button>
+            <button class="tesla-tab" data-ttab="fleet">FLEET API</button>
+          </div>
+
+          <!-- Unofficial tab -->
+          <div class="tesla-tab-content" id="tesla-tab-unofficial">
+            <p class="tesla-note">
+              Get a Tesla refresh token from
+              <strong>Auth App for Tesla</strong> (iOS / Android) or the
+              <code>tesla-auth</code> CLI, then paste it below. The token
+              never leaves your server.
+            </p>
+            <form id="tesla-unofficial-form" autocomplete="off">
+              <label class="setup-label" for="tesla-refresh-token"
+                >REFRESH TOKEN</label
+              >
+              <input
+                id="tesla-refresh-token"
+                type="password"
+                placeholder="ey…"
+                autocomplete="off"
+                spellcheck="false"
+              />
+              <div id="tesla-unofficial-status-row" style="margin-top: 10px">
+                <span id="tesla-unofficial-dot" class="disconnected"></span>
+                <span id="tesla-unofficial-text">NOT CONNECTED</span>
+              </div>
+              <div style="display: flex; gap: 8px; margin-top: 14px">
+                <button type="submit" id="tesla-unofficial-save">
+                  CONNECT
+                </button>
+                <button type="button" id="tesla-unofficial-disconnect">
+                  DISCONNECT
+                </button>
+              </div>
+            </form>
+            <div id="tesla-unofficial-msg"></div>
+          </div>
+
+          <!-- Fleet tab -->
+          <div
+            class="tesla-tab-content tesla-tab-hidden"
+            id="tesla-tab-fleet"
+          >
+            <p class="tesla-note" id="tesla-fleet-note">
+              Connect via Tesla's official Fleet API. Requires
+              <code>TESLA_CLIENT_ID</code> and
+              <code>TESLA_CLIENT_SECRET</code> set in your server's
+              <code>.env</code> by the admin. Vehicle commands also require
+              a virtual key paired via the Tesla app.
+            </p>
+            <div id="tesla-fleet-status-row" style="margin-top: 10px">
+              <span id="tesla-fleet-dot" class="disconnected"></span>
+              <span id="tesla-fleet-text">NOT CONNECTED</span>
+            </div>
+            <div style="display: flex; gap: 8px; margin-top: 14px">
+              <a
+                id="tesla-fleet-auth-btn"
+                class="setup-link-btn"
+                href="/api/tesla/fleet/auth"
+                >CONNECT WITH TESLA</a
+              >
+              <button type="button" id="tesla-fleet-disconnect">
+                DISCONNECT
+              </button>
+            </div>
+            <div id="tesla-fleet-msg"></div>
+          </div>
+
+          <div style="margin-top: 20px">
+            <button type="button" id="tesla-settings-close">CLOSE</button>
+          </div>
         </div>
       </div>
 
