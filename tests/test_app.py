@@ -7,7 +7,6 @@ stubs out the database so no running PostgreSQL is required.
 """
 
 from unittest.mock import AsyncMock, patch
-
 import app as jarvis
 from app import (
     _build_client,
