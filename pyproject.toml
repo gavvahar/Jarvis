@@ -1,3 +1,7 @@
+# =============================================================================
+# RUFF — Python linter & formatter
+# =============================================================================
+
 [tool.ruff]
 line-length = 180
 exclude = ["__pycache__", "venv", ".tox", ".venv", "tests.py", "env"]
@@ -6,28 +10,47 @@ exclude = ["__pycache__", "venv", ".tox", ".venv", "tests.py", "env"]
 select = ["E", "F", "B"]
 ignore = ["E203", "E501", "E701", "E401", "B008"]
 
+# =============================================================================
+# TY — Static type checker
+# =============================================================================
+
 [tool.ty.rules]
 # Third-party packages live in Docker/conda, not the tox lint venv
 unresolved-import = "ignore"
 # **kwargs spreading into OpenAI/starlette constructors produces false positives
 invalid-argument-type = "ignore"
 
+# =============================================================================
+# PYTEST
+# =============================================================================
+
 [tool.pytest.ini_options]
 pythonpath = ["."]
 testpaths = ["tests"]
 
+# =============================================================================
+# TOX — Test & task runner
+# =============================================================================
+
+# Default envs run when you type `tox` with no arguments
 [tool.tox]
 env_list = ["lint", "txt-lint", "format", "prettier"]
 work_dir = "/tmp/.tox"
 
+# Shared base config inherited by all envs
 [tool.tox.env_run_base]
 pass_env = ["PATH"]
 set_env = { VIRTUALENV_OVERRIDE_APP_DATA = "{work_dir}/.virtualenv" }
 
+# --- Linting ----------------------------------------------------------------
+
 [tool.tox.env.lint]
 base_python = "python3"
 deps = ["ruff", "ty"]
-commands = [["ruff", "check", "--no-cache", "."], ["ty", "check", "app.py"]]
+commands = [
+    ["ruff", "check", "--no-cache", "."],
+    ["ty", "check", "app.py"],
+]
 
 [tool.tox.env."txt-lint"]
 skip_install = true
@@ -37,6 +60,13 @@ commands = [
     ["npx", "textlint", "--rule", "common-misspellings", "--rule", "write-good", "**/*.txt"],
 ]
 
+[tool.tox.env."no-classes-check"]
+skip_install = true
+deps = []
+commands = [["python3", "scripts/no_classes_check.py"]]
+
+# --- Formatting -------------------------------------------------------------
+
 [tool.tox.env.format]
 deps = ["ruff", "ty"]
 allowlist_externals = ["npx"]
@@ -45,26 +75,20 @@ commands = [
     ["npx", "prettier", "--write", "**/*.{css,js,html,json,yml,yaml,md}"],
 ]
 
-[tool.tox.env."no-classes-check"]
-skip_install = true
-deps = []
-commands = [["python3", "scripts/no_classes_check.py"]]
-
 [tool.tox.env.prettier]
 skip_install = true
 allowlist_externals = ["npx"]
 commands = [["npx", "prettier", "--check", "**/*.{css,js,html,json,yml,yaml,md}"]]
 
-[tool.tox.env.all]
-skip_install = true
-deps = []
-allowlist_externals = ["tox"]
-commands = [["tox", "-e", "format"], ["tox", "-e", "github"]]
+# --- Testing ----------------------------------------------------------------
 
 [tool.tox.env.tests]
 deps = ["-r requirements.txt", "pytest", "pytest-cov", "httpx"]
 commands = [["pytest", "tests/", "-v", "--cov=app", "--cov-report=term-missing", "--cov-fail-under=25"]]
 
+# --- Aggregate (CI) ---------------------------------------------------------
+
+# Runs the full CI chain: no-classes-check → lint → txt-lint → prettier → tests
 [tool.tox.env.github]
 skip_install = true
 deps = []
@@ -76,3 +100,10 @@ commands = [
     ["tox", "-e", "prettier"],
     ["tox", "-e", "tests"],
 ]
+
+# Runs format then the full github chain
+[tool.tox.env.all]
+skip_install = true
+deps = []
+allowlist_externals = ["tox"]
+commands = [["tox", "-e", "format"], ["tox", "-e", "github"]]
