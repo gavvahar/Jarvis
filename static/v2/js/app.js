@@ -1257,7 +1257,8 @@
   }
 
   if (garageBtn) garageBtn.addEventListener("click", showGarageSettings);
-  if (garageCancelBtn) garageCancelBtn.addEventListener("click", hideGarageSettings);
+  if (garageCancelBtn)
+    garageCancelBtn.addEventListener("click", hideGarageSettings);
   garageSettingsEl &&
     garageSettingsEl.addEventListener("click", (e) => {
       if (e.target === garageSettingsEl) hideGarageSettings();
