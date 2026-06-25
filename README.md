@@ -50,16 +50,16 @@ The variables you must set:
 | `POSTGRES_PASSWORD`  | Password for the Postgres database                                   |
 | `DATABASE_URL`       | Full Postgres connection string (default matches compose.yml)        |
 | `AUTHENTIK_URL`      | Base URL of your Authentik instance, e.g. `https://auth.example.com` |
-| `OIDC_APP_SLUG`      | The slug of your Authentik application, e.g. `jarvis`               |
+| `OIDC_APP_SLUG`      | The slug of your Authentik application, e.g. `jarvis`                |
 | `OIDC_CLIENT_ID`     | Client ID from your Authentik OAuth2 provider                        |
 | `OIDC_CLIENT_SECRET` | Client secret from your Authentik OAuth2 provider                    |
 | `APP_URL`            | Public URL of this app, e.g. `https://jarvis.example.com`            |
 
 Optional:
 
-| Variable             | What it is                                                                 |
-| -------------------- | -------------------------------------------------------------------------- |
-| `OIDC_DISCOVERY_URL` | Override the OIDC discovery URL if it doesn't follow the Authentik pattern |
+| Variable             | What it is                                                                  |
+| -------------------- | --------------------------------------------------------------------------- |
+| `OIDC_DISCOVERY_URL` | Override the OIDC discovery URL if it doesn't follow the Authentik pattern  |
 | `OIDC_ADMIN_GROUP`   | Authentik group whose members get the admin role (default: `jarvis-admins`) |
 
 **Step 2 — Set up Authentik.** In your Authentik admin panel:
