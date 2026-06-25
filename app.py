@@ -10,7 +10,7 @@ Three providers:
   • openai_compatible — any OpenAI-compatible endpoint (Ollama, OpenRouter, …)
 """
 
-import json, os, re, asyncio, secrets, tempfile, urllib.parse, asyncpg, httpx
+import json, os, re, asyncio, secrets, tempfile, urllib.parse, asyncpg, httpx, datetime
 
 
 from contextlib import asynccontextmanager
@@ -37,15 +37,11 @@ DEFAULT_MODELS = {
 VALID_PROVIDERS = set(DEFAULT_MODELS.keys())
 
 # ─── ENV ──────────────────────────────────────────────────────────────────────
-DATABASE_URL = os.environ.get(
-    "DATABASE_URL", "postgresql://jarvis:jarvis@postgres/jarvis"
-)
+DATABASE_URL = os.environ.get("DATABASE_URL", "postgresql://jarvis:jarvis@postgres/jarvis")
 AUTHENTIK_URL = os.environ.get("AUTHENTIK_URL", "").rstrip("/")
 _OIDC_APP_SLUG = os.environ.get("OIDC_APP_SLUG", "").strip()
 OIDC_DISCOVERY_URL = os.environ.get("OIDC_DISCOVERY_URL", "") or (
-    f"{AUTHENTIK_URL}/application/o/{_OIDC_APP_SLUG}/.well-known/openid-configuration"
-    if AUTHENTIK_URL and _OIDC_APP_SLUG
-    else ""
+    f"{AUTHENTIK_URL}/application/o/{_OIDC_APP_SLUG}/.well-known/openid-configuration" if AUTHENTIK_URL and _OIDC_APP_SLUG else ""
 )
 OIDC_CLIENT_ID = os.environ.get("OIDC_CLIENT_ID", "")
 OIDC_CLIENT_SECRET = os.environ.get("OIDC_CLIENT_SECRET", "")
@@ -78,6 +74,8 @@ CREATE TABLE IF NOT EXISTS user_configs (
 
 ALTER TABLE user_configs ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'user';
 ALTER TABLE user_configs ADD COLUMN IF NOT EXISTS webhook_token TEXT NOT NULL DEFAULT '';
+ALTER TABLE user_configs ADD COLUMN IF NOT EXISTS myq_email TEXT NOT NULL DEFAULT '';
+ALTER TABLE user_configs ADD COLUMN IF NOT EXISTS myq_password TEXT NOT NULL DEFAULT '';
 
 CREATE TABLE IF NOT EXISTS phone_messages (
     id          BIGSERIAL PRIMARY KEY,
@@ -112,6 +110,16 @@ CREATE TABLE IF NOT EXISTS meetings (
 );
 
 CREATE INDEX IF NOT EXISTS idx_meetings_user ON meetings (user_id, started_at DESC);
+
+CREATE TABLE IF NOT EXISTS doorbell_events (
+    id          BIGSERIAL PRIMARY KEY,
+    user_id     TEXT NOT NULL REFERENCES user_configs(user_id) ON DELETE CASCADE,
+    event_type  TEXT NOT NULL,
+    source      TEXT NOT NULL DEFAULT '',
+    received_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_doorbell_events_user ON doorbell_events (user_id, received_at DESC);
 """
 
 
@@ -139,8 +147,7 @@ async def _db_ensure_user(user_id: str, email: str, role: str):
 async def _db_load_config(user_id: str) -> dict:
     async with _pool().acquire() as conn:
         row = await conn.fetchrow(
-            "SELECT role, provider, api_key, model, base_url, ha_url, ha_token "
-            "FROM user_configs WHERE user_id = $1",
+            "SELECT role, provider, api_key, model, base_url, ha_url, ha_token, myq_email, myq_password FROM user_configs WHERE user_id = $1",
             user_id,
         )
     if row is None:
@@ -152,6 +159,8 @@ async def _db_load_config(user_id: str) -> dict:
             "base_url": "",
             "ha_url": "",
             "ha_token": "",
+            "myq_email": "",
+            "myq_password": "",
         }
     return dict(row)
 
@@ -162,7 +171,8 @@ async def _db_save_config(user_id: str, config: dict):
             """
             UPDATE user_configs
             SET provider=$2, api_key=$3, model=$4, base_url=$5,
-                ha_url=$6, ha_token=$7, updated_at=NOW()
+                ha_url=$6, ha_token=$7, myq_email=$8, myq_password=$9,
+                updated_at=NOW()
             WHERE user_id=$1
             """,
             user_id,
@@ -172,6 +182,8 @@ async def _db_save_config(user_id: str, config: dict):
             config["base_url"],
             config["ha_url"],
             config["ha_token"],
+            config.get("myq_email", ""),
+            config.get("myq_password", ""),
         )
 
 
@@ -223,9 +235,7 @@ async def _db_clear_conversation(user_id: str):
 
 async def _db_get_or_create_webhook_token(user_id: str) -> str:
     async with _pool().acquire() as conn:
-        row = await conn.fetchrow(
-            "SELECT webhook_token FROM user_configs WHERE user_id = $1", user_id
-        )
+        row = await conn.fetchrow("SELECT webhook_token FROM user_configs WHERE user_id = $1", user_id)
     if row and row["webhook_token"]:
         return row["webhook_token"]
     token = secrets.token_hex(32)
@@ -258,13 +268,10 @@ async def _db_find_user_by_token(token: str) -> str | None:
     return row["user_id"] if row else None
 
 
-async def _db_store_phone_message(
-    user_id: str, sender: str, body: str, important: bool, reason: str
-):
+async def _db_store_phone_message(user_id: str, sender: str, body: str, important: bool, reason: str):
     async with _pool().acquire() as conn:
         await conn.execute(
-            "INSERT INTO phone_messages (user_id, sender, body, important, reason) "
-            "VALUES ($1, $2, $3, $4, $5)",
+            "INSERT INTO phone_messages (user_id, sender, body, important, reason) VALUES ($1, $2, $3, $4, $5)",
             user_id,
             sender,
             body,
@@ -275,9 +282,7 @@ async def _db_store_phone_message(
 
 async def _db_create_meeting(user_id: str) -> int:
     async with _pool().acquire() as conn:
-        row = await conn.fetchrow(
-            "INSERT INTO meetings (user_id) VALUES ($1) RETURNING id", user_id
-        )
+        row = await conn.fetchrow("INSERT INTO meetings (user_id) VALUES ($1) RETURNING id", user_id)
     return row["id"]
 
 
@@ -299,6 +304,33 @@ async def _db_finalize_meeting(meeting_id: int, notes: str):
         )
 
 
+async def _db_store_doorbell_event(user_id: str, event_type: str, source: str):
+    async with _pool().acquire() as conn:
+        await conn.execute(
+            "INSERT INTO doorbell_events (user_id, event_type, source) VALUES ($1, $2, $3)",
+            user_id,
+            event_type,
+            source,
+        )
+
+
+async def _db_get_recent_doorbell_events(user_id: str, hours: float = 24) -> list:
+    async with _pool().acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT event_type, source, received_at FROM doorbell_events WHERE user_id = $1 AND received_at > NOW() - $2 ORDER BY received_at DESC LIMIT 50",
+            user_id,
+            datetime.timedelta(hours=hours),
+        )
+    return [
+        {
+            "event_type": r["event_type"],
+            "source": r["source"],
+            "received_at": r["received_at"].isoformat(),
+        }
+        for r in rows
+    ]
+
+
 # ─── AUTH ─────────────────────────────────────────────────────────────────────
 _signer: URLSafeTimedSerializer | None = None
 _oidc_config: dict | None = None
@@ -317,9 +349,7 @@ def _get_oidc_config() -> dict:
 async def _fetch_oidc_config():
     global _oidc_config
     if not OIDC_DISCOVERY_URL:
-        print(
-            "[AUTH] OIDC_DISCOVERY_URL not set — authentication disabled.", flush=True
-        )
+        print("[AUTH] OIDC_DISCOVERY_URL not set — authentication disabled.", flush=True)
         return
     try:
         async with httpx.AsyncClient(timeout=10) as c:
@@ -401,15 +431,14 @@ async def _get_user_state(user_id: str) -> dict:
             provider = "anthropic"
         if not config.get("model"):
             config["model"] = DEFAULT_MODELS.get(provider, "")
-        client = _build_client(
-            provider, config.get("api_key", ""), config.get("base_url", "")
-        )
+        client = _build_client(provider, config.get("api_key", ""), config.get("base_url", ""))
         _user_states[user_id] = {
             "config": config,
             "client": client,
             "provider": provider,
             "conversation": conversation,
             "role": config.get("role", "user"),
+            "user_id": user_id,
         }
     return _user_states[user_id]
 
@@ -488,10 +517,7 @@ HA_TOOLS_ANTHROPIC = [
     },
     {
         "name": "call_ha_service",
-        "description": (
-            "Call a Home Assistant service to control a device, run a script, "
-            "or trigger an automation."
-        ),
+        "description": ("Call a Home Assistant service to control a device, run a script, or trigger an automation."),
         "input_schema": {
             "type": "object",
             "properties": {
@@ -513,6 +539,23 @@ HA_TOOLS_ANTHROPIC = [
                 },
             },
             "required": ["domain", "service"],
+        },
+    },
+    {
+        "name": "get_doorbell_events",
+        "description": (
+            "Get recent doorbell and motion events from the front door. "
+            "Use this to answer questions about who came to the door, recent motion, "
+            "deliveries, or 'any activity while I was out?'"
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "hours": {
+                    "type": "number",
+                    "description": "How many hours back to look (default 24).",
+                }
+            },
         },
     },
 ]
@@ -542,10 +585,7 @@ HA_TOOLS_OPENAI = [
         "type": "function",
         "function": {
             "name": "call_ha_service",
-            "description": (
-                "Call a Home Assistant service to control a device, run a script, "
-                "or trigger an automation."
-            ),
+            "description": ("Call a Home Assistant service to control a device, run a script, or trigger an automation."),
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -570,11 +610,146 @@ HA_TOOLS_OPENAI = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_doorbell_events",
+            "description": (
+                "Get recent doorbell and motion events from the front door. "
+                "Use this to answer questions about who came to the door, recent motion, "
+                "deliveries, or 'any activity while I was out?'"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "hours": {
+                        "type": "number",
+                        "description": "How many hours back to look (default 24).",
+                    }
+                },
+            },
+        },
+    },
 ]
+
+
+MYQ_TOOLS_ANTHROPIC = [
+    {
+        "name": "get_garage_status",
+        "description": "Get the current open/closed state of your MyQ Chamberlain smart garage door(s).",
+        "input_schema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "set_garage_door",
+        "description": "Open or close a MyQ Chamberlain smart garage door.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "enum": ["open", "close"],
+                    "description": "Whether to open or close the door.",
+                },
+                "device": {
+                    "type": "string",
+                    "description": "Garage door name. Omit if you only have one.",
+                },
+            },
+            "required": ["action"],
+        },
+    },
+]
+
+MYQ_TOOLS_OPENAI = [
+    {
+        "type": "function",
+        "function": {
+            "name": "get_garage_status",
+            "description": "Get the current open/closed state of your MyQ Chamberlain smart garage door(s).",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "set_garage_door",
+            "description": "Open or close a MyQ Chamberlain smart garage door.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "enum": ["open", "close"],
+                        "description": "Whether to open or close the door.",
+                    },
+                    "device": {
+                        "type": "string",
+                        "description": "Garage door name. Omit if you only have one.",
+                    },
+                },
+                "required": ["action"],
+            },
+        },
+    },
+]
+
+
+def _get_myq_tools(config: dict, provider: str) -> list:
+    if not _myq_configured(config):
+        return []
+    return MYQ_TOOLS_ANTHROPIC if provider == "anthropic" else MYQ_TOOLS_OPENAI
 
 
 def _ha_configured(config: dict) -> bool:
     return bool(config.get("ha_url") and config.get("ha_token"))
+
+
+# ─── MYQ / CHAMBERLAIN GARAGE ─────────────────────────────────────────────────
+def _myq_configured(config: dict) -> bool:
+    return bool(config.get("myq_email") and config.get("myq_password"))
+
+
+async def _myq_get_status(config: dict) -> str:
+    try:
+        import aiohttp
+        import pymyq
+
+        async with aiohttp.ClientSession() as session:
+            myq = await pymyq.login(config["myq_email"], config["myq_password"], session)
+            if not myq.covers:
+                return "No garage doors found in your MyQ account."
+            lines = [f"{d.name}: {d.state}" for d in myq.covers.values()]
+            return "\n".join(lines)
+    except Exception as e:
+        return f"Could not reach MyQ: {e}"
+
+
+async def _myq_set_door(config: dict, device_name: str | None, action: str) -> str:
+    try:
+        import aiohttp
+        import pymyq
+
+        async with aiohttp.ClientSession() as session:
+            myq = await pymyq.login(config["myq_email"], config["myq_password"], session)
+            if not myq.covers:
+                return "No garage doors found in your MyQ account."
+            if device_name:
+                device = next(
+                    (d for d in myq.covers.values() if device_name.lower() in d.name.lower()),
+                    None,
+                )
+                if device is None:
+                    names = ", ".join(d.name for d in myq.covers.values())
+                    return f"No garage door matching '{device_name}'. Available: {names}."
+            else:
+                device = next(iter(myq.covers.values()))
+            if action == "open":
+                await device.open(wait_for_state=None)
+            else:
+                await device.close(wait_for_state=None)
+            return f"{device.name}: {action} command sent."
+    except Exception as e:
+        return f"Could not reach MyQ: {e}"
 
 
 def _ha_headers(config: dict) -> dict:
@@ -624,23 +799,17 @@ async def _ha_get_states(config: dict, domain=None):
     return "\n".join(lines) if lines else "No entities found."
 
 
-async def _ha_call_service(
-    config: dict, domain, service, entity_id=None, service_data=None
-):
+async def _ha_call_service(config: dict, domain, service, entity_id=None, service_data=None):
     url = config["ha_url"].rstrip("/") + f"/api/services/{domain}/{service}"
     payload = dict(service_data or {})
     if entity_id:
         payload["entity_id"] = entity_id
     async with httpx.AsyncClient(timeout=8) as c:
         r = await c.post(url, headers=_ha_headers(config), json=payload)
-    return (
-        "Done."
-        if r.status_code in (200, 201)
-        else f"HA returned {r.status_code}: {r.text[:120]}"
-    )
+    return "Done." if r.status_code in (200, 201) else f"HA returned {r.status_code}: {r.text[:120]}"
 
 
-async def _execute_ha_tool(config: dict, name, args):
+async def _execute_ha_tool(config: dict, name, args, user_id: str = ""):
     try:
         if name == "get_ha_states":
             return await _ha_get_states(config, args.get("domain"))
@@ -652,6 +821,24 @@ async def _execute_ha_tool(config: dict, name, args):
                 args.get("entity_id"),
                 args.get("service_data"),
             )
+        if name == "get_doorbell_events":
+            if not user_id:
+                return "No user context available."
+            hours = float(args.get("hours", 24))
+            events = await _db_get_recent_doorbell_events(user_id, hours)
+            if not events:
+                return f"No doorbell events in the past {hours:.0f} hours."
+            lines = []
+            for e in events:
+                line = f"{e['received_at']}: {e['event_type']}"
+                if e["source"]:
+                    line += f" ({e['source']})"
+                lines.append(line)
+            return "\n".join(lines)
+        if name == "get_garage_status":
+            return await _myq_get_status(config)
+        if name == "set_garage_door":
+            return await _myq_set_door(config, args.get("device"), args.get("action", "close"))
         return f"Unknown tool: {name}"
     except Exception as e:
         return f"Error: {e}"
@@ -662,9 +849,7 @@ def _openai_create_sync(client, model, messages, stream, max_out=500):
     last = None
     for extra in ({"max_tokens": max_out}, {"max_completion_tokens": max_out}, {}):
         try:
-            return client.chat.completions.create(
-                model=model, messages=messages, stream=stream, **extra
-            )
+            return client.chat.completions.create(model=model, messages=messages, stream=stream, **extra)
         except Exception as e:
             last = e
             if any(
@@ -712,20 +897,11 @@ def _validate(provider, api_key, model, base_url=""):
     except Exception as e:
         msg = str(e)
         low = msg.lower()
-        if (
-            "authentication" in low
-            or "401" in low
-            or ("invalid" in low and "key" in low)
-        ):
+        if "authentication" in low or "401" in low or ("invalid" in low and "key" in low):
             return False, "That key was rejected. Check it and try again."
         if "404" in low or "not_found" in low or ("model" in low and "exist" in low):
             return False, f"The model '{model}' wasn't found for this key/provider."
-        if (
-            "credit" in low
-            or "billing" in low
-            or "quota" in low
-            or "insufficient" in low
-        ):
+        if "credit" in low or "billing" in low or "quota" in low or "insufficient" in low:
             return False, "The key is valid but the account has no available credit."
         if "connection" in low or "could not" in low or "getaddrinfo" in low:
             return (
@@ -768,10 +944,7 @@ async def _generate_meeting_notes(state: dict, transcript: str) -> str:
             return resp.choices[0].message.content
         except Exception as e:
             last = e
-            if any(
-                x in str(e).lower()
-                for x in ("max_tokens", "max_completion_tokens", "unsupported")
-            ):
+            if any(x in str(e).lower() for x in ("max_tokens", "max_completion_tokens", "unsupported")):
                 continue
             raise
     assert last is not None
@@ -823,9 +996,7 @@ async def _refresh_session(request: Request, call_next):
     if request.url.path not in _NO_REFRESH_PATHS and _signer:
         user_id = _get_current_user(request)
         if user_id:
-            response.set_cookie(
-                "jarvis_session", _sign_session(user_id), **_SESSION_COOKIE_OPTS
-            )
+            response.set_cookie("jarvis_session", _sign_session(user_id), **_SESSION_COOKIE_OPTS)
     return response
 
 
@@ -854,9 +1025,7 @@ async def auth_callback(request: Request):
     state = request.query_params.get("state")
     stored_state = request.cookies.get("oidc_state")
     if not code or not state or state != stored_state:
-        raise HTTPException(
-            400, "Invalid OAuth2 callback — state mismatch or missing code"
-        )
+        raise HTTPException(400, "Invalid OAuth2 callback — state mismatch or missing code")
 
     try:
         async with httpx.AsyncClient(timeout=10) as c:
@@ -891,9 +1060,7 @@ async def auth_callback(request: Request):
     _user_states.pop(user_id, None)
 
     response = RedirectResponse("/", status_code=303)
-    response.set_cookie(
-        "jarvis_session", _sign_session(user_id), **_SESSION_COOKIE_OPTS
-    )
+    response.set_cookie("jarvis_session", _sign_session(user_id), **_SESSION_COOKIE_OPTS)
     response.delete_cookie("oidc_state")
     return response
 
@@ -926,6 +1093,7 @@ async def api_status(request: Request):
         "model": config.get("model", ""),
         "ha_configured": _ha_configured(config),
         "ha_url": config.get("ha_url", ""),
+        "myq_configured": _myq_configured(config),
         "role": state.get("role", "user"),
     }
 
@@ -1049,6 +1217,32 @@ async def api_save_ha(request: Request):
     return {"ok": True, "ha_configured": _ha_configured(config)}
 
 
+@fast_app.post("/api/save_myq")
+async def api_save_myq(request: Request):
+    user_id = _get_current_user(request)
+    if not user_id:
+        raise HTTPException(401)
+
+    data = await request.json()
+    myq_email = (data.get("myq_email") or "").strip()
+    myq_password = (data.get("myq_password") or "").strip()
+
+    if myq_email and myq_password:
+        result = await _myq_get_status({"myq_email": myq_email, "myq_password": myq_password})
+        if result.startswith("Could not reach MyQ"):
+            return {"ok": False, "error": result}
+
+    state = await _get_user_state(user_id)
+    config = state["config"]
+
+    async with _get_user_lock(user_id):
+        config["myq_email"] = myq_email
+        config["myq_password"] = myq_password
+        await _db_save_config(user_id, config)
+
+    return {"ok": True, "myq_configured": _myq_configured(config)}
+
+
 @fast_app.get("/api/meetings")
 async def api_meetings(request: Request):
     user_id = _get_current_user(request)
@@ -1056,8 +1250,7 @@ async def api_meetings(request: Request):
         raise HTTPException(401)
     async with _pool().acquire() as conn:
         rows = await conn.fetch(
-            "SELECT id, started_at, ended_at, notes FROM meetings "
-            "WHERE user_id = $1 ORDER BY started_at DESC LIMIT 20",
+            "SELECT id, started_at, ended_at, notes FROM meetings WHERE user_id = $1 ORDER BY started_at DESC LIMIT 20",
             user_id,
         )
     return [
@@ -1078,8 +1271,7 @@ async def api_meeting_detail(request: Request, meeting_id: int):
         raise HTTPException(401)
     async with _pool().acquire() as conn:
         row = await conn.fetchrow(
-            "SELECT id, started_at, ended_at, transcript, notes FROM meetings "
-            "WHERE id = $1 AND user_id = $2",
+            "SELECT id, started_at, ended_at, transcript, notes FROM meetings WHERE id = $1 AND user_id = $2",
             meeting_id,
             user_id,
         )
@@ -1139,10 +1331,7 @@ async def _classify_message(state: dict, sender: str, body: str) -> tuple[bool, 
                     break
                 except Exception as e:
                     last = e
-                    if any(
-                        x in str(e).lower()
-                        for x in ("max_tokens", "max_completion_tokens", "unsupported")
-                    ):
+                    if any(x in str(e).lower() for x in ("max_tokens", "max_completion_tokens", "unsupported")):
                         continue
                     raise
             if last and not reply:
@@ -1211,6 +1400,72 @@ async def api_messages_ingest(request: Request):
     return {"ok": True}
 
 
+@fast_app.post("/api/doorbell/event")
+async def api_doorbell_event(request: Request):
+    auth = request.headers.get("Authorization", "")
+    if not auth.startswith("Bearer "):
+        raise HTTPException(401)
+    token = auth[7:].strip()
+    user_id = await _db_find_user_by_token(token)
+    if not user_id:
+        raise HTTPException(401)
+
+    data = await request.json()
+    event_type = (data.get("event_type") or "motion").strip()[:50]
+    source = (data.get("source") or "").strip()[:200]
+
+    await _db_store_doorbell_event(user_id, event_type, source)
+
+    hour = datetime.datetime.now().hour
+    quiet = hour >= 23 or hour < 7
+    if not (event_type == "motion" and quiet):
+        speak_map = {
+            "doorbell_press": "Someone is at the front door, sir.",
+            "motion": "Motion detected at the front door.",
+            "person": "A person has been detected at the front door, sir.",
+            "package": "A package has been delivered to the front door, sir.",
+        }
+        speak_text = speak_map.get(event_type, "Doorbell alert.")
+        for sid in _sids_for_user(user_id):
+            await sio.emit(
+                "doorbell_alert",
+                {"event_type": event_type, "source": source, "speak": speak_text},
+                to=sid,
+            )
+
+    return {"ok": True}
+
+
+@fast_app.get("/api/doorbell/token")
+async def api_doorbell_token(request: Request):
+    user_id = _get_current_user(request)
+    if not user_id:
+        raise HTTPException(401)
+    token = await _db_get_or_create_webhook_token(user_id)
+    return {"token": token, "url": f"{APP_URL}/api/doorbell/event"}
+
+
+@fast_app.get("/api/doorbell/events")
+async def api_doorbell_events(request: Request):
+    user_id = _get_current_user(request)
+    if not user_id:
+        raise HTTPException(401)
+    async with _pool().acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT id, event_type, source, received_at FROM doorbell_events WHERE user_id = $1 ORDER BY received_at DESC LIMIT 50",
+            user_id,
+        )
+    return [
+        {
+            "id": r["id"],
+            "event_type": r["event_type"],
+            "source": r["source"],
+            "received_at": r["received_at"].isoformat(),
+        }
+        for r in rows
+    ]
+
+
 @fast_app.get("/api/messages")
 async def api_messages(request: Request):
     user_id = _get_current_user(request)
@@ -1218,8 +1473,7 @@ async def api_messages(request: Request):
         raise HTTPException(401)
     async with _pool().acquire() as conn:
         rows = await conn.fetch(
-            "SELECT id, sender, body, important, reason, received_at "
-            "FROM phone_messages WHERE user_id = $1 ORDER BY received_at DESC LIMIT 50",
+            "SELECT id, sender, body, important, reason, received_at FROM phone_messages WHERE user_id = $1 ORDER BY received_at DESC LIMIT 50",
             user_id,
         )
     return [
@@ -1253,17 +1507,19 @@ def _build_system_prompt(config: dict) -> str:
         if ctx.get("pressure_kpa"):
             parts.append(f"pressure: {ctx['pressure_kpa']} kPa")
         if parts:
-            system += (
-                "\n\nCURRENT ENVIRONMENT — use naturally when relevant, don't announce it unprompted:\n"
-                + ", ".join(parts)
-                + "."
-            )
+            system += "\n\nCURRENT ENVIRONMENT — use naturally when relevant, don't announce it unprompted:\n" + ", ".join(parts) + "."
     if _ha_configured(config):
         system += (
             "\n\nHOME AUTOMATION — you are connected to Home Assistant via tools. "
             "Use get_ha_states to check device states and call_ha_service to control "
             "devices, run scripts, and trigger automations. When given a home control "
             "command, use your tools and then confirm briefly in JARVIS voice."
+        )
+    if _myq_configured(config):
+        system += (
+            "\n\nGARAGE DOOR — you are connected to the MyQ Chamberlain smart garage. "
+            "Use get_garage_status to check whether the door is open or closed, "
+            "and set_garage_door to open or close it on command."
         )
     return system
 
@@ -1272,9 +1528,7 @@ async def _openai_stream_async(client, model, messages, max_out=500, **extra_kwa
     last = None
     for extra in ({"max_tokens": max_out}, {"max_completion_tokens": max_out}, {}):
         try:
-            return await client.chat.completions.create(
-                model=model, messages=messages, stream=True, **extra, **extra_kwargs
-            )
+            return await client.chat.completions.create(model=model, messages=messages, stream=True, **extra, **extra_kwargs)
         except Exception as e:
             last = e
             if any(
@@ -1312,7 +1566,7 @@ async def _stream_reply(state: dict, on_text):
     client = state["client"]
     model = config.get("model") or DEFAULT_MODELS.get(provider, "")
     system = _build_system_prompt(config)
-    ha_tools = _get_ha_tools(config, provider)
+    ha_tools = _get_ha_tools(config, provider) + _get_myq_tools(config, provider)
     local_msgs = list(state["conversation"])
 
     for _ in range(4):
@@ -1342,9 +1596,7 @@ async def _stream_reply(state: dict, on_text):
             results = []
             for block in final.content:
                 if block.type == "tool_use":
-                    result = await _execute_ha_tool(
-                        config, block.name, dict(block.input)
-                    )
+                    result = await _execute_ha_tool(config, block.name, dict(block.input), state.get("user_id", ""))
                     results.append(
                         {
                             "type": "tool_result",
@@ -1386,11 +1638,7 @@ async def _stream_reply(state: dict, on_text):
                             tool_calls_acc[idx]["args"] += tc.function.arguments
                         if tc.id and not tool_calls_acc[idx]["id"]:
                             tool_calls_acc[idx]["id"] = tc.id
-                        if (
-                            tc.function
-                            and tc.function.name
-                            and not tool_calls_acc[idx]["name"]
-                        ):
+                        if tc.function and tc.function.name and not tool_calls_acc[idx]["name"]:
                             tool_calls_acc[idx]["name"] = tc.function.name
             if finish_reason != "tool_calls" or not ha_tools:
                 return full
@@ -1398,7 +1646,7 @@ async def _stream_reply(state: dict, on_text):
             tool_msgs = []
             for acc in tool_calls_acc.values():
                 args = json.loads(acc["args"] or "{}")
-                result = await _execute_ha_tool(config, acc["name"], args)
+                result = await _execute_ha_tool(config, acc["name"], args, state.get("user_id", ""))
                 tc_list.append(
                     {
                         "id": acc["id"],
@@ -1406,12 +1654,8 @@ async def _stream_reply(state: dict, on_text):
                         "function": {"name": acc["name"], "arguments": acc["args"]},
                     }
                 )
-                tool_msgs.append(
-                    {"role": "tool", "tool_call_id": acc["id"], "content": result}
-                )
-            local_msgs.append(
-                {"role": "assistant", "content": None, "tool_calls": tc_list}
-            )
+                tool_msgs.append({"role": "tool", "tool_call_id": acc["id"], "content": result})
+            local_msgs.append({"role": "assistant", "content": None, "tool_calls": tc_list})
             local_msgs.extend(tool_msgs)
 
     return full
@@ -1455,9 +1699,7 @@ async def _process_message(sid: str, text: str):
     try:
         full = await _stream_reply(state, on_text)
         if sent_buf.strip():
-            await sio.emit(
-                "speak_sentence", {"text": sent_buf.strip(), "seq": seq}, to=sid
-            )
+            await sio.emit("speak_sentence", {"text": sent_buf.strip(), "seq": seq}, to=sid)
         reply = full.strip() or "…"
         state["conversation"].append({"role": "assistant", "content": reply})
         await _db_append_message(user_id, "assistant", reply)
@@ -1481,9 +1723,7 @@ async def _process_message(sid: str, text: str):
             conv.pop()
             await _db_clear_conversation(user_id)
             for msg_entry in conv:
-                await _db_append_message(
-                    user_id, msg_entry["role"], msg_entry["content"]
-                )
+                await _db_append_message(user_id, msg_entry["role"], msg_entry["content"])
         await sio.emit("speak_sentence", {"text": msg, "seq": 0}, to=sid)
         await sio.emit("response_done", {"text": msg}, to=sid)
         await sio.emit("status", {"state": "idle"}, to=sid)
@@ -1523,9 +1763,7 @@ async def on_start_meeting(sid, data=None):
     if not user_id:
         return
     if user_id in _active_meetings:
-        await sio.emit(
-            "meeting_error", {"error": "A meeting is already active."}, to=sid
-        )
+        await sio.emit("meeting_error", {"error": "A meeting is already active."}, to=sid)
         return
     meeting_id = await _db_create_meeting(user_id)
     _active_meetings[user_id] = {"meeting_id": meeting_id, "segments": []}
@@ -1659,13 +1897,7 @@ async def _telemetry_loop():
             dt = max(now - last_t, 0.1)
             down = (net.bytes_recv - last_net.bytes_recv) * 8 / 1e6 / dt
             up = (net.bytes_sent - last_net.bytes_sent) * 8 / 1e6 / dt
-            pps = int(
-                (
-                    (net.packets_recv + net.packets_sent)
-                    - (last_net.packets_recv + last_net.packets_sent)
-                )
-                / dt
-            )
+            pps = int(((net.packets_recv + net.packets_sent) - (last_net.packets_recv + last_net.packets_sent)) / dt)
             last_net, last_t = net, now
             await sio.emit(
                 "hud_update",
@@ -1695,10 +1927,7 @@ async def _weather_loop():
                 lat, lon = loc.get("lat"), loc.get("lon")
                 if lat is not None and lon is not None:
                     wx_r = await client.get(
-                        f"https://api.open-meteo.com/v1/forecast"
-                        f"?latitude={lat}&longitude={lon}"
-                        f"&current=temperature_2m,surface_pressure,weather_code"
-                        f"&temperature_unit=fahrenheit",
+                        f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current=temperature_2m,surface_pressure,weather_code&temperature_unit=fahrenheit",
                         headers={"User-Agent": "JARVIS-Starter/1.0"},
                     )
                     cur = wx_r.json().get("current", {})
@@ -1720,16 +1949,8 @@ async def _weather_loop():
                         95: "Thunderstorm",
                     }.get(code, "—")
                     weather_data = {
-                        "temp_f": (
-                            round(cur["temperature_2m"])
-                            if cur.get("temperature_2m") is not None
-                            else None
-                        ),
-                        "pressure_kpa": (
-                            round(cur["surface_pressure"] / 10, 1)
-                            if cur.get("surface_pressure")
-                            else None
-                        ),
+                        "temp_f": (round(cur["temperature_2m"]) if cur.get("temperature_2m") is not None else None),
+                        "pressure_kpa": (round(cur["surface_pressure"] / 10, 1) if cur.get("surface_pressure") else None),
                         "city": loc.get("city", "—"),
                         "region": loc.get("region", ""),
                         "condition": cond,
@@ -1747,9 +1968,7 @@ async def _meeting_cleanup_loop():
         try:
             if _db_pool:
                 async with _pool().acquire() as conn:
-                    result = await conn.execute(
-                        "DELETE FROM meetings WHERE created_at < NOW() - INTERVAL '48 hours'"
-                    )
+                    result = await conn.execute("DELETE FROM meetings WHERE created_at < NOW() - INTERVAL '48 hours'")
                 if result != "DELETE 0":
                     print(f"[MEETING] Cleanup: {result}", flush=True)
         except Exception as e:

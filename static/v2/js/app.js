@@ -910,6 +910,45 @@
     showMessageToast(sender, text, reason);
   });
 
+  // ===================================================================
+  //  DOORBELL ALERTS
+  // ===================================================================
+  const DOORBELL_LABELS = {
+    doorbell_press: "DOORBELL",
+    motion: "MOTION DETECTED",
+    person: "PERSON DETECTED",
+    package: "PACKAGE DELIVERED",
+  };
+
+  function showDoorbellToast(event_type, speak_text) {
+    const existing = document.getElementById("doorbell-toast");
+    if (existing) existing.remove();
+    const toast = document.createElement("div");
+    toast.id = "doorbell-toast";
+    const label = DOORBELL_LABELS[event_type] || "SECURITY ALERT";
+    toast.innerHTML =
+      '<div class="doorbell-toast-label">' +
+      label +
+      "</div>" +
+      '<div class="doorbell-toast-text">' +
+      speak_text.replace(/</g, "&lt;") +
+      "</div>";
+    toast.addEventListener("click", () => toast.remove());
+    document.body.appendChild(toast);
+    setTimeout(() => toast && toast.remove(), 10000);
+  }
+
+  socket.on("doorbell_alert", ({ event_type, speak: speakText }) => {
+    const msg = speakText || "Doorbell alert.";
+    showDoorbellToast(event_type, msg);
+    if (!_standby) speak(msg);
+    const btn = $("doorbell-btn");
+    if (btn) {
+      btn.classList.add("doorbell-active");
+      setTimeout(() => btn.classList.remove("doorbell-active"), 8000);
+    }
+  });
+
   // Meeting button wires
   if (meetingBtn) {
     meetingBtn.addEventListener("click", () => {
@@ -1042,6 +1081,126 @@
         .catch(() => {});
     });
 
+  // ===================================================================
+  //  DOORBELL SETTINGS PANEL
+  // ===================================================================
+  const doorbellSettingsEl = $("doorbell-settings");
+  const doorbellBtn = $("doorbell-btn");
+  const doorbellSettingsClose = $("doorbell-settings-close");
+  const doorbellWebhookUrl = $("doorbell-webhook-url");
+  const doorbellWebhookToken = $("doorbell-webhook-token");
+  const doorbellCopyUrl = $("doorbell-copy-url");
+  const doorbellCopyToken = $("doorbell-copy-token");
+
+  function buildDoorbellYaml(eventType, webhookUrl, token) {
+    const entityHints = {
+      doorbell_press: "event.YOUR_DOORBELL   # e.g. event.front_door_doorbell",
+      motion:
+        "binary_sensor.YOUR_MOTION  # e.g. binary_sensor.front_door_motion",
+      person:
+        "binary_sensor.YOUR_PERSON  # e.g. binary_sensor.front_door_person",
+      package:
+        "binary_sensor.YOUR_PACKAGE # e.g. binary_sensor.front_door_package",
+    };
+    const triggerPlatform =
+      eventType === "doorbell_press"
+        ? "  - platform: state\n    entity_id: " + entityHints[eventType]
+        : "  - platform: state\n    entity_id: " +
+          entityHints[eventType] +
+          '\n    to: "on"';
+    return (
+      "# Add to configuration.yaml:\n" +
+      "rest_command:\n" +
+      "  jarvis_doorbell_event:\n" +
+      '    url: "' +
+      webhookUrl +
+      '"\n' +
+      "    method: POST\n" +
+      "    headers:\n" +
+      '      Authorization: "Bearer ' +
+      token +
+      '"\n' +
+      '    payload: \'{"event_type": "' +
+      eventType +
+      "\"}'\n" +
+      '    content_type: "application/json"\n\n' +
+      "# Automation:\n" +
+      'alias: "Jarvis — ' +
+      eventType.replace("_", " ").toUpperCase() +
+      '"\n' +
+      "trigger:\n" +
+      triggerPlatform +
+      "\n" +
+      "action:\n" +
+      "  - action: rest_command.jarvis_doorbell_event"
+    );
+  }
+
+  function openDoorbellSettings() {
+    if (!doorbellSettingsEl) return;
+    doorbellSettingsEl.classList.add("doorbell-settings-open");
+    fetch("/api/doorbell/token")
+      .then((r) => r.json())
+      .then((d) => {
+        const url = d.url || "";
+        const token = d.token || "";
+        if (doorbellWebhookUrl) doorbellWebhookUrl.value = url;
+        if (doorbellWebhookToken) doorbellWebhookToken.value = token;
+        ["press", "motion", "person", "package"].forEach((type) => {
+          const el = $("yaml-" + type);
+          if (el)
+            el.textContent = buildDoorbellYaml(
+              type === "press" ? "doorbell_press" : type,
+              url,
+              token,
+            );
+        });
+      })
+      .catch(() => {});
+  }
+
+  function closeDoorbellSettings() {
+    if (doorbellSettingsEl)
+      doorbellSettingsEl.classList.remove("doorbell-settings-open");
+  }
+
+  if (doorbellBtn) doorbellBtn.addEventListener("click", openDoorbellSettings);
+  if (doorbellSettingsClose)
+    doorbellSettingsClose.addEventListener("click", closeDoorbellSettings);
+  if (doorbellSettingsEl)
+    doorbellSettingsEl.addEventListener("click", (e) => {
+      if (e.target === doorbellSettingsEl) closeDoorbellSettings();
+    });
+
+  if (doorbellCopyUrl)
+    doorbellCopyUrl.addEventListener("click", () => {
+      if (doorbellWebhookUrl)
+        navigator.clipboard.writeText(doorbellWebhookUrl.value).catch(() => {});
+    });
+  if (doorbellCopyToken)
+    doorbellCopyToken.addEventListener("click", () => {
+      if (doorbellWebhookToken)
+        navigator.clipboard
+          .writeText(doorbellWebhookToken.value)
+          .catch(() => {});
+    });
+
+  document.querySelectorAll(".doorbell-tab").forEach((tab) => {
+    tab.addEventListener("click", () => {
+      document
+        .querySelectorAll(".doorbell-tab")
+        .forEach((t) => t.classList.remove("doorbell-tab-active"));
+      document
+        .querySelectorAll(".doorbell-tab-content")
+        .forEach((c) => c.classList.add("doorbell-tab-hidden"));
+      tab.classList.add("doorbell-tab-active");
+      const target = document.getElementById(
+        "doorbell-tab-" + tab.dataset.dtab,
+      );
+      if (target) target.classList.remove("doorbell-tab-hidden");
+    });
+  });
+
   document.querySelectorAll(".msg-tab").forEach((tab) => {
     tab.addEventListener("click", () => {
       document
@@ -1055,6 +1214,96 @@
       if (target) target.classList.remove("msg-tab-hidden");
     });
   });
+
+  // ===================================================================
+  //  GARAGE SETTINGS MODAL (MYQ)
+  // ===================================================================
+  const garageSettingsEl = $("garage-settings");
+  const garageBtn = $("garage-btn");
+  const garageSettingsForm = $("garage-settings-form");
+  const myqEmailInput = $("myq-email");
+  const myqPasswordInput = $("myq-password");
+  const garageSaveBtn = $("garage-save");
+  const garageCancelBtn = $("garage-cancel");
+  const garageMsg = $("garage-msg");
+  const garageStatusDot = $("garage-status-dot");
+  const garageStatusText = $("garage-status-text");
+
+  function setGarageStatus(configured) {
+    if (configured) {
+      garageStatusDot && garageStatusDot.classList.add("connected");
+      garageStatusDot && garageStatusDot.classList.remove("disconnected");
+      if (garageStatusText) garageStatusText.textContent = "CONNECTED";
+      garageBtn && garageBtn.classList.add("garage-live");
+    } else {
+      garageStatusDot && garageStatusDot.classList.remove("connected");
+      garageStatusDot && garageStatusDot.classList.add("disconnected");
+      if (garageStatusText) garageStatusText.textContent = "NOT CONNECTED";
+      garageBtn && garageBtn.classList.remove("garage-live");
+    }
+  }
+
+  function showGarageSettings() {
+    if (garageSettingsEl) garageSettingsEl.classList.remove("setup-hidden");
+    if (garageMsg) {
+      garageMsg.textContent = "";
+      garageMsg.className = "";
+    }
+    setTimeout(() => myqEmailInput && myqEmailInput.focus(), 150);
+  }
+  function hideGarageSettings() {
+    if (garageSettingsEl) garageSettingsEl.classList.add("setup-hidden");
+    if (myqPasswordInput) myqPasswordInput.value = "";
+  }
+
+  if (garageBtn) garageBtn.addEventListener("click", showGarageSettings);
+  if (garageCancelBtn)
+    garageCancelBtn.addEventListener("click", hideGarageSettings);
+  garageSettingsEl &&
+    garageSettingsEl.addEventListener("click", (e) => {
+      if (e.target === garageSettingsEl) hideGarageSettings();
+    });
+
+  if (garageSettingsForm) {
+    garageSettingsForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const myq_email = (myqEmailInput.value || "").trim();
+      const myq_password = (myqPasswordInput.value || "").trim();
+      if (myq_email && !myq_password && !myqPasswordInput.dataset.hasExisting) {
+        garageMsg.className = "err";
+        garageMsg.textContent = "Please provide your MyQ password.";
+        return;
+      }
+      garageSaveBtn.disabled = true;
+      garageMsg.className = "";
+      garageMsg.textContent = "Verifying…";
+      try {
+        const res = await fetch("/api/save_myq", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ myq_email, myq_password }),
+        });
+        const data = await res.json();
+        if (data.ok) {
+          garageMsg.className = "ok";
+          garageMsg.textContent = data.myq_configured
+            ? "Connected. Garage door online."
+            : "MyQ disconnected.";
+          setGarageStatus(data.myq_configured);
+          myqPasswordInput.dataset.hasExisting = data.myq_configured ? "1" : "";
+          setTimeout(hideGarageSettings, 1200);
+        } else {
+          garageMsg.className = "err";
+          garageMsg.textContent = data.error || "Could not save settings.";
+        }
+      } catch {
+        garageMsg.className = "err";
+        garageMsg.textContent = "Could not reach the server.";
+      } finally {
+        garageSaveBtn.disabled = false;
+      }
+    });
+  }
 
   // On load, ask the backend whether we're already configured.
   fetch("/api/status")
@@ -1076,6 +1325,9 @@
       setHaStatus(!!d.ha_configured, d.ha_url || "");
       if (d.ha_configured && haTokenInput)
         haTokenInput.dataset.hasExisting = "1";
+      setGarageStatus(!!d.myq_configured);
+      if (d.myq_configured && myqPasswordInput)
+        myqPasswordInput.dataset.hasExisting = "1";
       if (_configured) hideSetup();
       else showSetup();
       applyMode();

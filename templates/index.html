@@ -320,6 +320,38 @@
           </svg>
           MESSAGES
         </button>
+        <button id="doorbell-btn" title="Doorbell &amp; Security Alerts">
+          <svg
+            viewBox="0 0 20 20"
+            width="13"
+            height="13"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.5"
+          >
+            <path
+              d="M10 2C7 2 5 4.5 5 7v5l-2 2v1h14v-1l-2-2V7c0-2.5-2-5-5-5z"
+            />
+            <path d="M8 16a2 2 0 0 0 4 0" />
+          </svg>
+          DOORBELL
+        </button>
+        <button id="garage-btn" title="MyQ Garage Door">
+          <svg
+            viewBox="0 0 20 20"
+            width="13"
+            height="13"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.5"
+          >
+            <rect x="2" y="8" width="16" height="10" rx="1" />
+            <path d="M2 8l8-6 8 6" />
+            <line x1="6" y1="12" x2="14" y2="12" />
+            <line x1="6" y1="15" x2="14" y2="15" />
+          </svg>
+          GARAGE
+        </button>
       </div>
 
       <!-- ============ MESSAGES SETTINGS PANEL ============ -->
@@ -410,6 +442,115 @@
           </div>
 
           <button id="msg-settings-close">CLOSE</button>
+        </div>
+      </div>
+
+      <!-- ============ DOORBELL SETTINGS PANEL ============ -->
+      <div id="doorbell-settings">
+        <div id="doorbell-settings-card">
+          <h2>DOORBELL — SECURITY ALERTS</h2>
+          <p class="doorbell-settings-note">
+            Create Home Assistant automations that POST to Jarvis when your
+            doorbell fires. Jarvis announces it by voice and shows an alert.
+            Uses the same bearer token as Phone Messages.
+          </p>
+          <div class="msg-field-label">WEBHOOK URL</div>
+          <div class="msg-field-row">
+            <input id="doorbell-webhook-url" type="text" readonly />
+            <button id="doorbell-copy-url">COPY</button>
+          </div>
+          <div class="msg-field-label">BEARER TOKEN</div>
+          <div class="msg-field-row">
+            <input id="doorbell-webhook-token" type="text" readonly />
+            <button id="doorbell-copy-token">COPY</button>
+          </div>
+
+          <div class="doorbell-tab-bar">
+            <button class="doorbell-tab doorbell-tab-active" data-dtab="press">
+              DOORBELL
+            </button>
+            <button class="doorbell-tab" data-dtab="motion">MOTION</button>
+            <button class="doorbell-tab" data-dtab="person">PERSON</button>
+            <button class="doorbell-tab" data-dtab="package">PACKAGE</button>
+          </div>
+
+          <div class="doorbell-tab-content" id="doorbell-tab-press">
+            <p class="doorbell-settings-note">
+              Fires when the doorbell button is pressed.
+            </p>
+            <pre class="doorbell-yaml" id="yaml-press"></pre>
+          </div>
+          <div
+            class="doorbell-tab-content doorbell-tab-hidden"
+            id="doorbell-tab-motion"
+          >
+            <p class="doorbell-settings-note">
+              Fires on motion detection. Suppressed between
+              11&nbsp;pm–7&nbsp;am.
+            </p>
+            <pre class="doorbell-yaml" id="yaml-motion"></pre>
+          </div>
+          <div
+            class="doorbell-tab-content doorbell-tab-hidden"
+            id="doorbell-tab-person"
+          >
+            <p class="doorbell-settings-note">
+              Fires when a person is specifically detected.
+            </p>
+            <pre class="doorbell-yaml" id="yaml-person"></pre>
+          </div>
+          <div
+            class="doorbell-tab-content doorbell-tab-hidden"
+            id="doorbell-tab-package"
+          >
+            <p class="doorbell-settings-note">
+              Fires when a package delivery is detected.
+            </p>
+            <pre class="doorbell-yaml" id="yaml-package"></pre>
+          </div>
+
+          <button id="doorbell-settings-close">CLOSE</button>
+        </div>
+      </div>
+
+      <!-- ============ GARAGE SETTINGS PANEL ============ -->
+      <div id="garage-settings" class="setup-hidden">
+        <div id="garage-settings-card" class="setup-card-inner">
+          <div class="setup-ring"></div>
+          <div class="setup-word">SETTINGS</div>
+          <div class="setup-sub">GARAGE DOOR — MYQ</div>
+          <form id="garage-settings-form" autocomplete="off">
+            <label class="setup-label" for="myq-email">MYQ EMAIL</label>
+            <input
+              id="myq-email"
+              type="email"
+              placeholder="you@example.com"
+              autocomplete="off"
+              spellcheck="false"
+            />
+            <label
+              class="setup-label"
+              for="myq-password"
+              style="margin-top: 10px"
+              >MYQ PASSWORD</label
+            >
+            <input
+              id="myq-password"
+              type="password"
+              placeholder="Leave blank to keep existing password"
+              autocomplete="off"
+              spellcheck="false"
+            />
+            <div id="garage-status-row">
+              <span id="garage-status-dot"></span>
+              <span id="garage-status-text">—</span>
+            </div>
+            <div style="display: flex; gap: 8px; margin-top: 14px">
+              <button type="submit" id="garage-save">SAVE</button>
+              <button type="button" id="garage-cancel">CANCEL</button>
+            </div>
+          </form>
+          <div id="garage-msg"></div>
         </div>
       </div>
 
