@@ -1506,6 +1506,53 @@
     });
   }
 
+  // ===================================================================
+  //  PARTY MODE
+  // ===================================================================
+  const partyBtn = $("party-btn");
+  let _partyActive = false;
+
+  function launchConfetti() {
+    const colors = [
+      "#ff5ef7",
+      "#5ef7ff",
+      "#f7ff5e",
+      "#ff5e7a",
+      "#5eff8e",
+      "#ff8e5e",
+      "#8e5eff",
+    ];
+    for (let i = 0; i < 70; i++) {
+      const el = document.createElement("div");
+      el.className = "confetti-piece";
+      const size = 6 + Math.random() * 8;
+      const x = Math.random() * 100;
+      const color = colors[Math.floor(Math.random() * colors.length)];
+      const dur = 1.8 + Math.random() * 1.8;
+      const delay = Math.random() * 0.8;
+      const rot = Math.random() * 360;
+      const shape = Math.random() > 0.5 ? "50%" : "0";
+      el.style.cssText = `width:${size}px;height:${size}px;left:${x}%;top:-10px;background:${color};border-radius:${shape};--cf-dur:${dur}s;--cf-delay:${delay}s;--cf-rot:${rot}deg`;
+      document.body.appendChild(el);
+      setTimeout(() => el.remove(), (dur + delay + 0.2) * 1000);
+    }
+  }
+
+  function setPartyMode(active) {
+    _partyActive = active;
+    document.body.classList.toggle("party-mode", active);
+    if (partyBtn) partyBtn.classList.toggle("party-active", active);
+    if (active) launchConfetti();
+  }
+
+  if (partyBtn) {
+    partyBtn.addEventListener("click", () => setPartyMode(!_partyActive));
+  }
+
+  socket.on("party_mode", ({ active }) => {
+    setPartyMode(!!active);
+  });
+
   // On load, ask the backend whether we're already configured.
   fetch("/api/status")
     .then((r) => r.json())

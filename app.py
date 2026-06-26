@@ -2397,8 +2397,31 @@ async def on_disconnect(sid):
 @sio.on("user_message")
 async def on_user_message(sid, data):
     text = ((data or {}).get("text") or "").strip()
-    if text:
-        asyncio.create_task(_process_message(sid, text))
+    if not text:
+        return
+    lower = text.lower()
+    party_on = any(
+        p in lower
+        for p in ("party mode", "let's party", "party time", "activate party", "start the party")
+    )
+    party_off = any(
+        p in lower
+        for p in ("end party", "stop party", "deactivate party", "turn off party", "party off")
+    )
+    if party_on or party_off:
+        active = party_on
+        msg = (
+            "Activating party protocols. Excellent taste, sir."
+            if active
+            else "Returning to standard operations. It was fun while it lasted, sir."
+        )
+        await sio.emit("status", {"state": "speaking"}, to=sid)
+        await sio.emit("party_mode", {"active": active}, to=sid)
+        await sio.emit("speak_sentence", {"text": msg, "seq": 0}, to=sid)
+        await sio.emit("response_done", {"text": msg}, to=sid)
+        await sio.emit("status", {"state": "idle"}, to=sid)
+        return
+    asyncio.create_task(_process_message(sid, text))
 
 
 @sio.on("start_meeting")
