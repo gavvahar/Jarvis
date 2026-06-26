@@ -5,7 +5,11 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Add to Queue — J.A.R.V.I.S.</title>
     <style>
-      * { box-sizing: border-box; margin: 0; padding: 0; }
+      * {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
       body {
         background: #08111e;
         color: #7fe9ff;
@@ -13,7 +17,9 @@
         min-height: 100vh;
         padding: 28px 18px 48px;
       }
-      header { margin-bottom: 20px; }
+      header {
+        margin-bottom: 20px;
+      }
       header h1 {
         font-size: 0.85rem;
         letter-spacing: 0.2em;
@@ -39,9 +45,20 @@
         opacity: 0.45;
         margin-bottom: 5px;
       }
-      #now-playing .track { font-size: 1rem; color: #e0f7ff; }
-      #now-playing .artist { font-size: 0.8rem; opacity: 0.55; margin-top: 3px; }
-      .search-row { display: flex; gap: 8px; margin-bottom: 14px; }
+      #now-playing .track {
+        font-size: 1rem;
+        color: #e0f7ff;
+      }
+      #now-playing .artist {
+        font-size: 0.8rem;
+        opacity: 0.55;
+        margin-top: 3px;
+      }
+      .search-row {
+        display: flex;
+        gap: 8px;
+        margin-bottom: 14px;
+      }
       input[type="text"] {
         flex: 1;
         background: rgba(0, 229, 255, 0.05);
@@ -54,8 +71,12 @@
         outline: none;
         -webkit-appearance: none;
       }
-      input[type="text"]:focus { border-color: rgba(0, 229, 255, 0.6); }
-      input[type="text"]::placeholder { color: rgba(127, 233, 255, 0.3); }
+      input[type="text"]:focus {
+        border-color: rgba(0, 229, 255, 0.6);
+      }
+      input[type="text"]::placeholder {
+        color: rgba(127, 233, 255, 0.3);
+      }
       button {
         background: transparent;
         border: 1px solid rgba(0, 229, 255, 0.35);
@@ -69,7 +90,9 @@
         white-space: nowrap;
         -webkit-tap-highlight-color: transparent;
       }
-      button:active { background: rgba(0, 229, 255, 0.1); }
+      button:active {
+        background: rgba(0, 229, 255, 0.1);
+      }
       .result {
         display: flex;
         align-items: center;
@@ -79,7 +102,10 @@
         border-radius: 4px;
         margin-bottom: 8px;
       }
-      .result .info { flex: 1; min-width: 0; }
+      .result .info {
+        flex: 1;
+        min-width: 0;
+      }
       .result .title {
         font-size: 0.9rem;
         color: #e0f7ff;
@@ -95,16 +121,27 @@
         overflow: hidden;
         text-overflow: ellipsis;
       }
-      .result button { padding: 7px 14px; font-size: 0.72rem; }
+      .result button {
+        padding: 7px 14px;
+        font-size: 0.72rem;
+      }
       #msg {
         margin-top: 14px;
         font-size: 0.85rem;
         min-height: 22px;
         letter-spacing: 0.05em;
       }
-      #msg.ok { color: #5eff8e; }
-      #msg.err { color: #ff5e7a; }
-      .dim { opacity: 0.4; font-size: 0.85rem; padding: 6px 0; }
+      #msg.ok {
+        color: #5eff8e;
+      }
+      #msg.err {
+        color: #ff5e7a;
+      }
+      .dim {
+        opacity: 0.4;
+        font-size: 0.85rem;
+        padding: 6px 0;
+      }
     </style>
   </head>
   <body>
@@ -119,7 +156,14 @@
     </div>
 
     <div class="search-row">
-      <input id="q" type="text" placeholder="Search for a song…" autocomplete="off" spellcheck="false" enterkeyhint="search" />
+      <input
+        id="q"
+        type="text"
+        placeholder="Search for a song…"
+        autocomplete="off"
+        spellcheck="false"
+        enterkeyhint="search"
+      />
       <button onclick="doSearch()">SEARCH</button>
     </div>
 
@@ -127,7 +171,9 @@
     <div id="msg"></div>
 
     <script>
-      const TOKEN = location.pathname.replace(/^\/party\//, "").replace(/\/$/, "");
+      const TOKEN = location.pathname
+        .replace(/^\/party\//, "")
+        .replace(/\/$/, "");
 
       async function loadNowPlaying() {
         try {
@@ -148,7 +194,9 @@
         const res = document.getElementById("results");
         res.innerHTML = '<div class="dim">Searching…</div>';
         try {
-          const r = await fetch(`/party/${TOKEN}/search?q=${encodeURIComponent(q)}`);
+          const r = await fetch(
+            `/party/${TOKEN}/search?q=${encodeURIComponent(q)}`,
+          );
           const d = await r.json();
           if (!d.results?.length) {
             res.innerHTML = '<div class="dim">No results found.</div>';
@@ -167,7 +215,8 @@
             )
             .join("");
         } catch (_) {
-          res.innerHTML = '<div class="dim" style="color:#ff5e7a">Search failed. Try again.</div>';
+          res.innerHTML =
+            '<div class="dim" style="color:#ff5e7a">Search failed. Try again.</div>';
         }
       }
 
