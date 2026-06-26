@@ -14,7 +14,9 @@ from app import (
     _build_client,
     _build_system_prompt,
     _c_to_f,
+    _execute_spotify_tool,
     _get_myq_tools,
+    _get_spotify_tools,
     _get_tesla_tools,
     _get_user_lock,
     _ha_configured,
@@ -24,6 +26,7 @@ from app import (
     _myq_set_door,
     _sids_for_user,
     _split_sentences,
+    _spotify_configured,
     _tesla_configured,
     _user_configured,
 )
@@ -258,6 +261,14 @@ class TestBuildSystemPrompt:
         finally:
             jarvis._location_context.clear()
 
+    def test_spotify_section_added_when_configured(self):
+        cfg = {"ha_url": "", "ha_token": "", "spotify_refresh_token": "rtok"}
+        assert "SPOTIFY" in _build_system_prompt(cfg)
+
+    def test_spotify_section_absent_when_not_configured(self):
+        cfg = {"ha_url": "", "ha_token": "", "spotify_refresh_token": ""}
+        assert "SPOTIFY" not in _build_system_prompt(cfg)
+
     def test_all_integrations_configured(self):
         cfg = {
             "ha_url": "http://ha.local",
@@ -267,11 +278,13 @@ class TestBuildSystemPrompt:
             "tesla_method": "unofficial",
             "tesla_refresh_token": "rtok",
             "tesla_fleet_refresh_token": "",
+            "spotify_refresh_token": "sprtok",
         }
         prompt = _build_system_prompt(cfg)
         assert "HOME AUTOMATION" in prompt
         assert "GARAGE DOOR" in prompt
         assert "TESLA" in prompt
+        assert "SPOTIFY" in prompt
 
 
 class TestTeslaConfigured:
@@ -298,6 +311,121 @@ class TestTeslaConfigured:
 
     def test_both_fails_if_fleet_token_missing(self):
         assert _tesla_configured({"tesla_method": "both", "tesla_refresh_token": "tok", "tesla_fleet_refresh_token": ""}) is False
+
+
+class TestSpotifyConfigured:
+    def test_not_configured_when_token_empty(self):
+        assert _spotify_configured({"spotify_refresh_token": ""}) is False
+
+    def test_not_configured_when_key_missing(self):
+        assert _spotify_configured({}) is False
+
+    def test_configured_when_token_present(self):
+        assert _spotify_configured({"spotify_refresh_token": "rtok"}) is True
+
+
+class TestGetSpotifyTools:
+    def test_empty_when_not_configured(self):
+        assert _get_spotify_tools({"spotify_refresh_token": ""}, "anthropic") == []
+
+    def test_anthropic_tools_when_configured(self):
+        tools = _get_spotify_tools({"spotify_refresh_token": "rtok"}, "anthropic")
+        assert len(tools) > 0
+        assert all("name" in t for t in tools)
+
+    def test_openai_tools_when_configured(self):
+        tools = _get_spotify_tools({"spotify_refresh_token": "rtok"}, "openai")
+        assert len(tools) > 0
+        assert all(t["type"] == "function" for t in tools)
+
+    def test_returns_seven_tools(self):
+        tools = _get_spotify_tools({"spotify_refresh_token": "rtok"}, "anthropic")
+        assert len(tools) == 7
+
+    def test_tool_names_include_search_and_play(self):
+        names = {t["name"] for t in _get_spotify_tools({"spotify_refresh_token": "rtok"}, "anthropic")}
+        assert "spotify_search_and_play" in names
+        assert "spotify_now_playing" in names
+
+
+class TestExecuteSpotifyTool:
+    _cfg = {"spotify_refresh_token": "rtok"}
+
+    def _mock_resp(self, status=204, text="", json_data=None):
+        r = MagicMock()
+        r.status_code = status
+        r.text = text
+        if json_data is not None:
+            r.json = MagicMock(return_value=json_data)
+        return r
+
+    def test_now_playing_nothing(self):
+        with patch("app._spotify_req", new=AsyncMock(return_value=self._mock_resp(204, ""))):
+            result = asyncio.run(_execute_spotify_tool("spotify_now_playing", {}, "u1", self._cfg))
+        assert "Nothing" in result
+
+    def test_now_playing_track(self):
+        data = {"is_playing": True, "item": {"name": "Get Lucky", "artists": [{"name": "Daft Punk"}]}}
+        with patch("app._spotify_req", new=AsyncMock(return_value=self._mock_resp(200, "x", data))):
+            result = asyncio.run(_execute_spotify_tool("spotify_now_playing", {}, "u1", self._cfg))
+        assert "Get Lucky" in result
+        assert "Daft Punk" in result
+
+    def test_play_success(self):
+        with patch("app._spotify_req", new=AsyncMock(return_value=self._mock_resp(204))):
+            result = asyncio.run(_execute_spotify_tool("spotify_play", {}, "u1", self._cfg))
+        assert "playback" in result.lower()
+
+    def test_pause_success(self):
+        with patch("app._spotify_req", new=AsyncMock(return_value=self._mock_resp(204))):
+            result = asyncio.run(_execute_spotify_tool("spotify_pause", {}, "u1", self._cfg))
+        assert "paused" in result.lower()
+
+    def test_next_success(self):
+        with patch("app._spotify_req", new=AsyncMock(return_value=self._mock_resp(204))):
+            result = asyncio.run(_execute_spotify_tool("spotify_next", {}, "u1", self._cfg))
+        assert "next" in result.lower() or "skipped" in result.lower()
+
+    def test_previous_success(self):
+        with patch("app._spotify_req", new=AsyncMock(return_value=self._mock_resp(204))):
+            result = asyncio.run(_execute_spotify_tool("spotify_previous", {}, "u1", self._cfg))
+        assert "previous" in result.lower() or "back" in result.lower()
+
+    def test_volume_clamped_and_set(self):
+        with patch("app._spotify_req", new=AsyncMock(return_value=self._mock_resp(204))):
+            result = asyncio.run(_execute_spotify_tool("spotify_volume", {"volume_percent": 70}, "u1", self._cfg))
+        assert "70" in result
+
+    def test_volume_clamped_above_100(self):
+        with patch("app._spotify_req", new=AsyncMock(return_value=self._mock_resp(204))):
+            result = asyncio.run(_execute_spotify_tool("spotify_volume", {"volume_percent": 150}, "u1", self._cfg))
+        assert "100" in result
+
+    def test_search_and_play_track_found(self):
+        search_data = {"tracks": {"items": [{"uri": "spotify:track:abc", "name": "Around the World", "artists": [{"name": "Daft Punk"}]}]}}
+        play_resp = self._mock_resp(204)
+        call_count = 0
+
+        async def mock_req(method, _endpoint, *_a, **_kw):
+            nonlocal call_count
+            call_count += 1
+            if method == "get":
+                return self._mock_resp(200, "x", search_data)
+            return play_resp
+
+        with patch("app._spotify_req", new=mock_req):
+            result = asyncio.run(_execute_spotify_tool("spotify_search_and_play", {"query": "Around the World", "type": "track"}, "u1", self._cfg))
+        assert "Around the World" in result
+
+    def test_search_and_play_not_found(self):
+        search_data = {"tracks": {"items": []}}
+        with patch("app._spotify_req", new=AsyncMock(return_value=self._mock_resp(200, "x", search_data))):
+            result = asyncio.run(_execute_spotify_tool("spotify_search_and_play", {"query": "xyzzy", "type": "track"}, "u1", self._cfg))
+        assert "Could not find" in result
+
+    def test_unknown_tool_returns_error(self):
+        result = asyncio.run(_execute_spotify_tool("spotify_nonexistent", {}, "u1", self._cfg))
+        assert "Unknown" in result
 
 
 class TestCToF:
