@@ -417,6 +417,22 @@ _user_locks: dict[str, asyncio.Lock] = {}
 
 # {user_id: {meeting_id, segments}}
 _active_meetings: dict[str, dict] = {}
+_party_tokens: dict[str, str] = {}  # token → user_id
+
+
+def _create_party_token(user_id: str) -> str:
+    for t, uid in list(_party_tokens.items()):
+        if uid == user_id:
+            _party_tokens.pop(t, None)
+    token = secrets.token_urlsafe(8)
+    _party_tokens[token] = user_id
+    return token
+
+
+def _clear_party_tokens(user_id: str):
+    for t, uid in list(_party_tokens.items()):
+        if uid == user_id:
+            _party_tokens.pop(t, None)
 
 # socket sid → user_id
 _sid_to_user: dict[str, str] = {}
@@ -2962,9 +2978,12 @@ async def on_user_message(sid, data):
             elif _apple_music_configured(config):
                 await _apple_music_start_party(user_id)
                 music_line = " Music is on."
+        token = _create_party_token(user_id) if active and user_id else None
+        if not active and user_id:
+            _clear_party_tokens(user_id)
         msg = f"Activating party protocols. Excellent taste, sir.{music_line}" if active else "Returning to standard operations. It was fun while it lasted, sir."
         await sio.emit("status", {"state": "speaking"}, to=sid)
-        await sio.emit("party_mode", {"active": active}, to=sid)
+        await sio.emit("party_mode", {"active": active, "token": token}, to=sid)
         await sio.emit("speak_sentence", {"text": msg, "seq": 0}, to=sid)
         await sio.emit("response_done", {"text": msg}, to=sid)
         await sio.emit("status", {"state": "idle"}, to=sid)
@@ -3100,6 +3119,113 @@ async def on_start_party_music(sid, data=None):
         await _spotify_start_party(user_id, config)
     elif _apple_music_configured(config):
         await _apple_music_start_party(user_id)
+    token = _create_party_token(user_id)
+    await sio.emit("party_token", {"token": token}, to=sid)
+
+
+@sio.on("stop_party_music")
+async def on_stop_party_music(sid, data=None):
+    user_id = _sid_to_user.get(sid)
+    if user_id:
+        _clear_party_tokens(user_id)
+
+
+# ─── PARTY GUEST QUEUE ───────────────────────────────────────────────────────
+@fast_app.get("/party/{token}", response_class=HTMLResponse)
+async def party_guest_page(token: str, request: Request):
+    if token not in _party_tokens:
+        return HTMLResponse("<html><body style='background:#08111e;color:#7fe9ff;font-family:monospace;padding:40px'><h2>Party has ended.</h2></body></html>", status_code=404)
+    return templates.TemplateResponse("party.html", {"request": request})
+
+
+@fast_app.get("/party/{token}/now_playing")
+async def party_now_playing(token: str):
+    user_id = _party_tokens.get(token)
+    if not user_id:
+        raise HTTPException(404)
+    state = await _get_user_state(user_id)
+    config = state.get("config", {})
+    if _spotify_configured(config):
+        try:
+            r = await _spotify_req("get", "/me/player/currently-playing", user_id, config)
+            if r.status_code == 204 or not r.text:
+                return {"title": None, "artist": None}
+            d = r.json()
+            item = d.get("item") or {}
+            return {"title": item.get("name"), "artist": ", ".join(a["name"] for a in item.get("artists", []))}
+        except Exception:
+            return {"title": None, "artist": None}
+    if _apple_music_configured(config):
+        sids = [sid for sid, uid in _sid_to_user.items() if uid == user_id]
+        if sids:
+            try:
+                raw = await _am_request_callback(sids[0], "now_playing_data", timeout=4.0)
+                return json.loads(raw)
+            except Exception:
+                pass
+    return {"title": None, "artist": None}
+
+
+@fast_app.get("/party/{token}/search")
+async def party_search(token: str, q: str = ""):
+    user_id = _party_tokens.get(token)
+    if not user_id:
+        raise HTTPException(404)
+    if not q.strip():
+        return {"results": []}
+    state = await _get_user_state(user_id)
+    config = state.get("config", {})
+    if _spotify_configured(config):
+        try:
+            r = await _spotify_req("get", "/search", user_id, config, params={"q": q, "type": "track", "limit": 5})
+            r.raise_for_status()
+            items = r.json().get("tracks", {}).get("items", [])
+            return {"results": [{"id": t["uri"], "title": t["name"], "artist": ", ".join(a["name"] for a in t.get("artists", []))} for t in items]}
+        except Exception:
+            return {"results": []}
+    if _apple_music_server_configured():
+        try:
+            async with httpx.AsyncClient(timeout=10) as c:
+                r = await c.get(
+                    "https://api.music.apple.com/v1/catalog/us/search",
+                    headers={"Authorization": f"Bearer {_apple_music_dev_token()}"},
+                    params={"term": q, "types": "songs", "limit": 5},
+                )
+                r.raise_for_status()
+            songs = r.json().get("results", {}).get("songs", {}).get("data", [])
+            return {"results": [{"id": s["id"], "title": s["attributes"].get("name", ""), "artist": s["attributes"].get("artistName", "")} for s in songs]}
+        except Exception:
+            return {"results": []}
+    return {"results": []}
+
+
+@fast_app.post("/party/{token}/add")
+async def party_add_to_queue(token: str, request: Request):
+    user_id = _party_tokens.get(token)
+    if not user_id:
+        raise HTTPException(404)
+    body = await request.json()
+    song_id = (body.get("id") or "").strip()
+    if not song_id:
+        return {"ok": False, "error": "No song ID provided."}
+    state = await _get_user_state(user_id)
+    config = state.get("config", {})
+    if _spotify_configured(config):
+        try:
+            r = await _spotify_req("post", "/me/player/queue", user_id, config, params={"uri": song_id})
+            return {"ok": r.status_code in (200, 204)}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+    if _apple_music_configured(config):
+        sids = [sid for sid, uid in _sid_to_user.items() if uid == user_id]
+        if not sids:
+            return {"ok": False, "error": "Host is not connected."}
+        try:
+            await _am_request_callback(sids[0], "queue_add", {"id": song_id}, timeout=8.0)
+            return {"ok": True}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+    return {"ok": False, "error": "No music service connected."}
 
 
 # ─── BACKGROUND TASKS ────────────────────────────────────────────────────────
