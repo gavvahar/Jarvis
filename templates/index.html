@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>J·A·R·V·I·S — Starter Kit</title>
+    <title>J·A·R·V·I·S</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -266,7 +266,6 @@
       <div id="topbar" class="boot">
         <span><span class="dot-live"></span></span>
         <span class="sys-name">J·A·R·V·I·S</span>
-        <span>STARTER KIT</span>
         <span>v1.0</span>
         <span id="top-hex">0x7F3A1</span>
         <span
@@ -320,6 +319,53 @@
           </svg>
           MESSAGES
         </button>
+        <button id="doorbell-btn" title="Doorbell &amp; Security Alerts">
+          <svg
+            viewBox="0 0 20 20"
+            width="13"
+            height="13"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.5"
+          >
+            <path
+              d="M10 2C7 2 5 4.5 5 7v5l-2 2v1h14v-1l-2-2V7c0-2.5-2-5-5-5z"
+            />
+            <path d="M8 16a2 2 0 0 0 4 0" />
+          </svg>
+          DOORBELL
+        </button>
+        <button id="garage-btn" title="MyQ Garage Door">
+          <svg
+            viewBox="0 0 20 20"
+            width="13"
+            height="13"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.5"
+          >
+            <rect x="2" y="8" width="16" height="10" rx="1" />
+            <path d="M2 8l8-6 8 6" />
+            <line x1="6" y1="12" x2="14" y2="12" />
+            <line x1="6" y1="15" x2="14" y2="15" />
+          </svg>
+          GARAGE
+        </button>
+        <button id="tesla-btn" title="Tesla Vehicle Control">
+          <svg
+            viewBox="0 0 20 20"
+            width="13"
+            height="13"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.5"
+          >
+            <path d="M3 5c2.3 1.2 4.5 1.8 7 1.8s4.7-.6 7-1.8" />
+            <path d="M10 6.8V17" />
+            <path d="M6 5.5L10 17l4-11.5" />
+          </svg>
+          TESLA
+        </button>
       </div>
 
       <!-- ============ MESSAGES SETTINGS PANEL ============ -->
@@ -352,64 +398,372 @@
 
           <div class="msg-tab-content" id="msg-tab-android">
             <p class="msg-settings-note">
-              Build and install the companion app from the
-              <code>android/</code> folder in the Jarvis repo (open it in
-              Android Studio). Enter the URL and token above, then tap
-              <strong>Grant Notification Access</strong> and enable
-              <em>Jarvis Messages</em> in the list.
+              Choose how you'd like to forward messages to Jarvis:
             </p>
-            <p class="msg-settings-note">
-              Works with Google Messages (RCS + SMS), Samsung Messages, Signal,
-              WhatsApp, Telegram, and Messenger.
-            </p>
+            <div class="msg-tab-bar msg-android-tab-bar">
+              <button class="msg-tab msg-tab-active" data-atab="apk">
+                JARVIS APP
+              </button>
+              <button class="msg-tab" data-atab="macrodroid">MACRODROID</button>
+            </div>
+
+            <!-- APK download option -->
+            <div class="msg-android-content" id="msg-atab-apk">
+              <p class="msg-settings-note">
+                The easiest option — download and install the Jarvis companion
+                app directly on your phone. No account or sign-in needed.
+              </p>
+              <div class="msg-field-label">DOWNLOAD LINK</div>
+              <div class="msg-field-row">
+                <input id="msg-apk-url" type="text" readonly />
+                <button id="msg-copy-apk">COPY</button>
+              </div>
+              <ol class="msg-ios-steps">
+                <li>
+                  On your Android phone, open the
+                  <strong>Download Link</strong> above in a browser and install
+                  the APK
+                  <ul>
+                    <li>
+                      If prompted, allow installs from unknown sources in your
+                      phone's settings
+                    </li>
+                  </ul>
+                </li>
+                <li>
+                  Open the app and paste the <strong>Webhook URL</strong> and
+                  <strong>Bearer Token</strong> from above
+                </li>
+                <li>
+                  Tap <strong>Grant Notification Access</strong>, find
+                  <em>Jarvis Messages</em> in the list, and enable it
+                </li>
+                <li>
+                  Done — Jarvis will now receive your messages silently in the
+                  background
+                </li>
+              </ol>
+              <p class="msg-settings-note">
+                Works with Google Messages (RCS + SMS), Signal, WhatsApp,
+                Telegram, and Messenger.
+              </p>
+            </div>
+
+            <!-- Macrodroid option -->
+            <div
+              class="msg-android-content msg-tab-hidden"
+              id="msg-atab-macrodroid"
+            >
+              <p class="msg-settings-note">
+                Use <strong>Macrodroid</strong> (free on the Play Store) to
+                forward notifications to Jarvis — no APK download needed.
+              </p>
+              <ol class="msg-ios-steps">
+                <li>
+                  Install <strong>Macrodroid</strong> from the Google Play Store
+                  and open it
+                </li>
+                <li>
+                  Tap <strong>+</strong> to create a new macro, give it a name
+                  like <em>Jarvis Messages</em>
+                </li>
+                <li>
+                  Under <strong>Triggers</strong> → tap
+                  <strong>Add Trigger</strong> → <strong>Notification</strong> →
+                  <strong>Notification Received</strong>
+                  <ul>
+                    <li>
+                      Select the apps you want to forward (e.g. Google Messages,
+                      WhatsApp, Signal)
+                    </li>
+                  </ul>
+                </li>
+                <li>
+                  Under <strong>Actions</strong> → tap
+                  <strong>Add Action</strong> → <strong>Connectivity</strong> →
+                  <strong>HTTP Request</strong>
+                  <ul>
+                    <li>
+                      <strong>URL</strong> → paste your Webhook URL from above
+                    </li>
+                    <li><strong>Method</strong> → POST</li>
+                    <li>
+                      <strong>Headers</strong> → add:
+                      <code>Authorization</code>:
+                      <code>Bearer YOUR_TOKEN</code>
+                    </li>
+                    <li>
+                      <strong>Content Type</strong> →
+                      <code>application/json</code>
+                    </li>
+                    <li>
+                      <strong>Body</strong> → paste exactly:
+                      <code
+                        >{"sender": "{notification_title}", "text":
+                        "{notification_text}"}</code
+                      >
+                    </li>
+                  </ul>
+                </li>
+                <li>
+                  Tap <strong>OK</strong> → <strong>Save</strong> → make sure
+                  the macro is toggled <strong>on</strong>
+                </li>
+                <li>
+                  Grant Macrodroid notification access when prompted — this is
+                  required for it to read your messages
+                </li>
+              </ol>
+            </div>
           </div>
 
           <div class="msg-tab-content msg-tab-hidden" id="msg-tab-ios">
             <p class="msg-settings-note">
-              Use the iOS Shortcuts app. Captures both SMS and iMessage
-              notification previews — enough for importance classification.
+              Use the built-in <strong>Shortcuts</strong> app to forward message
+              notifications to Jarvis — no extra app needed. Works with SMS and
+              iMessage.
             </p>
             <ol class="msg-ios-steps">
               <li>
-                Open <strong>Shortcuts</strong> →
-                <strong>Automation</strong> tab → tap <strong>+</strong> →
-                <strong>New Automation</strong>
+                Open <strong>Shortcuts</strong> → tap
+                <strong>Automation</strong> at the bottom → tap
+                <strong>+</strong> → <strong>New Automation</strong>
               </li>
               <li>
-                Scroll to <strong>App</strong> → choose
-                <strong>Messages</strong> → tick
-                <strong>Receives a Notification</strong> → Next
+                Scroll down and tap <strong>App</strong> → select
+                <strong>Messages</strong> → enable
+                <strong>Receives a Notification</strong> → tap
+                <strong>Next</strong>
               </li>
               <li>
-                Add action: <strong>Get Contents of URL</strong>
+                Tap <strong>Add Action</strong> and search for
+                <strong>Get Contents of URL</strong> — add it
+              </li>
+              <li>
+                Configure the action:
                 <ul>
-                  <li>URL → paste from WEBHOOK URL above</li>
-                  <li>Method → POST</li>
                   <li>
-                    Headers → add
-                    <code>Authorization</code>:
-                    <code>Bearer &lt;token&gt;</code>
+                    <strong>URL</strong> → paste your Webhook URL from above
                   </li>
-                  <li>Request Body → JSON</li>
+                  <li><strong>Method</strong> → POST</li>
                   <li>
-                    Add field <code>sender</code> → tap value →
-                    <em>Shortcut Input</em> → <em>Notification Title</em>
+                    Tap <strong>Headers</strong> → add key
+                    <code>Authorization</code>, value
+                    <code>Bearer YOUR_TOKEN</code> (paste your token from above)
+                  </li>
+                  <li><strong>Request Body</strong> → JSON</li>
+                  <li>
+                    Add field <code>sender</code> → tap the value field → choose
+                    <em>Shortcut Input</em> →
+                    <em>Notification Title</em>
                   </li>
                   <li>
-                    Add field <code>text</code> → tap value →
-                    <em>Shortcut Input</em> → <em>Notification Content</em>
+                    Add field <code>text</code> → tap the value field → choose
+                    <em>Shortcut Input</em> →
+                    <em>Notification Content</em>
                   </li>
                 </ul>
               </li>
-              <li>Tap <strong>Next</strong></li>
               <li>
-                Turn off <strong>Ask Before Running</strong> → tap
+                Tap <strong>Next</strong> → turn off
+                <strong>Ask Before Running</strong> → tap
                 <strong>Done</strong>
               </li>
             </ol>
           </div>
 
           <button id="msg-settings-close">CLOSE</button>
+        </div>
+      </div>
+
+      <!-- ============ DOORBELL SETTINGS PANEL ============ -->
+      <div id="doorbell-settings">
+        <div id="doorbell-settings-card">
+          <h2>DOORBELL — SECURITY ALERTS</h2>
+          <p class="doorbell-settings-note">
+            Create Home Assistant automations that POST to Jarvis when your
+            doorbell fires. Jarvis announces it by voice and shows an alert.
+            Uses the same bearer token as Phone Messages.
+          </p>
+          <div class="msg-field-label">WEBHOOK URL</div>
+          <div class="msg-field-row">
+            <input id="doorbell-webhook-url" type="text" readonly />
+            <button id="doorbell-copy-url">COPY</button>
+          </div>
+          <div class="msg-field-label">BEARER TOKEN</div>
+          <div class="msg-field-row">
+            <input id="doorbell-webhook-token" type="text" readonly />
+            <button id="doorbell-copy-token">COPY</button>
+          </div>
+
+          <div class="doorbell-tab-bar">
+            <button class="doorbell-tab doorbell-tab-active" data-dtab="press">
+              DOORBELL
+            </button>
+            <button class="doorbell-tab" data-dtab="motion">MOTION</button>
+            <button class="doorbell-tab" data-dtab="person">PERSON</button>
+            <button class="doorbell-tab" data-dtab="package">PACKAGE</button>
+          </div>
+
+          <div class="doorbell-tab-content" id="doorbell-tab-press">
+            <p class="doorbell-settings-note">
+              Fires when the doorbell button is pressed.
+            </p>
+            <pre class="doorbell-yaml" id="yaml-press"></pre>
+          </div>
+          <div
+            class="doorbell-tab-content doorbell-tab-hidden"
+            id="doorbell-tab-motion"
+          >
+            <p class="doorbell-settings-note">
+              Fires on motion detection. Suppressed between
+              11&nbsp;pm–7&nbsp;am.
+            </p>
+            <pre class="doorbell-yaml" id="yaml-motion"></pre>
+          </div>
+          <div
+            class="doorbell-tab-content doorbell-tab-hidden"
+            id="doorbell-tab-person"
+          >
+            <p class="doorbell-settings-note">
+              Fires when a person is specifically detected.
+            </p>
+            <pre class="doorbell-yaml" id="yaml-person"></pre>
+          </div>
+          <div
+            class="doorbell-tab-content doorbell-tab-hidden"
+            id="doorbell-tab-package"
+          >
+            <p class="doorbell-settings-note">
+              Fires when a package delivery is detected.
+            </p>
+            <pre class="doorbell-yaml" id="yaml-package"></pre>
+          </div>
+
+          <button id="doorbell-settings-close">CLOSE</button>
+        </div>
+      </div>
+
+      <!-- ============ GARAGE SETTINGS PANEL ============ -->
+      <div id="garage-settings" class="setup-hidden">
+        <div id="garage-settings-card" class="setup-card-inner">
+          <div class="setup-ring"></div>
+          <div class="setup-word">SETTINGS</div>
+          <div class="setup-sub">GARAGE DOOR — MYQ</div>
+          <form id="garage-settings-form" autocomplete="off">
+            <label class="setup-label" for="myq-email">MYQ EMAIL</label>
+            <input
+              id="myq-email"
+              type="email"
+              placeholder="you@example.com"
+              autocomplete="off"
+              spellcheck="false"
+            />
+            <label
+              class="setup-label"
+              for="myq-password"
+              style="margin-top: 10px"
+              >MYQ PASSWORD</label
+            >
+            <input
+              id="myq-password"
+              type="password"
+              placeholder="Leave blank to keep existing password"
+              autocomplete="off"
+              spellcheck="false"
+            />
+            <div id="garage-status-row">
+              <span id="garage-status-dot"></span>
+              <span id="garage-status-text">—</span>
+            </div>
+            <div style="display: flex; gap: 8px; margin-top: 14px">
+              <button type="submit" id="garage-save">SAVE</button>
+              <button type="button" id="garage-cancel">CANCEL</button>
+            </div>
+          </form>
+          <div id="garage-msg"></div>
+        </div>
+      </div>
+
+      <!-- ============ TESLA SETTINGS MODAL ============ -->
+      <div id="tesla-settings" class="setup-hidden">
+        <div id="tesla-settings-card" class="setup-card-inner">
+          <div class="setup-ring"></div>
+          <div class="setup-word">SETTINGS</div>
+          <div class="setup-sub">TESLA VEHICLE</div>
+
+          <div class="tesla-tab-bar">
+            <button class="tesla-tab tesla-tab-active" data-ttab="unofficial">
+              UNOFFICIAL API
+            </button>
+            <button class="tesla-tab" data-ttab="fleet">FLEET API</button>
+          </div>
+
+          <!-- Unofficial tab -->
+          <div class="tesla-tab-content" id="tesla-tab-unofficial">
+            <p class="tesla-note">
+              Get a Tesla refresh token from
+              <strong>Auth App for Tesla</strong> (iOS / Android) or the
+              <code>tesla-auth</code> CLI, then paste it below. The token never
+              leaves your server.
+            </p>
+            <form id="tesla-unofficial-form" autocomplete="off">
+              <label class="setup-label" for="tesla-refresh-token"
+                >REFRESH TOKEN</label
+              >
+              <input
+                id="tesla-refresh-token"
+                type="password"
+                placeholder="ey…"
+                autocomplete="off"
+                spellcheck="false"
+              />
+              <div id="tesla-unofficial-status-row" style="margin-top: 10px">
+                <span id="tesla-unofficial-dot" class="disconnected"></span>
+                <span id="tesla-unofficial-text">NOT CONNECTED</span>
+              </div>
+              <div style="display: flex; gap: 8px; margin-top: 14px">
+                <button type="submit" id="tesla-unofficial-save">
+                  CONNECT
+                </button>
+                <button type="button" id="tesla-unofficial-disconnect">
+                  DISCONNECT
+                </button>
+              </div>
+            </form>
+            <div id="tesla-unofficial-msg"></div>
+          </div>
+
+          <!-- Fleet tab -->
+          <div class="tesla-tab-content tesla-tab-hidden" id="tesla-tab-fleet">
+            <p class="tesla-note" id="tesla-fleet-note">
+              Connect via Tesla's official Fleet API. Requires
+              <code>TESLA_CLIENT_ID</code> and
+              <code>TESLA_CLIENT_SECRET</code> set in your server's
+              <code>.env</code> by the admin. Vehicle commands also require a
+              virtual key paired via the Tesla app.
+            </p>
+            <div id="tesla-fleet-status-row" style="margin-top: 10px">
+              <span id="tesla-fleet-dot" class="disconnected"></span>
+              <span id="tesla-fleet-text">NOT CONNECTED</span>
+            </div>
+            <div style="display: flex; gap: 8px; margin-top: 14px">
+              <a
+                id="tesla-fleet-auth-btn"
+                class="setup-link-btn"
+                href="/api/tesla/fleet/auth"
+                >CONNECT WITH TESLA</a
+              >
+              <button type="button" id="tesla-fleet-disconnect">
+                DISCONNECT
+              </button>
+            </div>
+            <div id="tesla-fleet-msg"></div>
+          </div>
+
+          <div style="margin-top: 20px">
+            <button type="button" id="tesla-settings-close">CLOSE</button>
+          </div>
         </div>
       </div>
 

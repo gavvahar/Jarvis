@@ -1,5 +1,5 @@
 """
-personality.py — the J.A.R.V.I.S. character prompt for the Starter Kit.
+personality.py — the J.A.R.V.I.S. character prompt.
 
 This is the voice only: dry, deferential, economical MCU-canon J.A.R.V.I.S.
 There are no tools, no memory, no PC control — just conversation. Edit the
