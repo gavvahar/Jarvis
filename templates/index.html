@@ -401,10 +401,9 @@
               Choose how you'd like to forward messages to Jarvis:
             </p>
             <div class="msg-tab-bar msg-android-tab-bar">
-              <button
-                class="msg-tab msg-tab-active"
-                data-atab="apk"
-              >JARVIS APP</button>
+              <button class="msg-tab msg-tab-active" data-atab="apk">
+                JARVIS APP
+              </button>
               <button class="msg-tab" data-atab="macrodroid">MACRODROID</button>
             </div>
 
@@ -422,8 +421,8 @@
               <ol class="msg-ios-steps">
                 <li>
                   On your Android phone, open the
-                  <strong>Download Link</strong> above in a browser and
-                  install the APK
+                  <strong>Download Link</strong> above in a browser and install
+                  the APK
                   <ul>
                     <li>
                       If prompted, allow installs from unknown sources in your
@@ -439,7 +438,10 @@
                   Tap <strong>Grant Notification Access</strong>, find
                   <em>Jarvis Messages</em> in the list, and enable it
                 </li>
-                <li>Done — Jarvis will now receive your messages silently in the background</li>
+                <li>
+                  Done — Jarvis will now receive your messages silently in the
+                  background
+                </li>
               </ol>
               <p class="msg-settings-note">
                 Works with Google Messages (RCS + SMS), Signal, WhatsApp,
@@ -448,35 +450,38 @@
             </div>
 
             <!-- Macrodroid option -->
-            <div class="msg-android-content msg-tab-hidden" id="msg-atab-macrodroid">
+            <div
+              class="msg-android-content msg-tab-hidden"
+              id="msg-atab-macrodroid"
+            >
               <p class="msg-settings-note">
                 Use <strong>Macrodroid</strong> (free on the Play Store) to
                 forward notifications to Jarvis — no APK download needed.
               </p>
               <ol class="msg-ios-steps">
                 <li>
-                  Install <strong>Macrodroid</strong> from the Google Play
-                  Store and open it
+                  Install <strong>Macrodroid</strong> from the Google Play Store
+                  and open it
                 </li>
                 <li>
-                  Tap <strong>+</strong> to create a new macro, give it a
-                  name like <em>Jarvis Messages</em>
+                  Tap <strong>+</strong> to create a new macro, give it a name
+                  like <em>Jarvis Messages</em>
                 </li>
                 <li>
                   Under <strong>Triggers</strong> → tap
-                  <strong>Add Trigger</strong> → <strong>Notification</strong>
-                  → <strong>Notification Received</strong>
+                  <strong>Add Trigger</strong> → <strong>Notification</strong> →
+                  <strong>Notification Received</strong>
                   <ul>
                     <li>
-                      Select the apps you want to forward (e.g. Google
-                      Messages, WhatsApp, Signal)
+                      Select the apps you want to forward (e.g. Google Messages,
+                      WhatsApp, Signal)
                     </li>
                   </ul>
                 </li>
                 <li>
                   Under <strong>Actions</strong> → tap
-                  <strong>Add Action</strong> → <strong>Connectivity</strong>
-                  → <strong>HTTP Request</strong>
+                  <strong>Add Action</strong> → <strong>Connectivity</strong> →
+                  <strong>HTTP Request</strong>
                   <ul>
                     <li>
                       <strong>URL</strong> → paste your Webhook URL from above
@@ -494,8 +499,7 @@
                     <li>
                       <strong>Body</strong> → paste exactly:
                       <code
-                        >{"sender":
-                        "{notification_title}", "text":
+                        >{"sender": "{notification_title}", "text":
                         "{notification_text}"}</code
                       >
                     </li>
@@ -515,9 +519,9 @@
 
           <div class="msg-tab-content msg-tab-hidden" id="msg-tab-ios">
             <p class="msg-settings-note">
-              Use the built-in <strong>Shortcuts</strong> app to forward
-              message notifications to Jarvis — no extra app needed. Works
-              with SMS and iMessage.
+              Use the built-in <strong>Shortcuts</strong> app to forward message
+              notifications to Jarvis — no extra app needed. Works with SMS and
+              iMessage.
             </p>
             <ol class="msg-ios-steps">
               <li>
@@ -545,18 +549,17 @@
                   <li>
                     Tap <strong>Headers</strong> → add key
                     <code>Authorization</code>, value
-                    <code>Bearer YOUR_TOKEN</code> (paste your token from
-                    above)
+                    <code>Bearer YOUR_TOKEN</code> (paste your token from above)
                   </li>
                   <li><strong>Request Body</strong> → JSON</li>
                   <li>
-                    Add field <code>sender</code> → tap the value field →
-                    choose <em>Shortcut Input</em> →
+                    Add field <code>sender</code> → tap the value field → choose
+                    <em>Shortcut Input</em> →
                     <em>Notification Title</em>
                   </li>
                   <li>
-                    Add field <code>text</code> → tap the value field →
-                    choose <em>Shortcut Input</em> →
+                    Add field <code>text</code> → tap the value field → choose
+                    <em>Shortcut Input</em> →
                     <em>Notification Content</em>
                   </li>
                 </ul>
