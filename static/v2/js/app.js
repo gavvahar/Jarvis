@@ -1588,17 +1588,22 @@
   let _musicKit = null;
 
   function setAppleMusicStatus(connected) {
-    if (appleMusicDot) appleMusicDot.className = connected ? "connected" : "disconnected";
-    if (appleMusicTextEl) appleMusicTextEl.textContent = connected ? "CONNECTED" : "NOT CONNECTED";
-    if (appleMusicBtn) appleMusicBtn.classList.toggle("spotify-live", connected);
+    if (appleMusicDot)
+      appleMusicDot.className = connected ? "connected" : "disconnected";
+    if (appleMusicTextEl)
+      appleMusicTextEl.textContent = connected ? "CONNECTED" : "NOT CONNECTED";
+    if (appleMusicBtn)
+      appleMusicBtn.classList.toggle("spotify-live", connected);
   }
 
   function showAppleMusicSettings() {
-    if (appleMusicSettingsEl) appleMusicSettingsEl.classList.remove("setup-hidden");
+    if (appleMusicSettingsEl)
+      appleMusicSettingsEl.classList.remove("setup-hidden");
   }
 
   function hideAppleMusicSettings() {
-    if (appleMusicSettingsEl) appleMusicSettingsEl.classList.add("setup-hidden");
+    if (appleMusicSettingsEl)
+      appleMusicSettingsEl.classList.add("setup-hidden");
   }
 
   async function initMusicKit() {
@@ -1618,17 +1623,23 @@
 
   document.addEventListener("musickitloaded", initMusicKit);
 
-  if (appleMusicBtn) appleMusicBtn.addEventListener("click", showAppleMusicSettings);
-  if (appleMusicSettingsClose) appleMusicSettingsClose.addEventListener("click", hideAppleMusicSettings);
-  appleMusicSettingsEl && appleMusicSettingsEl.addEventListener("click", (e) => {
-    if (e.target === appleMusicSettingsEl) hideAppleMusicSettings();
-  });
+  if (appleMusicBtn)
+    appleMusicBtn.addEventListener("click", showAppleMusicSettings);
+  if (appleMusicSettingsClose)
+    appleMusicSettingsClose.addEventListener("click", hideAppleMusicSettings);
+  appleMusicSettingsEl &&
+    appleMusicSettingsEl.addEventListener("click", (e) => {
+      if (e.target === appleMusicSettingsEl) hideAppleMusicSettings();
+    });
 
   if (appleMusicConnectBtn) {
     appleMusicConnectBtn.addEventListener("click", async () => {
       await initMusicKit();
       if (!_musicKit) {
-        if (appleMusicMsg) { appleMusicMsg.className = "err"; appleMusicMsg.textContent = "Apple Music not configured on server."; }
+        if (appleMusicMsg) {
+          appleMusicMsg.className = "err";
+          appleMusicMsg.textContent = "Apple Music not configured on server.";
+        }
         return;
       }
       try {
@@ -1639,9 +1650,15 @@
           body: JSON.stringify({ token: userToken }),
         });
         setAppleMusicStatus(true);
-        if (appleMusicMsg) { appleMusicMsg.className = "ok"; appleMusicMsg.textContent = "Connected to Apple Music."; }
+        if (appleMusicMsg) {
+          appleMusicMsg.className = "ok";
+          appleMusicMsg.textContent = "Connected to Apple Music.";
+        }
       } catch (e) {
-        if (appleMusicMsg) { appleMusicMsg.className = "err"; appleMusicMsg.textContent = "Authorization failed."; }
+        if (appleMusicMsg) {
+          appleMusicMsg.className = "err";
+          appleMusicMsg.textContent = "Authorization failed.";
+        }
       }
     });
   }
@@ -1652,15 +1669,23 @@
         if (_musicKit) await _musicKit.unauthorize().catch(() => {});
         await fetch("/api/apple_music/disconnect", { method: "POST" });
         setAppleMusicStatus(false);
-        if (appleMusicMsg) { appleMusicMsg.className = "ok"; appleMusicMsg.textContent = "Disconnected from Apple Music."; }
+        if (appleMusicMsg) {
+          appleMusicMsg.className = "ok";
+          appleMusicMsg.textContent = "Disconnected from Apple Music.";
+        }
       } catch {
-        if (appleMusicMsg) { appleMusicMsg.className = "err"; appleMusicMsg.textContent = "Could not reach the server."; }
+        if (appleMusicMsg) {
+          appleMusicMsg.className = "err";
+          appleMusicMsg.textContent = "Could not reach the server.";
+        }
       }
     });
   }
 
   socket.on("apple_music_cmd", async (data) => {
-    if (!_musicKit) { await initMusicKit(); }
+    if (!_musicKit) {
+      await initMusicKit();
+    }
     if (!_musicKit) return;
     const { action, cb, value, query, type } = data;
     let result = "ok";
@@ -1669,29 +1694,39 @@
       else if (action === "pause") await _musicKit.pause();
       else if (action === "next") await _musicKit.skipToNextItem();
       else if (action === "previous") await _musicKit.skipToPreviousItem();
-      else if (action === "volume") _musicKit.volume = Math.max(0, Math.min(1, value));
+      else if (action === "volume")
+        _musicKit.volume = Math.max(0, Math.min(1, value));
       else if (action === "party") {
         _musicKit.shuffleMode = MusicKit.PlayerShuffleMode.songs;
         await _musicKit.play();
       } else if (action === "now_playing") {
         const item = _musicKit.queue?.currentItem;
-        const playing = _musicKit.playbackState === MusicKit.PlaybackStates.playing;
+        const playing =
+          _musicKit.playbackState === MusicKit.PlaybackStates.playing;
         result = item
           ? `Currently ${playing ? "playing" : "paused"}: ${item.attributes?.name} by ${item.attributes?.artistName}.`
           : "Nothing is currently playing.";
       } else if (action === "search_and_play") {
         const sf = _musicKit.storefrontId || "us";
-        const resp = await _musicKit.api.music(`/v1/catalog/${sf}/search`, { term: query, types: type || "songs", limit: "1" });
+        const resp = await _musicKit.api.music(`/v1/catalog/${sf}/search`, {
+          term: query,
+          types: type || "songs",
+          limit: "1",
+        });
         const results = resp.data?.results;
         const key = type || "songs";
         const items = results?.[key]?.data;
         if (items?.length) {
           const id = items[0].id;
           const name = items[0].attributes?.name;
-          const artist = items[0].attributes?.artistName || items[0].attributes?.curatorName || "";
+          const artist =
+            items[0].attributes?.artistName ||
+            items[0].attributes?.curatorName ||
+            "";
           if (key === "songs") await _musicKit.setQueue({ song: id });
           else if (key === "albums") await _musicKit.setQueue({ album: id });
-          else if (key === "playlists") await _musicKit.setQueue({ playlist: id });
+          else if (key === "playlists")
+            await _musicKit.setQueue({ playlist: id });
           else if (key === "artists") await _musicKit.setQueue({ artist: id });
           await _musicKit.play();
           result = `Now playing ${name}${artist ? " by " + artist : ""}.`;
@@ -1795,7 +1830,8 @@
       if (!d.apple_music_server_enabled && appleMusicConnectBtn) {
         appleMusicConnectBtn.style.opacity = "0.4";
         appleMusicConnectBtn.style.pointerEvents = "none";
-        appleMusicConnectBtn.title = "APPLE_MUSIC_* keys not configured in .env";
+        appleMusicConnectBtn.title =
+          "APPLE_MUSIC_* keys not configured in .env";
       }
       if (d.apple_music_server_enabled) initMusicKit();
       if (
