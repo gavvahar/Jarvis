@@ -1480,13 +1480,34 @@ SPOTIFY_TOOLS_ANTHROPIC = [
 ]
 
 SPOTIFY_TOOLS_OPENAI = [
-    {"type": "function", "function": {"name": "spotify_now_playing", "description": "Get the currently playing track on Spotify.", "parameters": {"type": "object", "properties": {}}}},
+    {
+        "type": "function",
+        "function": {"name": "spotify_now_playing", "description": "Get the currently playing track on Spotify.", "parameters": {"type": "object", "properties": {}}},
+    },
     {"type": "function", "function": {"name": "spotify_play", "description": "Resume or start Spotify playback.", "parameters": {"type": "object", "properties": {}}}},
     {"type": "function", "function": {"name": "spotify_pause", "description": "Pause Spotify playback.", "parameters": {"type": "object", "properties": {}}}},
     {"type": "function", "function": {"name": "spotify_next", "description": "Skip to the next track on Spotify.", "parameters": {"type": "object", "properties": {}}}},
     {"type": "function", "function": {"name": "spotify_previous", "description": "Go back to the previous track on Spotify.", "parameters": {"type": "object", "properties": {}}}},
-    {"type": "function", "function": {"name": "spotify_volume", "description": "Set the Spotify playback volume (0–100).", "parameters": {"type": "object", "properties": {"volume_percent": {"type": "integer", "description": "Volume 0–100."}}, "required": ["volume_percent"]}}},
-    {"type": "function", "function": {"name": "spotify_search_and_play", "description": "Search Spotify and play the best matching track, artist, album, or playlist.", "parameters": {"type": "object", "properties": {"query": {"type": "string", "description": "Search query"}, "type": {"type": "string", "enum": ["track", "artist", "album", "playlist"]}}, "required": ["query"]}}},
+    {
+        "type": "function",
+        "function": {
+            "name": "spotify_volume",
+            "description": "Set the Spotify playback volume (0–100).",
+            "parameters": {"type": "object", "properties": {"volume_percent": {"type": "integer", "description": "Volume 0–100."}}, "required": ["volume_percent"]},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "spotify_search_and_play",
+            "description": "Search Spotify and play the best matching track, artist, album, or playlist.",
+            "parameters": {
+                "type": "object",
+                "properties": {"query": {"type": "string", "description": "Search query"}, "type": {"type": "string", "enum": ["track", "artist", "album", "playlist"]}},
+                "required": ["query"],
+            },
+        },
+    },
 ]
 
 _SPOTIFY_TOOL_NAMES = {t["name"] for t in SPOTIFY_TOOLS_ANTHROPIC}
@@ -2713,14 +2734,8 @@ async def on_user_message(sid, data):
     if not text:
         return
     lower = text.lower()
-    party_on = any(
-        p in lower
-        for p in ("party mode", "let's party", "party time", "activate party", "start the party")
-    )
-    party_off = any(
-        p in lower
-        for p in ("end party", "stop party", "deactivate party", "turn off party", "party off")
-    )
+    party_on = any(p in lower for p in ("party mode", "let's party", "party time", "activate party", "start the party"))
+    party_off = any(p in lower for p in ("end party", "stop party", "deactivate party", "turn off party", "party off"))
     if party_on or party_off:
         active = party_on
         user_id = _sid_to_user.get(sid)
@@ -2730,11 +2745,7 @@ async def on_user_message(sid, data):
         if active and _spotify_configured(config) and user_id:
             await _spotify_start_party(user_id, config)
             music_line = " Music is on."
-        msg = (
-            f"Activating party protocols. Excellent taste, sir.{music_line}"
-            if active
-            else "Returning to standard operations. It was fun while it lasted, sir."
-        )
+        msg = f"Activating party protocols. Excellent taste, sir.{music_line}" if active else "Returning to standard operations. It was fun while it lasted, sir."
         await sio.emit("status", {"state": "speaking"}, to=sid)
         await sio.emit("party_mode", {"active": active}, to=sid)
         await sio.emit("speak_sentence", {"text": msg, "seq": 0}, to=sid)
