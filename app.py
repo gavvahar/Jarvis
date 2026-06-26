@@ -10,7 +10,7 @@ Three providers:
   • openai_compatible — any OpenAI-compatible endpoint (Ollama, OpenRouter, …)
 """
 
-import json, os, re, asyncio, secrets, tempfile, urllib.parse, asyncpg, httpx, datetime, hashlib, base64, pathlib
+import json, os, re, asyncio, secrets, tempfile, urllib.parse, asyncpg, httpx, datetime, hashlib, base64, pathlib, jwt
 
 
 from contextlib import asynccontextmanager
@@ -52,6 +52,9 @@ TESLA_CLIENT_ID = os.environ.get("TESLA_CLIENT_ID", "")
 TESLA_CLIENT_SECRET = os.environ.get("TESLA_CLIENT_SECRET", "")
 SPOTIFY_CLIENT_ID = os.environ.get("SPOTIFY_CLIENT_ID", "")
 SPOTIFY_CLIENT_SECRET = os.environ.get("SPOTIFY_CLIENT_SECRET", "")
+APPLE_MUSIC_TEAM_ID = os.environ.get("APPLE_MUSIC_TEAM_ID", "")
+APPLE_MUSIC_KEY_ID = os.environ.get("APPLE_MUSIC_KEY_ID", "")
+APPLE_MUSIC_PRIVATE_KEY = os.environ.get("APPLE_MUSIC_PRIVATE_KEY", "")
 
 # ─── DB ───────────────────────────────────────────────────────────────────────
 _db_pool: asyncpg.Pool | None = None
@@ -86,6 +89,7 @@ ALTER TABLE user_configs ADD COLUMN IF NOT EXISTS tesla_fleet_refresh_token TEXT
 ALTER TABLE user_configs ADD COLUMN IF NOT EXISTS spotify_refresh_token TEXT NOT NULL DEFAULT '';
 ALTER TABLE user_configs ADD COLUMN IF NOT EXISTS spotify_access_token TEXT NOT NULL DEFAULT '';
 ALTER TABLE user_configs ADD COLUMN IF NOT EXISTS spotify_token_expiry DOUBLE PRECISION NOT NULL DEFAULT 0;
+ALTER TABLE user_configs ADD COLUMN IF NOT EXISTS apple_music_user_token TEXT NOT NULL DEFAULT '';
 
 CREATE TABLE IF NOT EXISTS phone_messages (
     id          BIGSERIAL PRIMARY KEY,
@@ -1283,6 +1287,8 @@ async def _execute_ha_tool(config: dict, name, args, user_id: str = ""):
             return await _execute_tesla_tool(config, name, args, user_id)
         if name in _SPOTIFY_TOOL_NAMES:
             return await _execute_spotify_tool(name, args, user_id, config)
+        if name in _AM_TOOL_NAMES:
+            return await _execute_apple_music_tool(name, args, user_id)
         return f"Unknown tool: {name}"
     except Exception as e:
         return f"Error: {e}"
@@ -1517,6 +1523,142 @@ def _get_spotify_tools(config: dict, provider: str) -> list:
     if not _spotify_configured(config):
         return []
     return SPOTIFY_TOOLS_ANTHROPIC if provider == "anthropic" else SPOTIFY_TOOLS_OPENAI
+
+
+# ─── APPLE MUSIC ──────────────────────────────────────────────────────────────
+_am_callbacks: dict[str, asyncio.Future] = {}
+
+
+def _apple_music_server_configured() -> bool:
+    return bool(APPLE_MUSIC_TEAM_ID and APPLE_MUSIC_KEY_ID and APPLE_MUSIC_PRIVATE_KEY)
+
+
+def _apple_music_configured(config: dict) -> bool:
+    return _apple_music_server_configured() and bool(config.get("apple_music_user_token"))
+
+
+def _apple_music_dev_token() -> str:
+    now = int(datetime.datetime.now().timestamp())
+    return jwt.encode(
+        {"iss": APPLE_MUSIC_TEAM_ID, "iat": now, "exp": now + 15777000},
+        APPLE_MUSIC_PRIVATE_KEY,
+        algorithm="ES256",
+        headers={"kid": APPLE_MUSIC_KEY_ID},
+    )
+
+
+async def _am_request_callback(sid: str, action: str, extra: dict | None = None, timeout: float = 7.0) -> str:
+    cb_id = secrets.token_hex(8)
+    fut: asyncio.Future = asyncio.get_event_loop().create_future()
+    _am_callbacks[cb_id] = fut
+    await sio.emit("apple_music_cmd", {"action": action, "cb": cb_id, **(extra or {})}, to=sid)
+    try:
+        return await asyncio.wait_for(fut, timeout=timeout)
+    except asyncio.TimeoutError:
+        return "Request timed out."
+    finally:
+        _am_callbacks.pop(cb_id, None)
+
+
+async def _apple_music_start_party(user_id: str):
+    sids = [sid for sid, uid in _sid_to_user.items() if uid == user_id]
+    if sids:
+        await sio.emit("apple_music_cmd", {"action": "party"}, to=sids[0])
+
+
+async def _execute_apple_music_tool(name: str, args: dict, user_id: str) -> str:
+    sids = [sid for sid, uid in _sid_to_user.items() if uid == user_id]
+    if not sids:
+        return "No active Apple Music session."
+    sid = sids[0]
+
+    _simple: dict[str, tuple[str, str]] = {
+        "apple_music_play":     ("play",     "Playback started."),
+        "apple_music_pause":    ("pause",    "Playback paused."),
+        "apple_music_next":     ("next",     "Skipped to next track."),
+        "apple_music_previous": ("previous", "Back to previous track."),
+    }
+    if name in _simple:
+        action, msg = _simple[name]
+        await sio.emit("apple_music_cmd", {"action": action}, to=sid)
+        return msg
+    if name == "apple_music_now_playing":
+        return await _am_request_callback(sid, "now_playing")
+    if name == "apple_music_volume":
+        vol = max(0, min(100, int(args.get("volume_percent", 50))))
+        await sio.emit("apple_music_cmd", {"action": "volume", "value": vol / 100}, to=sid)
+        return f"Volume set to {vol}%."
+    if name == "apple_music_search_and_play":
+        type_map = {"track": "songs", "artist": "artists", "album": "albums", "playlist": "playlists"}
+        am_type = type_map.get(args.get("type", "track"), "songs")
+        return await _am_request_callback(sid, "search_and_play", {"query": args.get("query", ""), "type": am_type}, timeout=12.0)
+    return f"Unknown Apple Music tool: {name}"
+
+
+APPLE_MUSIC_TOOLS_ANTHROPIC = [
+    {"name": "apple_music_now_playing", "description": "Get the currently playing track on Apple Music.", "input_schema": {"type": "object", "properties": {}}},
+    {"name": "apple_music_play", "description": "Resume or start Apple Music playback.", "input_schema": {"type": "object", "properties": {}}},
+    {"name": "apple_music_pause", "description": "Pause Apple Music playback.", "input_schema": {"type": "object", "properties": {}}},
+    {"name": "apple_music_next", "description": "Skip to the next track on Apple Music.", "input_schema": {"type": "object", "properties": {}}},
+    {"name": "apple_music_previous", "description": "Go back to the previous track on Apple Music.", "input_schema": {"type": "object", "properties": {}}},
+    {
+        "name": "apple_music_volume",
+        "description": "Set the Apple Music playback volume (0–100).",
+        "input_schema": {
+            "type": "object",
+            "properties": {"volume_percent": {"type": "integer", "description": "Volume from 0 to 100."}},
+            "required": ["volume_percent"],
+        },
+    },
+    {
+        "name": "apple_music_search_and_play",
+        "description": "Search Apple Music and play the best matching song, artist, album, or playlist.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Search query (artist, song, playlist name, etc.)"},
+                "type": {"type": "string", "enum": ["track", "artist", "album", "playlist"], "description": "What to search for. Default: track."},
+            },
+            "required": ["query"],
+        },
+    },
+]
+
+APPLE_MUSIC_TOOLS_OPENAI = [
+    {"type": "function", "function": {"name": "apple_music_now_playing", "description": "Get the currently playing track on Apple Music.", "parameters": {"type": "object", "properties": {}}}},
+    {"type": "function", "function": {"name": "apple_music_play", "description": "Resume or start Apple Music playback.", "parameters": {"type": "object", "properties": {}}}},
+    {"type": "function", "function": {"name": "apple_music_pause", "description": "Pause Apple Music playback.", "parameters": {"type": "object", "properties": {}}}},
+    {"type": "function", "function": {"name": "apple_music_next", "description": "Skip to the next track on Apple Music.", "parameters": {"type": "object", "properties": {}}}},
+    {"type": "function", "function": {"name": "apple_music_previous", "description": "Go back to the previous track on Apple Music.", "parameters": {"type": "object", "properties": {}}}},
+    {
+        "type": "function",
+        "function": {
+            "name": "apple_music_volume",
+            "description": "Set the Apple Music playback volume (0–100).",
+            "parameters": {"type": "object", "properties": {"volume_percent": {"type": "integer", "description": "Volume 0–100."}}, "required": ["volume_percent"]},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "apple_music_search_and_play",
+            "description": "Search Apple Music and play the best matching song, artist, album, or playlist.",
+            "parameters": {
+                "type": "object",
+                "properties": {"query": {"type": "string", "description": "Search query"}, "type": {"type": "string", "enum": ["track", "artist", "album", "playlist"]}},
+                "required": ["query"],
+            },
+        },
+    },
+]
+
+_AM_TOOL_NAMES = {t["name"] for t in APPLE_MUSIC_TOOLS_ANTHROPIC}
+
+
+def _get_apple_music_tools(config: dict, provider: str) -> list:
+    if not _apple_music_configured(config):
+        return []
+    return APPLE_MUSIC_TOOLS_ANTHROPIC if provider == "anthropic" else APPLE_MUSIC_TOOLS_OPENAI
 
 
 # ─── CONFIG VALIDATION ────────────────────────────────────────────────────────
@@ -1774,6 +1916,8 @@ async def api_status(request: Request):
         "tesla_fleet_enabled": bool(TESLA_CLIENT_ID),
         "spotify_configured": _spotify_configured(config),
         "spotify_client_enabled": bool(SPOTIFY_CLIENT_ID),
+        "apple_music_configured": _apple_music_configured(config),
+        "apple_music_server_enabled": _apple_music_server_configured(),
         "role": state.get("role", "user"),
     }
 
@@ -2429,6 +2573,56 @@ async def api_spotify_disconnect(request: Request):
     return {"ok": True}
 
 
+# ─── APPLE MUSIC API ──────────────────────────────────────────────────────────
+@fast_app.get("/api/apple_music/token")
+async def api_apple_music_token(request: Request):
+    user_id = _get_current_user(request)
+    if not user_id:
+        raise HTTPException(401)
+    if not _apple_music_server_configured():
+        return {"token": None, "enabled": False}
+    return {"token": _apple_music_dev_token(), "enabled": True}
+
+
+@fast_app.post("/api/apple_music/user_token")
+async def api_apple_music_user_token(request: Request):
+    user_id = _get_current_user(request)
+    if not user_id:
+        raise HTTPException(401)
+    body = await request.json()
+    token = (body.get("token") or "").strip()
+    state = await _get_user_state(user_id)
+    config = state["config"]
+    async with _get_user_lock(user_id):
+        config["apple_music_user_token"] = token
+        async with _pool().acquire() as conn:
+            await conn.execute("UPDATE user_configs SET apple_music_user_token=$2 WHERE user_id=$1", user_id, token)
+    return {"ok": True}
+
+
+@fast_app.post("/api/apple_music/disconnect")
+async def api_apple_music_disconnect(request: Request):
+    user_id = _get_current_user(request)
+    if not user_id:
+        raise HTTPException(401)
+    state = await _get_user_state(user_id)
+    config = state["config"]
+    async with _get_user_lock(user_id):
+        config["apple_music_user_token"] = ""
+        async with _pool().acquire() as conn:
+            await conn.execute("UPDATE user_configs SET apple_music_user_token='' WHERE user_id=$1", user_id)
+    return {"ok": True}
+
+
+@sio.on("apple_music_callback")
+async def on_apple_music_callback(sid, data):
+    cb_id = (data or {}).get("cb")
+    result = (data or {}).get("result", "")
+    fut = _am_callbacks.get(cb_id)
+    if fut and not fut.done():
+        fut.set_result(result)
+
+
 @fast_app.get("/api/messages")
 async def api_messages(request: Request):
     user_id = _get_current_user(request)
@@ -2499,6 +2693,13 @@ def _build_system_prompt(config: dict) -> str:
             "spotify_next/spotify_previous to skip tracks, spotify_volume to adjust volume (0–100), "
             "and spotify_search_and_play to find and play a specific song, artist, album, or playlist."
         )
+    if _apple_music_configured(config):
+        system += (
+            "\n\nAPPLE MUSIC — you are connected to the user's Apple Music account. "
+            "Use apple_music_now_playing to check what's playing, apple_music_play/apple_music_pause to control playback, "
+            "apple_music_next/apple_music_previous to skip tracks, apple_music_volume to adjust volume (0–100), "
+            "and apple_music_search_and_play to find and play a specific song, artist, album, or playlist."
+        )
     return system
 
 
@@ -2544,7 +2745,7 @@ async def _stream_reply(state: dict, on_text):
     client = state["client"]
     model = config.get("model") or DEFAULT_MODELS.get(provider, "")
     system = _build_system_prompt(config)
-    ha_tools = _get_ha_tools(config, provider) + _get_myq_tools(config, provider) + _get_tesla_tools(config, provider) + _get_spotify_tools(config, provider)
+    ha_tools = _get_ha_tools(config, provider) + _get_myq_tools(config, provider) + _get_tesla_tools(config, provider) + _get_spotify_tools(config, provider) + _get_apple_music_tools(config, provider)
     local_msgs = list(state["conversation"])
 
     for _ in range(4):
@@ -2742,9 +2943,13 @@ async def on_user_message(sid, data):
         state = await _get_user_state(user_id) if user_id else {}
         config = state.get("config", {})
         music_line = ""
-        if active and _spotify_configured(config) and user_id:
-            await _spotify_start_party(user_id, config)
-            music_line = " Music is on."
+        if active and user_id:
+            if _spotify_configured(config):
+                await _spotify_start_party(user_id, config)
+                music_line = " Music is on."
+            elif _apple_music_configured(config):
+                await _apple_music_start_party(user_id)
+                music_line = " Music is on."
         msg = f"Activating party protocols. Excellent taste, sir.{music_line}" if active else "Returning to standard operations. It was fun while it lasted, sir."
         await sio.emit("status", {"state": "speaking"}, to=sid)
         await sio.emit("party_mode", {"active": active}, to=sid)
@@ -2881,6 +3086,8 @@ async def on_start_party_music(sid, data=None):
     config = state.get("config", {})
     if _spotify_configured(config):
         await _spotify_start_party(user_id, config)
+    elif _apple_music_configured(config):
+        await _apple_music_start_party(user_id)
 
 
 # ─── BACKGROUND TASKS ────────────────────────────────────────────────────────
