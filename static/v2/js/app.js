@@ -1647,7 +1647,10 @@
         await fetch("/api/apple_music/user_token", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ token: userToken }),
+          body: JSON.stringify({
+            token: userToken,
+            storefront: _musicKit.storefrontId || "us",
+          }),
         });
         setAppleMusicStatus(true);
         if (appleMusicMsg) {

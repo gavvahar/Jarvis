@@ -90,6 +90,7 @@ ALTER TABLE user_configs ADD COLUMN IF NOT EXISTS spotify_refresh_token TEXT NOT
 ALTER TABLE user_configs ADD COLUMN IF NOT EXISTS spotify_access_token TEXT NOT NULL DEFAULT '';
 ALTER TABLE user_configs ADD COLUMN IF NOT EXISTS spotify_token_expiry DOUBLE PRECISION NOT NULL DEFAULT 0;
 ALTER TABLE user_configs ADD COLUMN IF NOT EXISTS apple_music_user_token TEXT NOT NULL DEFAULT '';
+ALTER TABLE user_configs ADD COLUMN IF NOT EXISTS apple_music_storefront TEXT NOT NULL DEFAULT 'us';
 
 CREATE TABLE IF NOT EXISTS phone_messages (
     id          BIGSERIAL PRIMARY KEY,
@@ -2614,12 +2615,19 @@ async def api_apple_music_user_token(request: Request):
         raise HTTPException(401)
     body = await request.json()
     token = (body.get("token") or "").strip()
+    storefront = (body.get("storefront") or "us").strip().lower()
     state = await _get_user_state(user_id)
     config = state["config"]
     async with _get_user_lock(user_id):
         config["apple_music_user_token"] = token
+        config["apple_music_storefront"] = storefront
         async with _pool().acquire() as conn:
-            await conn.execute("UPDATE user_configs SET apple_music_user_token=$2 WHERE user_id=$1", user_id, token)
+            await conn.execute(
+                "UPDATE user_configs SET apple_music_user_token=$2, apple_music_storefront=$3 WHERE user_id=$1",
+                user_id,
+                token,
+                storefront,
+            )
     return {"ok": True}
 
 
@@ -3184,11 +3192,12 @@ async def party_search(token: str, q: str = ""):
             return {"results": [{"id": t["uri"], "title": t["name"], "artist": ", ".join(a["name"] for a in t.get("artists", []))} for t in items]}
         except Exception:
             return {"results": []}
-    if _apple_music_server_configured():
+    if _apple_music_configured(config):
         try:
+            storefront = config.get("apple_music_storefront") or "us"
             async with httpx.AsyncClient(timeout=10) as c:
                 r = await c.get(
-                    "https://api.music.apple.com/v1/catalog/us/search",
+                    f"https://api.music.apple.com/v1/catalog/{storefront}/search",
                     headers={"Authorization": f"Bearer {_apple_music_dev_token()}"},
                     params={"term": q, "types": "songs", "limit": 5},
                 )
