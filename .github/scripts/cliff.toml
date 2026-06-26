@@ -18,7 +18,7 @@ trim = true
 
 [git]
 conventional_commits = true
-filter_unconventional = true
+filter_unconventional = false
 commit_parsers = [
   { message = "^feat",     group = "✨ Features" },
   { message = "^fix",      group = "🐛 Bug Fixes" },
@@ -27,4 +27,6 @@ commit_parsers = [
   { message = "^test",     group = "🧪 Tests" },
   { message = "^perf",     group = "⚡ Performance" },
   { message = "^chore",    group = "🔧 Chores" },
+  { message = "^lint",     group = "🔧 Chores" },
+  { message = ".*",        group = "📝 Changes" },
 ]
