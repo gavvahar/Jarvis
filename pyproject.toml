@@ -71,7 +71,7 @@ testpaths = ["tests"]
 
 # Default envs run when you type `tox` with no arguments
 [tool.tox]
-env_list = ["lint", "txt-lint", "format", "prettier"]
+env_list = ["lint", "txt-lint", "format", "prettier", "toml-lint"]
 work_dir = "/tmp/.tox"
 
 # Shared base config inherited by all envs
@@ -113,12 +113,21 @@ commands = [
     ["ruff", "format", "--no-cache", "."],
     ["ruff", "check", "--no-cache", "--fix", "."],
     ["npx", "prettier", "--write", "**/*.{css,js,html,json,yml,yaml,md}"],
+    ["npx", "@taplo/cli", "fmt", "--no-auto-config", "**/*.toml"],
 ]
 
 [tool.tox.env.prettier]
 skip_install = true
 allowlist_externals = ["npx"]
 commands = [["npx", "prettier", "--check", "**/*.{css,js,html,json,yml,yaml,md}"]]
+
+[tool.tox.env."toml-lint"]
+skip_install = true
+allowlist_externals = ["npx"]
+commands = [
+    ["npx", "@taplo/cli", "fmt", "--check", "--no-auto-config", "**/*.toml"],
+    ["npx", "@taplo/cli", "lint", "--no-auto-config", "**/*.toml"],
+]
 
 # --- Testing ----------------------------------------------------------------
 
@@ -139,6 +148,7 @@ commands = [
     ["tox", "-e", "lint"],
     ["tox", "-e", "txt-lint"],
     ["tox", "-e", "prettier"],
+    ["tox", "-e", "toml-lint"],
     ["tox", "-e", "tests"],
 ]
 
