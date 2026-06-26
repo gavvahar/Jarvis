@@ -398,36 +398,119 @@
 
           <div class="msg-tab-content" id="msg-tab-android">
             <p class="msg-settings-note">
-              Install the Jarvis companion app on your Android phone. It
-              listens for message notifications and forwards them here so
-              Jarvis can alert you to anything important.
+              Choose how you'd like to forward messages to Jarvis:
             </p>
-            <ol class="msg-ios-steps">
-              <li>
-                Open <strong>Android Studio</strong> and load the
-                <code>android/</code> folder from the Jarvis repo
-              </li>
-              <li>
-                Plug in your phone, then click <strong>Run</strong> to build
-                and install the app
-              </li>
-              <li>
-                Open the app and paste the <strong>Webhook URL</strong> and
-                <strong>Bearer Token</strong> from above
-              </li>
-              <li>
-                Tap <strong>Grant Notification Access</strong>, find
-                <em>Jarvis Messages</em> in the list, and enable it
-              </li>
-              <li>
-                That's it — Jarvis will now receive your messages in the
-                background
-              </li>
-            </ol>
-            <p class="msg-settings-note">
-              Works with Google Messages (RCS + SMS), Signal, WhatsApp,
-              Telegram, and Messenger.
-            </p>
+            <div class="msg-tab-bar msg-android-tab-bar">
+              <button
+                class="msg-tab msg-tab-active"
+                data-atab="apk"
+              >JARVIS APP</button>
+              <button class="msg-tab" data-atab="macrodroid">MACRODROID</button>
+            </div>
+
+            <!-- APK download option -->
+            <div class="msg-android-content" id="msg-atab-apk">
+              <p class="msg-settings-note">
+                The easiest option — download and install the Jarvis companion
+                app directly on your phone. No account or sign-in needed.
+              </p>
+              <div class="msg-field-label">DOWNLOAD LINK</div>
+              <div class="msg-field-row">
+                <input id="msg-apk-url" type="text" readonly />
+                <button id="msg-copy-apk">COPY</button>
+              </div>
+              <ol class="msg-ios-steps">
+                <li>
+                  On your Android phone, open the
+                  <strong>Download Link</strong> above in a browser and
+                  install the APK
+                  <ul>
+                    <li>
+                      If prompted, allow installs from unknown sources in your
+                      phone's settings
+                    </li>
+                  </ul>
+                </li>
+                <li>
+                  Open the app and paste the <strong>Webhook URL</strong> and
+                  <strong>Bearer Token</strong> from above
+                </li>
+                <li>
+                  Tap <strong>Grant Notification Access</strong>, find
+                  <em>Jarvis Messages</em> in the list, and enable it
+                </li>
+                <li>Done — Jarvis will now receive your messages silently in the background</li>
+              </ol>
+              <p class="msg-settings-note">
+                Works with Google Messages (RCS + SMS), Signal, WhatsApp,
+                Telegram, and Messenger.
+              </p>
+            </div>
+
+            <!-- Macrodroid option -->
+            <div class="msg-android-content msg-tab-hidden" id="msg-atab-macrodroid">
+              <p class="msg-settings-note">
+                Use <strong>Macrodroid</strong> (free on the Play Store) to
+                forward notifications to Jarvis — no APK download needed.
+              </p>
+              <ol class="msg-ios-steps">
+                <li>
+                  Install <strong>Macrodroid</strong> from the Google Play
+                  Store and open it
+                </li>
+                <li>
+                  Tap <strong>+</strong> to create a new macro, give it a
+                  name like <em>Jarvis Messages</em>
+                </li>
+                <li>
+                  Under <strong>Triggers</strong> → tap
+                  <strong>Add Trigger</strong> → <strong>Notification</strong>
+                  → <strong>Notification Received</strong>
+                  <ul>
+                    <li>
+                      Select the apps you want to forward (e.g. Google
+                      Messages, WhatsApp, Signal)
+                    </li>
+                  </ul>
+                </li>
+                <li>
+                  Under <strong>Actions</strong> → tap
+                  <strong>Add Action</strong> → <strong>Connectivity</strong>
+                  → <strong>HTTP Request</strong>
+                  <ul>
+                    <li>
+                      <strong>URL</strong> → paste your Webhook URL from above
+                    </li>
+                    <li><strong>Method</strong> → POST</li>
+                    <li>
+                      <strong>Headers</strong> → add:
+                      <code>Authorization</code>:
+                      <code>Bearer YOUR_TOKEN</code>
+                    </li>
+                    <li>
+                      <strong>Content Type</strong> →
+                      <code>application/json</code>
+                    </li>
+                    <li>
+                      <strong>Body</strong> → paste exactly:
+                      <code
+                        >{"sender":
+                        "{notification_title}", "text":
+                        "{notification_text}"}</code
+                      >
+                    </li>
+                  </ul>
+                </li>
+                <li>
+                  Tap <strong>OK</strong> → <strong>Save</strong> → make sure
+                  the macro is toggled <strong>on</strong>
+                </li>
+                <li>
+                  Grant Macrodroid notification access when prompted — this is
+                  required for it to read your messages
+                </li>
+              </ol>
+            </div>
           </div>
 
           <div class="msg-tab-content msg-tab-hidden" id="msg-tab-ios">

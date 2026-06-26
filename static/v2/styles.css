@@ -2222,6 +2222,14 @@ body.mode-workspace #camera-surface.show {
 .msg-tab-hidden {
   display: none;
 }
+.msg-android-tab-bar {
+  margin-top: 8px;
+  margin-bottom: 0;
+  opacity: 0.85;
+}
+.msg-android-content {
+  padding-top: 10px;
+}
 .msg-ios-steps {
   font-family: var(--mono);
   font-size: 11px;
