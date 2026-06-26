@@ -13,7 +13,9 @@ import app as jarvis
 from app import (
     _build_client,
     _build_system_prompt,
+    _c_to_f,
     _get_myq_tools,
+    _get_tesla_tools,
     _get_user_lock,
     _ha_configured,
     _ha_headers,
@@ -22,6 +24,7 @@ from app import (
     _myq_set_door,
     _sids_for_user,
     _split_sentences,
+    _tesla_configured,
     _user_configured,
 )
 
@@ -229,6 +232,14 @@ class TestBuildSystemPrompt:
         prompt = _build_system_prompt({"ha_url": "", "ha_token": "", "myq_email": "", "myq_password": ""})
         assert "GARAGE DOOR" not in prompt
 
+    def test_tesla_section_added_when_configured(self):
+        cfg = {"ha_url": "", "ha_token": "", "tesla_method": "unofficial", "tesla_refresh_token": "tok", "tesla_fleet_refresh_token": ""}
+        assert "TESLA" in _build_system_prompt(cfg)
+
+    def test_tesla_section_absent_when_not_configured(self):
+        cfg = {"ha_url": "", "ha_token": "", "tesla_method": "", "tesla_refresh_token": "", "tesla_fleet_refresh_token": ""}
+        assert "TESLA" not in _build_system_prompt(cfg)
+
     def test_location_context_included_when_set(self):
         jarvis._location_context.update({"city": "Austin", "region": "TX", "temp_f": 95, "condition": "Clear"})
         try:
@@ -237,6 +248,106 @@ class TestBuildSystemPrompt:
             assert "95" in prompt
         finally:
             jarvis._location_context.clear()
+
+    def test_location_context_city_without_region(self):
+        jarvis._location_context.update({"city": "London", "temp_f": 60, "condition": "Overcast", "pressure_kpa": 101.3})
+        try:
+            prompt = _build_system_prompt({"ha_url": "", "ha_token": ""})
+            assert "London" in prompt
+            assert "101.3" in prompt
+        finally:
+            jarvis._location_context.clear()
+
+    def test_all_integrations_configured(self):
+        cfg = {
+            "ha_url": "http://ha.local",
+            "ha_token": "tok",
+            "myq_email": "a@b.com",
+            "myq_password": "s",
+            "tesla_method": "unofficial",
+            "tesla_refresh_token": "rtok",
+            "tesla_fleet_refresh_token": "",
+        }
+        prompt = _build_system_prompt(cfg)
+        assert "HOME AUTOMATION" in prompt
+        assert "GARAGE DOOR" in prompt
+        assert "TESLA" in prompt
+
+
+class TestTeslaConfigured:
+    def test_not_configured_when_method_empty(self):
+        assert _tesla_configured({"tesla_method": "", "tesla_refresh_token": "", "tesla_fleet_refresh_token": ""}) is False
+
+    def test_unofficial_configured_when_token_present(self):
+        assert _tesla_configured({"tesla_method": "unofficial", "tesla_refresh_token": "tok", "tesla_fleet_refresh_token": ""}) is True
+
+    def test_unofficial_not_configured_when_token_missing(self):
+        assert _tesla_configured({"tesla_method": "unofficial", "tesla_refresh_token": "", "tesla_fleet_refresh_token": ""}) is False
+
+    def test_fleet_configured_when_token_present(self):
+        assert _tesla_configured({"tesla_method": "fleet", "tesla_refresh_token": "", "tesla_fleet_refresh_token": "fleet_tok"}) is True
+
+    def test_fleet_not_configured_when_token_missing(self):
+        assert _tesla_configured({"tesla_method": "fleet", "tesla_refresh_token": "", "tesla_fleet_refresh_token": ""}) is False
+
+    def test_both_requires_both_tokens(self):
+        assert _tesla_configured({"tesla_method": "both", "tesla_refresh_token": "tok", "tesla_fleet_refresh_token": "fleet_tok"}) is True
+
+    def test_both_fails_if_unofficial_token_missing(self):
+        assert _tesla_configured({"tesla_method": "both", "tesla_refresh_token": "", "tesla_fleet_refresh_token": "fleet_tok"}) is False
+
+    def test_both_fails_if_fleet_token_missing(self):
+        assert _tesla_configured({"tesla_method": "both", "tesla_refresh_token": "tok", "tesla_fleet_refresh_token": ""}) is False
+
+
+class TestCToF:
+    def test_freezing(self):
+        assert _c_to_f(0) == 32.0
+
+    def test_boiling(self):
+        assert _c_to_f(100) == 212.0
+
+    def test_body_temp(self):
+        assert abs(_c_to_f(37) - 98.6) < 0.1
+
+    def test_crossover(self):
+        assert _c_to_f(-40) == -40.0
+
+    def test_negative(self):
+        assert _c_to_f(-10) == 14.0
+
+
+class TestGetTeslaTools:
+    def test_returns_empty_when_not_configured(self):
+        cfg = {"tesla_method": "", "tesla_refresh_token": "", "tesla_fleet_refresh_token": ""}
+        assert _get_tesla_tools(cfg, "anthropic") == []
+
+    def test_returns_anthropic_tools_when_configured(self):
+        cfg = {"tesla_method": "unofficial", "tesla_refresh_token": "tok", "tesla_fleet_refresh_token": ""}
+        tools = _get_tesla_tools(cfg, "anthropic")
+        assert len(tools) > 0
+        names = [t["name"] for t in tools]
+        assert "get_vehicle_status" in names
+        assert "lock_vehicle" in names
+        assert "set_climate" in names
+
+    def test_returns_openai_tools_when_configured(self):
+        cfg = {"tesla_method": "unofficial", "tesla_refresh_token": "tok", "tesla_fleet_refresh_token": ""}
+        tools = _get_tesla_tools(cfg, "openai")
+        assert len(tools) > 0
+        assert tools[0]["type"] == "function"
+
+    def test_returns_nine_tools(self):
+        cfg = {"tesla_method": "fleet", "tesla_refresh_token": "", "tesla_fleet_refresh_token": "fleet_tok"}
+        tools = _get_tesla_tools(cfg, "anthropic")
+        assert len(tools) == 9
+
+    def test_tool_names_include_trunk(self):
+        cfg = {"tesla_method": "unofficial", "tesla_refresh_token": "tok", "tesla_fleet_refresh_token": ""}
+        names = {t["name"] for t in _get_tesla_tools(cfg, "anthropic")}
+        assert "actuate_trunk" in names
+        assert "honk_horn" in names
+        assert "flash_lights" in names
 
 
 class TestBuildClient:
