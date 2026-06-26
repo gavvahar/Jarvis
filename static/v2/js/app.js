@@ -1710,11 +1710,16 @@
         const item = _musicKit.queue?.currentItem;
         result = JSON.stringify(
           item
-            ? { title: item.attributes?.name || "", artist: item.attributes?.artistName || "" }
+            ? {
+                title: item.attributes?.name || "",
+                artist: item.attributes?.artistName || "",
+              }
             : { title: null, artist: null },
         );
       } else if (action === "queue_add") {
-        try { await _musicKit.queue.append({ song: data.id }); } catch (_) {}
+        try {
+          await _musicKit.queue.append({ song: data.id });
+        } catch (_) {}
         result = "ok";
       } else if (action === "search_and_play") {
         const sf = _musicKit.storefrontId || "us";
@@ -1812,11 +1817,13 @@
     if (partyQrModal) partyQrModal.classList.add("setup-hidden");
   }
 
-  if (partyQrBtn) partyQrBtn.addEventListener("click", () => showPartyQR(_partyToken));
+  if (partyQrBtn)
+    partyQrBtn.addEventListener("click", () => showPartyQR(_partyToken));
   if (partyQrClose) partyQrClose.addEventListener("click", hidePartyQR);
-  partyQrModal && partyQrModal.addEventListener("click", (e) => {
-    if (e.target === partyQrModal) hidePartyQR();
-  });
+  partyQrModal &&
+    partyQrModal.addEventListener("click", (e) => {
+      if (e.target === partyQrModal) hidePartyQR();
+    });
 
   function setPartyMode(active) {
     _partyActive = active;

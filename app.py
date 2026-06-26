@@ -434,6 +434,7 @@ def _clear_party_tokens(user_id: str):
         if uid == user_id:
             _party_tokens.pop(t, None)
 
+
 # socket sid → user_id
 _sid_to_user: dict[str, str] = {}
 
