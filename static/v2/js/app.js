@@ -1706,6 +1706,16 @@
         result = item
           ? `Currently ${playing ? "playing" : "paused"}: ${item.attributes?.name} by ${item.attributes?.artistName}.`
           : "Nothing is currently playing.";
+      } else if (action === "now_playing_data") {
+        const item = _musicKit.queue?.currentItem;
+        result = JSON.stringify(
+          item
+            ? { title: item.attributes?.name || "", artist: item.attributes?.artistName || "" }
+            : { title: null, artist: null },
+        );
+      } else if (action === "queue_add") {
+        try { await _musicKit.queue.append({ song: data.id }); } catch (_) {}
+        result = "ok";
       } else if (action === "search_and_play") {
         const sf = _musicKit.storefrontId || "us";
         const resp = await _musicKit.api.music(`/v1/catalog/${sf}/search`, {
@@ -1745,7 +1755,12 @@
   //  PARTY MODE
   // ===================================================================
   const partyBtn = $("party-btn");
+  const partyQrBtn = $("party-qr-btn");
+  const partyQrModal = $("party-qr-modal");
+  const partyQrClose = $("party-qr-close");
   let _partyActive = false;
+  let _partyToken = null;
+  let _partyQrInstance = null;
 
   function launchConfetti() {
     const colors = [
@@ -1773,13 +1788,48 @@
     }
   }
 
+  function showPartyQR(token) {
+    if (!token || !partyQrModal || typeof QRCode === "undefined") return;
+    _partyToken = token;
+    const url = window.location.origin + "/party/" + token;
+    const qrEl = $("party-qr-code");
+    const urlEl = $("party-qr-url");
+    if (qrEl) {
+      qrEl.innerHTML = "";
+      _partyQrInstance = new QRCode(qrEl, {
+        text: url,
+        width: 200,
+        height: 200,
+        colorDark: "#7fe9ff",
+        colorLight: "#08111e",
+      });
+    }
+    if (urlEl) urlEl.textContent = url;
+    partyQrModal.classList.remove("setup-hidden");
+  }
+
+  function hidePartyQR() {
+    if (partyQrModal) partyQrModal.classList.add("setup-hidden");
+  }
+
+  if (partyQrBtn) partyQrBtn.addEventListener("click", () => showPartyQR(_partyToken));
+  if (partyQrClose) partyQrClose.addEventListener("click", hidePartyQR);
+  partyQrModal && partyQrModal.addEventListener("click", (e) => {
+    if (e.target === partyQrModal) hidePartyQR();
+  });
+
   function setPartyMode(active) {
     _partyActive = active;
     document.body.classList.toggle("party-mode", active);
     if (partyBtn) partyBtn.classList.toggle("party-active", active);
+    if (partyQrBtn) partyQrBtn.style.display = active ? "" : "none";
     if (active) {
       launchConfetti();
       socket.emit("start_party_music");
+    } else {
+      socket.emit("stop_party_music");
+      hidePartyQR();
+      _partyToken = null;
     }
   }
 
@@ -1787,8 +1837,13 @@
     partyBtn.addEventListener("click", () => setPartyMode(!_partyActive));
   }
 
-  socket.on("party_mode", ({ active }) => {
+  socket.on("party_mode", ({ active, token }) => {
     setPartyMode(!!active);
+    if (active && token) showPartyQR(token);
+  });
+
+  socket.on("party_token", ({ token }) => {
+    if (token) showPartyQR(token);
   });
 
   // On load, ask the backend whether we're already configured.
