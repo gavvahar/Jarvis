@@ -1507,6 +1507,73 @@
   }
 
   // ===================================================================
+  //  SPOTIFY
+  // ===================================================================
+  const spotifyBtn = $("spotify-btn");
+  const spotifySettingsEl = $("spotify-settings");
+  const spotifySettingsClose = $("spotify-settings-close");
+  const spotifyDisconnectBtn = $("spotify-disconnect-btn");
+  const spotifyDot = $("spotify-dot");
+  const spotifyTextEl = $("spotify-text");
+  const spotifyMsg = $("spotify-msg");
+  const spotifyRedirectUri = $("spotify-redirect-uri");
+  const spotifyAuthLink = $("spotify-auth-link");
+
+  if (spotifyRedirectUri) {
+    spotifyRedirectUri.textContent =
+      window.location.origin + "/auth/spotify/callback";
+  }
+
+  function setSpotifyStatus(connected) {
+    if (spotifyDot)
+      spotifyDot.className = connected ? "connected" : "disconnected";
+    if (spotifyTextEl)
+      spotifyTextEl.textContent = connected ? "CONNECTED" : "NOT CONNECTED";
+    if (spotifyBtn) spotifyBtn.classList.toggle("spotify-live", connected);
+  }
+
+  function showSpotifySettings() {
+    if (spotifySettingsEl) spotifySettingsEl.classList.remove("setup-hidden");
+  }
+
+  function hideSpotifySettings() {
+    if (spotifySettingsEl) spotifySettingsEl.classList.add("setup-hidden");
+  }
+
+  if (spotifyBtn) spotifyBtn.addEventListener("click", showSpotifySettings);
+  if (spotifySettingsClose)
+    spotifySettingsClose.addEventListener("click", hideSpotifySettings);
+  spotifySettingsEl &&
+    spotifySettingsEl.addEventListener("click", (e) => {
+      if (e.target === spotifySettingsEl) hideSpotifySettings();
+    });
+
+  if (spotifyDisconnectBtn) {
+    spotifyDisconnectBtn.addEventListener("click", async () => {
+      try {
+        await fetch("/api/spotify/disconnect", { method: "POST" });
+        setSpotifyStatus(false);
+        if (spotifyMsg) {
+          spotifyMsg.className = "ok";
+          spotifyMsg.textContent = "Disconnected from Spotify.";
+        }
+      } catch {
+        if (spotifyMsg) {
+          spotifyMsg.className = "err";
+          spotifyMsg.textContent = "Could not reach the server.";
+        }
+      }
+    });
+  }
+
+  if (
+    new URLSearchParams(window.location.search).get("spotify_connected") === "1"
+  ) {
+    history.replaceState({}, "", "/");
+    showSpotifySettings();
+  }
+
+  // ===================================================================
   //  PARTY MODE
   // ===================================================================
   const partyBtn = $("party-btn");
@@ -1542,7 +1609,10 @@
     _partyActive = active;
     document.body.classList.toggle("party-mode", active);
     if (partyBtn) partyBtn.classList.toggle("party-active", active);
-    if (active) launchConfetti();
+    if (active) {
+      launchConfetti();
+      socket.emit("start_party_music");
+    }
   }
 
   if (partyBtn) {
@@ -1581,6 +1651,18 @@
         teslaFleetAuthBtn.style.opacity = "0.4";
         teslaFleetAuthBtn.style.pointerEvents = "none";
         teslaFleetAuthBtn.title = "TESLA_CLIENT_ID not configured in .env";
+      }
+      setSpotifyStatus(!!d.spotify_configured);
+      if (!d.spotify_client_enabled && spotifyAuthLink) {
+        spotifyAuthLink.style.opacity = "0.4";
+        spotifyAuthLink.style.pointerEvents = "none";
+        spotifyAuthLink.title = "SPOTIFY_CLIENT_ID not configured in .env";
+      }
+      if (
+        new URLSearchParams(window.location.search).get("spotify_connected") ===
+        "1"
+      ) {
+        setSpotifyStatus(true);
       }
       if (_configured) hideSetup();
       else showSetup();
