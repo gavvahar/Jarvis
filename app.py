@@ -10,12 +10,12 @@ Three providers:
   • openai_compatible — any OpenAI-compatible endpoint (Ollama, OpenRouter, …)
 """
 
-import json, os, re, asyncio, secrets, tempfile, urllib.parse, asyncpg, httpx, datetime, hashlib, base64
+import json, os, re, asyncio, secrets, tempfile, urllib.parse, asyncpg, httpx, datetime, hashlib, base64, pathlib
 
 
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Request, File, UploadFile
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
@@ -1800,7 +1800,11 @@ async def api_messages_token(request: Request):
     if not user_id:
         raise HTTPException(401)
     token = await _db_get_or_create_webhook_token(user_id)
-    return {"token": token, "url": f"{APP_URL}/api/messages/ingest"}
+    return {
+        "token": token,
+        "url": f"{APP_URL}/api/messages/ingest",
+        "apk_url": f"{APP_URL}/download/jarvis-messages.apk",
+    }
 
 
 @fast_app.post("/api/messages/token/regenerate")
@@ -1809,7 +1813,19 @@ async def api_messages_token_regenerate(request: Request):
     if not user_id:
         raise HTTPException(401)
     token = await _db_regenerate_webhook_token(user_id)
-    return {"token": token, "url": f"{APP_URL}/api/messages/ingest"}
+    return {
+        "token": token,
+        "url": f"{APP_URL}/api/messages/ingest",
+        "apk_url": f"{APP_URL}/download/jarvis-messages.apk",
+    }
+
+
+@fast_app.get("/download/jarvis-messages.apk")
+async def download_apk():
+    apk_path = pathlib.Path("static/downloads/jarvis-messages.apk")
+    if not apk_path.exists():
+        raise HTTPException(404, detail="APK not yet available. Ask your admin to build it from the android/ folder.")
+    return FileResponse(apk_path, media_type="application/vnd.android.package-archive", filename="jarvis-messages.apk")
 
 
 @fast_app.post("/api/messages/ingest")

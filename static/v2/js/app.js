@@ -1036,6 +1036,8 @@
   const msgCopyUrl = $("msg-copy-url");
   const msgCopyToken = $("msg-copy-token");
   const msgRegenToken = $("msg-regen-token");
+  const msgApkUrl = $("msg-apk-url");
+  const msgCopyApk = $("msg-copy-apk");
 
   function openMsgSettings() {
     if (!msgSettingsPanel) return;
@@ -1045,6 +1047,7 @@
       .then((d) => {
         if (msgWebhookUrl) msgWebhookUrl.value = d.url || "";
         if (msgWebhookToken) msgWebhookToken.value = d.token || "";
+        if (msgApkUrl) msgApkUrl.value = d.apk_url || "";
       })
       .catch(() => {});
   }
@@ -1071,6 +1074,11 @@
       if (msgWebhookToken)
         navigator.clipboard.writeText(msgWebhookToken.value).catch(() => {});
     });
+  if (msgCopyApk)
+    msgCopyApk.addEventListener("click", () => {
+      if (msgApkUrl)
+        navigator.clipboard.writeText(msgApkUrl.value).catch(() => {});
+    });
   if (msgRegenToken)
     msgRegenToken.addEventListener("click", () => {
       fetch("/api/messages/token/regenerate", { method: "POST" })
@@ -1080,6 +1088,20 @@
         })
         .catch(() => {});
     });
+
+  // Android sub-tabs (Jarvis App vs Macrodroid)
+  document.querySelectorAll(".msg-android-tab-bar .msg-tab").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      document
+        .querySelectorAll(".msg-android-tab-bar .msg-tab")
+        .forEach((b) => b.classList.remove("msg-tab-active"));
+      btn.classList.add("msg-tab-active");
+      const target = btn.dataset.atab;
+      document.querySelectorAll(".msg-android-content").forEach((el) => {
+        el.classList.toggle("msg-tab-hidden", el.id !== `msg-atab-${target}`);
+      });
+    });
+  });
 
   // ===================================================================
   //  DOORBELL SETTINGS PANEL
