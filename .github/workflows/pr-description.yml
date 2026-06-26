@@ -184,7 +184,7 @@ jobs:
           CLIFF=$(find /tmp -name "git-cliff" -type f | head -1)
           chmod +x "$CLIFF"
 
-          "$CLIFF" --config .github/scripts/cliff.toml "origin/${{ github.base_ref }}..HEAD" \
+          "$CLIFF" --config pyproject.toml "origin/${{ github.base_ref }}..HEAD" \
             > /tmp/pr_body.txt 2>/tmp/cliff_err.txt
 
           grep -q "^### " /tmp/pr_body.txt || { echo "No conventional commits found"; exit 1; }
