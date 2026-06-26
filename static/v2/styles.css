@@ -2437,6 +2437,122 @@ body.mode-workspace #camera-surface.show {
 }
 
 /* ===========================================================
+   SPOTIFY
+   =========================================================== */
+#spotify-btn {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  background: rgba(30, 215, 96, 0.1);
+  border: 1px solid rgba(30, 215, 96, 0.5);
+  border-radius: 5px;
+  color: rgba(30, 215, 96, 0.9);
+  font-family: "Share Tech Mono", monospace;
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  cursor: pointer;
+  pointer-events: auto;
+  text-shadow: 0 0 8px rgba(30, 215, 96, 0.4);
+  box-shadow: 0 0 6px rgba(30, 215, 96, 0.1);
+  transition:
+    background 0.2s,
+    color 0.2s,
+    box-shadow 0.2s;
+}
+#spotify-btn:hover {
+  background: rgba(30, 215, 96, 0.2);
+  box-shadow: 0 0 12px rgba(30, 215, 96, 0.3);
+}
+#spotify-btn.spotify-live {
+  border-color: rgba(30, 215, 96, 0.8);
+  color: #1ed760;
+  background: rgba(30, 215, 96, 0.15);
+  box-shadow: 0 0 10px rgba(30, 215, 96, 0.35);
+}
+
+#spotify-settings {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 900;
+  background: rgba(2, 6, 10, 0.88);
+  align-items: center;
+  justify-content: center;
+}
+#spotify-settings:not(.setup-hidden) {
+  display: flex;
+}
+#spotify-settings-card {
+  background: rgba(2, 6, 10, 0.97);
+  border: 1px solid rgba(30, 215, 96, 0.35);
+  box-shadow: 0 0 32px rgba(30, 215, 96, 0.1);
+  padding: 28px 32px;
+  width: 420px;
+  max-width: 92vw;
+  position: relative;
+}
+#spotify-settings-card .setup-word {
+  color: rgba(30, 215, 96, 0.9);
+}
+#spotify-settings-card .setup-sub {
+  color: rgba(30, 215, 96, 0.6);
+}
+#spotify-settings-card .setup-ring {
+  border-color: rgba(30, 215, 96, 0.25);
+}
+.spotify-note {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: rgba(180, 235, 180, 0.6);
+  line-height: 1.6;
+  margin-bottom: 4px;
+}
+.spotify-note code {
+  color: rgba(30, 215, 96, 0.8);
+  font-size: 10px;
+}
+#spotify-status-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--label);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  color: rgba(180, 235, 180, 0.7);
+}
+#spotify-settings-card .setup-link-btn,
+#spotify-settings-card button {
+  font-family: var(--label);
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  padding: 8px 12px;
+  border: 1px solid rgba(30, 215, 96, 0.45);
+  color: rgba(30, 215, 96, 0.9);
+  background: transparent;
+  cursor: pointer;
+  text-decoration: none;
+  display: inline-block;
+}
+#spotify-settings-card .setup-link-btn:hover,
+#spotify-settings-card button:hover {
+  background: rgba(30, 215, 96, 0.1);
+}
+#spotify-msg {
+  font-family: var(--label);
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  margin-top: 10px;
+  min-height: 14px;
+}
+#spotify-msg.ok {
+  color: rgba(30, 215, 96, 0.8);
+}
+#spotify-msg.err {
+  color: rgba(255, 80, 80, 0.8);
+}
+
+/* ===========================================================
    PARTY MODE
    =========================================================== */
 #party-btn {
