@@ -1573,9 +1573,9 @@ async def _execute_apple_music_tool(name: str, args: dict, user_id: str) -> str:
     sid = sids[0]
 
     _simple: dict[str, tuple[str, str]] = {
-        "apple_music_play":     ("play",     "Playback started."),
-        "apple_music_pause":    ("pause",    "Playback paused."),
-        "apple_music_next":     ("next",     "Skipped to next track."),
+        "apple_music_play": ("play", "Playback started."),
+        "apple_music_pause": ("pause", "Playback paused."),
+        "apple_music_next": ("next", "Skipped to next track."),
         "apple_music_previous": ("previous", "Back to previous track."),
     }
     if name in _simple:
@@ -1625,11 +1625,17 @@ APPLE_MUSIC_TOOLS_ANTHROPIC = [
 ]
 
 APPLE_MUSIC_TOOLS_OPENAI = [
-    {"type": "function", "function": {"name": "apple_music_now_playing", "description": "Get the currently playing track on Apple Music.", "parameters": {"type": "object", "properties": {}}}},
+    {
+        "type": "function",
+        "function": {"name": "apple_music_now_playing", "description": "Get the currently playing track on Apple Music.", "parameters": {"type": "object", "properties": {}}},
+    },
     {"type": "function", "function": {"name": "apple_music_play", "description": "Resume or start Apple Music playback.", "parameters": {"type": "object", "properties": {}}}},
     {"type": "function", "function": {"name": "apple_music_pause", "description": "Pause Apple Music playback.", "parameters": {"type": "object", "properties": {}}}},
     {"type": "function", "function": {"name": "apple_music_next", "description": "Skip to the next track on Apple Music.", "parameters": {"type": "object", "properties": {}}}},
-    {"type": "function", "function": {"name": "apple_music_previous", "description": "Go back to the previous track on Apple Music.", "parameters": {"type": "object", "properties": {}}}},
+    {
+        "type": "function",
+        "function": {"name": "apple_music_previous", "description": "Go back to the previous track on Apple Music.", "parameters": {"type": "object", "properties": {}}},
+    },
     {
         "type": "function",
         "function": {
@@ -2745,7 +2751,13 @@ async def _stream_reply(state: dict, on_text):
     client = state["client"]
     model = config.get("model") or DEFAULT_MODELS.get(provider, "")
     system = _build_system_prompt(config)
-    ha_tools = _get_ha_tools(config, provider) + _get_myq_tools(config, provider) + _get_tesla_tools(config, provider) + _get_spotify_tools(config, provider) + _get_apple_music_tools(config, provider)
+    ha_tools = (
+        _get_ha_tools(config, provider)
+        + _get_myq_tools(config, provider)
+        + _get_tesla_tools(config, provider)
+        + _get_spotify_tools(config, provider)
+        + _get_apple_music_tools(config, provider)
+    )
     local_msgs = list(state["conversation"])
 
     for _ in range(4):
