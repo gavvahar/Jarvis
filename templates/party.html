@@ -1,0 +1,263 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Add to Queue — J.A.R.V.I.S.</title>
+    <style>
+      * {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+      body {
+        background: #08111e;
+        color: #7fe9ff;
+        font-family: "Courier New", monospace;
+        min-height: 100vh;
+        padding: 28px 18px 48px;
+      }
+      header {
+        margin-bottom: 20px;
+      }
+      header h1 {
+        font-size: 0.85rem;
+        letter-spacing: 0.2em;
+        opacity: 0.5;
+        margin-bottom: 2px;
+      }
+      header p {
+        font-size: 1.1rem;
+        letter-spacing: 0.12em;
+        color: #c8f0ff;
+      }
+      #now-playing {
+        background: rgba(0, 229, 255, 0.05);
+        border: 1px solid rgba(0, 229, 255, 0.15);
+        border-radius: 6px;
+        padding: 14px 16px;
+        margin-bottom: 20px;
+        min-height: 52px;
+      }
+      #now-playing .label {
+        font-size: 0.7rem;
+        letter-spacing: 0.15em;
+        opacity: 0.45;
+        margin-bottom: 5px;
+      }
+      #now-playing .track {
+        font-size: 1rem;
+        color: #e0f7ff;
+      }
+      #now-playing .artist {
+        font-size: 0.8rem;
+        opacity: 0.55;
+        margin-top: 3px;
+      }
+      .search-row {
+        display: flex;
+        gap: 8px;
+        margin-bottom: 14px;
+      }
+      input[type="text"] {
+        flex: 1;
+        background: rgba(0, 229, 255, 0.05);
+        border: 1px solid rgba(0, 229, 255, 0.25);
+        color: #e0f7ff;
+        padding: 11px 13px;
+        border-radius: 4px;
+        font-family: inherit;
+        font-size: 0.9rem;
+        outline: none;
+        -webkit-appearance: none;
+      }
+      input[type="text"]:focus {
+        border-color: rgba(0, 229, 255, 0.6);
+      }
+      input[type="text"]::placeholder {
+        color: rgba(127, 233, 255, 0.3);
+      }
+      button {
+        background: transparent;
+        border: 1px solid rgba(0, 229, 255, 0.35);
+        color: #7fe9ff;
+        padding: 11px 18px;
+        border-radius: 4px;
+        font-family: inherit;
+        font-size: 0.78rem;
+        letter-spacing: 0.12em;
+        cursor: pointer;
+        white-space: nowrap;
+        -webkit-tap-highlight-color: transparent;
+      }
+      button:active {
+        background: rgba(0, 229, 255, 0.1);
+      }
+      .result {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 11px 13px;
+        border: 1px solid rgba(0, 229, 255, 0.1);
+        border-radius: 4px;
+        margin-bottom: 8px;
+      }
+      .result .info {
+        flex: 1;
+        min-width: 0;
+      }
+      .result .title {
+        font-size: 0.9rem;
+        color: #e0f7ff;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .result .sub {
+        font-size: 0.75rem;
+        opacity: 0.5;
+        margin-top: 2px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .result button {
+        padding: 7px 14px;
+        font-size: 0.72rem;
+      }
+      #msg {
+        margin-top: 14px;
+        font-size: 0.85rem;
+        min-height: 22px;
+        letter-spacing: 0.05em;
+      }
+      #msg.ok {
+        color: #5eff8e;
+      }
+      #msg.err {
+        color: #ff5e7a;
+      }
+      .dim {
+        opacity: 0.4;
+        font-size: 0.85rem;
+        padding: 6px 0;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>J.A.R.V.I.S. — PARTY MODE</h1>
+      <p>ADD TO QUEUE</p>
+    </header>
+
+    <div id="now-playing">
+      <div class="label">NOW PLAYING</div>
+      <div class="dim">Loading…</div>
+    </div>
+
+    <div class="search-row">
+      <input
+        id="q"
+        type="text"
+        placeholder="Search for a song…"
+        autocomplete="off"
+        spellcheck="false"
+        enterkeyhint="search"
+      />
+      <button onclick="doSearch()">SEARCH</button>
+    </div>
+
+    <div id="results"></div>
+    <div id="msg"></div>
+
+    <script>
+      const TOKEN = location.pathname
+        .replace(/^\/party\//, "")
+        .replace(/\/$/, "");
+
+      async function loadNowPlaying() {
+        try {
+          const r = await fetch(`/party/${TOKEN}/now_playing`);
+          const d = await r.json();
+          const el = document.getElementById("now-playing");
+          if (d.title) {
+            el.innerHTML = `<div class="label">NOW PLAYING</div><div class="track">${esc(d.title)}</div><div class="artist">${esc(d.artist || "")}</div>`;
+          } else {
+            el.innerHTML = `<div class="label">NOW PLAYING</div><div class="dim">Nothing playing</div>`;
+          }
+        } catch (_) {}
+      }
+
+      async function doSearch() {
+        const q = document.getElementById("q").value.trim();
+        if (!q) return;
+        const res = document.getElementById("results");
+        res.innerHTML = '<div class="dim">Searching…</div>';
+        try {
+          const r = await fetch(
+            `/party/${TOKEN}/search?q=${encodeURIComponent(q)}`,
+          );
+          const d = await r.json();
+          if (!d.results?.length) {
+            res.innerHTML = '<div class="dim">No results found.</div>';
+            return;
+          }
+          res.innerHTML = d.results
+            .map(
+              (item) => `
+            <div class="result">
+              <div class="info">
+                <div class="title">${esc(item.title)}</div>
+                <div class="sub">${esc(item.artist || "")}</div>
+              </div>
+              <button onclick="addToQueue(${JSON.stringify(item.id)}, ${JSON.stringify(item.title)})">ADD</button>
+            </div>`,
+            )
+            .join("");
+        } catch (_) {
+          res.innerHTML =
+            '<div class="dim" style="color:#ff5e7a">Search failed. Try again.</div>';
+        }
+      }
+
+      async function addToQueue(id, title) {
+        const msg = document.getElementById("msg");
+        try {
+          const r = await fetch(`/party/${TOKEN}/add`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ id }),
+          });
+          const d = await r.json();
+          if (d.ok) {
+            msg.className = "ok";
+            msg.textContent = `"${title}" added to the queue.`;
+          } else {
+            msg.className = "err";
+            msg.textContent = d.error || "Failed to add.";
+          }
+        } catch (_) {
+          msg.className = "err";
+          msg.textContent = "Could not reach the server.";
+        }
+        setTimeout(() => (msg.textContent = ""), 4000);
+      }
+
+      function esc(s) {
+        return String(s || "")
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;")
+          .replace(/'/g, "&#39;");
+      }
+
+      document.getElementById("q").addEventListener("keydown", (e) => {
+        if (e.key === "Enter") doSearch();
+      });
+
+      loadNowPlaying();
+      setInterval(loadNowPlaying, 15000);
+    </script>
+  </body>
+</html>

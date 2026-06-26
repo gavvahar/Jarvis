@@ -366,6 +366,75 @@
           </svg>
           TESLA
         </button>
+        <button id="spotify-btn" title="Spotify Music Control">
+          <svg
+            viewBox="0 0 20 20"
+            width="13"
+            height="13"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.5"
+          >
+            <circle cx="10" cy="10" r="7" />
+            <path d="M6.5 8c2.2-.7 4.6-.5 6.5.6" />
+            <path d="M7 11c1.8-.6 3.8-.4 5.3.5" />
+            <path d="M7.5 14c1.4-.5 2.8-.3 3.8.4" />
+          </svg>
+          SPOTIFY
+        </button>
+        <button id="apple-music-btn" title="Apple Music Control">
+          <svg
+            viewBox="0 0 20 20"
+            width="13"
+            height="13"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.5"
+          >
+            <path d="M8 15V6l8-2v9" />
+            <circle cx="6" cy="15" r="2" />
+            <circle cx="14" cy="13" r="2" />
+          </svg>
+          APPLE MUSIC
+        </button>
+        <button id="party-btn" title="Toggle Party Mode">
+          <svg
+            viewBox="0 0 20 20"
+            width="13"
+            height="13"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.5"
+          >
+            <path
+              d="M10 2l1.5 5.5L17 10l-5.5 1.5L10 17l-1.5-5.5L3 10l5.5-1.5z"
+            />
+          </svg>
+          PARTY
+        </button>
+        <button
+          id="party-qr-btn"
+          title="Show Queue QR Code"
+          style="display: none"
+        >
+          <svg
+            viewBox="0 0 20 20"
+            width="13"
+            height="13"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.5"
+          >
+            <rect x="3" y="3" width="6" height="6" />
+            <rect x="11" y="3" width="6" height="6" />
+            <rect x="3" y="11" width="6" height="6" />
+            <rect x="13" y="13" width="2" height="2" />
+            <rect x="11" y="11" width="2" height="2" />
+            <rect x="15" y="11" width="2" height="2" />
+            <rect x="11" y="15" width="4" height="2" />
+          </svg>
+          QR
+        </button>
       </div>
 
       <!-- ============ MESSAGES SETTINGS PANEL ============ -->
@@ -767,6 +836,107 @@
         </div>
       </div>
 
+      <!-- ============ SPOTIFY SETTINGS MODAL ============ -->
+      <div id="spotify-settings" class="setup-hidden">
+        <div id="spotify-settings-card" class="setup-card-inner">
+          <div class="setup-ring"></div>
+          <div class="setup-word">SETTINGS</div>
+          <div class="setup-sub">SPOTIFY MUSIC</div>
+          <p class="spotify-note">
+            Connect your Spotify account to control music via voice. Requires
+            <code>SPOTIFY_CLIENT_ID</code> and
+            <code>SPOTIFY_CLIENT_SECRET</code> in your server's
+            <code>.env</code>. Register
+            <code id="spotify-redirect-uri"></code>
+            as a redirect URI in your Spotify app dashboard.
+          </p>
+          <div id="spotify-status-row" style="margin-top: 12px">
+            <span id="spotify-dot" class="disconnected"></span>
+            <span id="spotify-text">NOT CONNECTED</span>
+          </div>
+          <div style="display: flex; gap: 8px; margin-top: 14px">
+            <a
+              id="spotify-auth-link"
+              class="setup-link-btn"
+              href="/api/spotify/auth"
+              >CONNECT WITH SPOTIFY</a
+            >
+            <button type="button" id="spotify-disconnect-btn">
+              DISCONNECT
+            </button>
+          </div>
+          <div id="spotify-msg"></div>
+          <div style="margin-top: 20px">
+            <button type="button" id="spotify-settings-close">CLOSE</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ============ APPLE MUSIC SETTINGS MODAL ============ -->
+      <div id="apple-music-settings" class="setup-hidden">
+        <div id="apple-music-settings-card" class="setup-card-inner">
+          <div class="setup-ring"></div>
+          <div class="setup-word">SETTINGS</div>
+          <div class="setup-sub">APPLE MUSIC</div>
+          <p class="spotify-note">
+            Connect your Apple Music subscription to control music via voice.
+            Requires <code>APPLE_MUSIC_TEAM_ID</code>,
+            <code>APPLE_MUSIC_KEY_ID</code>, and
+            <code>APPLE_MUSIC_PRIVATE_KEY</code> in your server's
+            <code>.env</code>.
+          </p>
+          <div id="apple-music-status-row" style="margin-top: 12px">
+            <span id="apple-music-dot" class="disconnected"></span>
+            <span id="apple-music-text">NOT CONNECTED</span>
+          </div>
+          <div style="display: flex; gap: 8px; margin-top: 14px">
+            <button type="button" id="apple-music-connect-btn">
+              CONNECT WITH APPLE MUSIC
+            </button>
+            <button type="button" id="apple-music-disconnect-btn">
+              DISCONNECT
+            </button>
+          </div>
+          <div id="apple-music-msg"></div>
+          <div style="margin-top: 20px">
+            <button type="button" id="apple-music-settings-close">CLOSE</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ============ PARTY QR CODE MODAL ============ -->
+      <div id="party-qr-modal" class="setup-hidden">
+        <div id="party-qr-card" class="setup-card-inner">
+          <div class="setup-ring"></div>
+          <div class="setup-word">SCAN TO JOIN</div>
+          <div class="setup-sub">ADD SONGS TO THE QUEUE</div>
+          <div
+            id="party-qr-code"
+            style="
+              margin: 20px auto;
+              width: fit-content;
+              background: #08111e;
+              padding: 10px;
+              border-radius: 6px;
+            "
+          ></div>
+          <div
+            id="party-qr-url"
+            style="
+              font-size: 0.68rem;
+              opacity: 0.4;
+              margin-top: 6px;
+              word-break: break-all;
+              text-align: center;
+              max-width: 260px;
+            "
+          ></div>
+          <div style="margin-top: 20px">
+            <button type="button" id="party-qr-close">CLOSE</button>
+          </div>
+        </div>
+      </div>
+
       <!-- ============ TELEMETRY PANELS ============ -->
       <div
         class="panel boot"
@@ -1037,6 +1207,12 @@
       <div id="fx"></div>
     </div>
 
+    <script
+      src="https://js-cdn.music.apple.com/musickit/v3/musickit.js"
+      data-web-components
+      async
+    ></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
     <script src="/static/v2/js/sphere.js?v=1"></script>
     <script src="/static/v2/js/hud.js?v=1"></script>
     <script src="/static/v2/js/standby.js?v=1"></script>
