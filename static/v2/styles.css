@@ -2610,6 +2610,57 @@ body.party-mode #stage {
   }
 }
 
+/* ===========================================================
+   APPLE MUSIC SETTINGS MODAL
+   =========================================================== */
+#apple-music-settings {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 900;
+  background: rgba(2, 6, 10, 0.88);
+  align-items: center;
+  justify-content: center;
+}
+#apple-music-settings:not(.setup-hidden) {
+  display: flex;
+}
+#apple-music-settings-card {
+  background: rgba(2, 6, 10, 0.97);
+  border: 1px solid rgba(127, 233, 255, 0.22);
+  box-shadow: 0 0 32px rgba(127, 233, 255, 0.08);
+  padding: 28px 32px;
+  width: 420px;
+  max-width: 92vw;
+  position: relative;
+}
+
+/* ===========================================================
+   PARTY QR MODAL
+   =========================================================== */
+#party-qr-modal {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 900;
+  background: rgba(2, 6, 10, 0.88);
+  align-items: center;
+  justify-content: center;
+}
+#party-qr-modal:not(.setup-hidden) {
+  display: flex;
+}
+#party-qr-card {
+  background: rgba(2, 6, 10, 0.97);
+  border: 1px solid rgba(127, 233, 255, 0.22);
+  box-shadow: 0 0 32px rgba(127, 233, 255, 0.08);
+  padding: 28px 32px;
+  width: 340px;
+  max-width: 92vw;
+  position: relative;
+  text-align: center;
+}
+
 .confetti-piece {
   position: fixed;
   pointer-events: none;
