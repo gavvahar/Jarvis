@@ -1797,9 +1797,9 @@
   }
 
   function showPartyQR(token) {
-    if (!token || !partyQrModal || typeof QRCode === "undefined") return;
-    _partyToken = token;
-    const url = window.location.origin + "/party/" + token;
+    if (token) _partyToken = token;
+    if (!_partyToken || !partyQrModal || typeof QRCode === "undefined") return;
+    const url = window.location.origin + "/party/" + _partyToken;
     const qrEl = $("party-qr-code");
     const urlEl = $("party-qr-url");
     if (qrEl) {
