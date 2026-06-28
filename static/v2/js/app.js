@@ -1822,7 +1822,14 @@
 
   if (partyQrBtn)
     partyQrBtn.addEventListener("click", () => {
-      console.log("[QR] clicked — _partyToken:", _partyToken, "QRCode:", typeof QRCode, "modal:", !!partyQrModal);
+      console.log(
+        "[QR] clicked — _partyToken:",
+        _partyToken,
+        "QRCode:",
+        typeof QRCode,
+        "modal:",
+        !!partyQrModal,
+      );
       if (_partyToken) {
         showPartyQR(_partyToken);
       } else {
