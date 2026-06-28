@@ -3140,6 +3140,15 @@ async def on_stop_party_music(sid, data=None):
 
 
 # ─── PARTY GUEST QUEUE ───────────────────────────────────────────────────────
+@fast_app.get("/api/party-token")
+async def get_party_token(request: Request):
+    user_id = _get_current_user(request)
+    if not user_id:
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
+    token = _create_party_token(user_id)
+    return JSONResponse({"token": token})
+
+
 @fast_app.get("/party/{token}", response_class=HTMLResponse)
 async def party_guest_page(token: str, request: Request):
     if token not in _party_tokens:
