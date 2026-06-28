@@ -11,7 +11,8 @@ services:
       - ./templates:/app/templates
       - ./app.py:/app/app.py
       - ./personality.py:/app/personality.py
-    command: ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "5000", "--reload"]
+    command:
+      ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "5000", "--reload"]
     depends_on:
       postgres:
         condition: service_healthy
