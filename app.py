@@ -10,7 +10,7 @@ Three providers:
   • openai_compatible — any OpenAI-compatible endpoint (Ollama, OpenRouter, …)
 """
 
-import json, os, re, asyncio, secrets, tempfile, urllib.parse, asyncpg, httpx, datetime, hashlib, base64, pathlib, jwt
+import json, os, re, asyncio, secrets, socket, tempfile, urllib.parse, asyncpg, httpx, datetime, hashlib, base64, pathlib, jwt
 
 
 from contextlib import asynccontextmanager
@@ -3140,13 +3140,28 @@ async def on_stop_party_music(sid, data=None):
 
 
 # ─── PARTY GUEST QUEUE ───────────────────────────────────────────────────────
+def _get_party_base_url() -> str:
+    base = os.getenv("JARVIS_PUBLIC_URL", "").rstrip("/")
+    if base:
+        return base
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+        s.close()
+    except Exception:
+        ip = "localhost"
+    return f"http://{ip}:5000"
+
+
 @fast_app.get("/api/party-token")
 async def get_party_token(request: Request):
     user_id = _get_current_user(request)
     if not user_id:
         return JSONResponse({"error": "unauthorized"}, status_code=401)
     token = _create_party_token(user_id)
-    return JSONResponse({"token": token})
+    url = f"{_get_party_base_url()}/party/{token}"
+    return JSONResponse({"token": token, "url": url})
 
 
 @fast_app.get("/party/{token}", response_class=HTMLResponse)
