@@ -1822,18 +1822,12 @@
 
   if (partyQrBtn)
     partyQrBtn.addEventListener("click", () => {
-      console.log(
-        "[QR] clicked — _partyToken:",
-        _partyToken,
-        "QRCode:",
-        typeof QRCode,
-        "modal:",
-        !!partyQrModal,
-      );
       if (_partyToken) {
         showPartyQR(_partyToken);
       } else {
-        socket.emit("start_party_music");
+        fetch("/api/party-token")
+          .then((r) => r.json())
+          .then((d) => { if (d.token) showPartyQR(d.token); });
       }
     });
   if (partyQrClose) partyQrClose.addEventListener("click", hidePartyQR);
