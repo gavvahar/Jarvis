@@ -1796,23 +1796,23 @@
     }
   }
 
-  function showPartyQR(token) {
+  function showPartyQR(token, url) {
     if (token) _partyToken = token;
     if (!_partyToken || !partyQrModal || typeof QRCode === "undefined") return;
-    const url = window.location.origin + "/party/" + _partyToken;
+    const partyUrl = url || window.location.origin + "/party/" + _partyToken;
     const qrEl = $("party-qr-code");
     const urlEl = $("party-qr-url");
     if (qrEl) {
       qrEl.innerHTML = "";
       _partyQrInstance = new QRCode(qrEl, {
-        text: url,
+        text: partyUrl,
         width: 200,
         height: 200,
         colorDark: "#7fe9ff",
         colorLight: "#08111e",
       });
     }
-    if (urlEl) urlEl.textContent = url;
+    if (urlEl) urlEl.textContent = partyUrl;
     partyQrModal.classList.remove("setup-hidden");
   }
 
@@ -1828,7 +1828,7 @@
         fetch("/api/party-token")
           .then((r) => r.json())
           .then((d) => {
-            if (d.token) showPartyQR(d.token);
+            if (d.token) showPartyQR(d.token, d.url);
           });
       }
     });
