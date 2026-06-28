@@ -15,7 +15,7 @@ import json, os, re, asyncio, secrets, tempfile, urllib.parse, asyncpg, httpx, d
 
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Request, File, UploadFile
-from fastapi.responses import HTMLResponse, RedirectResponse, FileResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
