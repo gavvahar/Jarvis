@@ -1827,7 +1827,9 @@
       } else {
         fetch("/api/party-token")
           .then((r) => r.json())
-          .then((d) => { if (d.token) showPartyQR(d.token); });
+          .then((d) => {
+            if (d.token) showPartyQR(d.token);
+          });
       }
     });
   if (partyQrClose) partyQrClose.addEventListener("click", hidePartyQR);
