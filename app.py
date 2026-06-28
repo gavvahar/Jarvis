@@ -189,6 +189,10 @@ async def _db_load_config(user_id: str) -> dict:
 async def _db_save_config(user_id: str, config: dict):
     async with _pool().acquire() as conn:
         await conn.execute(
+            "INSERT INTO user_configs (user_id, email, role) VALUES ($1, '', 'user') ON CONFLICT (user_id) DO NOTHING",
+            user_id,
+        )
+        await conn.execute(
             """
             UPDATE user_configs
             SET provider=$2, api_key=$3, model=$4, base_url=$5,
