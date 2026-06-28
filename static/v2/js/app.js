@@ -1821,7 +1821,14 @@
   }
 
   if (partyQrBtn)
-    partyQrBtn.addEventListener("click", () => showPartyQR(_partyToken));
+    partyQrBtn.addEventListener("click", () => {
+      console.log("[QR] clicked — _partyToken:", _partyToken, "QRCode:", typeof QRCode, "modal:", !!partyQrModal);
+      if (_partyToken) {
+        showPartyQR(_partyToken);
+      } else {
+        socket.emit("start_party_music");
+      }
+    });
   if (partyQrClose) partyQrClose.addEventListener("click", hidePartyQR);
   partyQrModal &&
     partyQrModal.addEventListener("click", (e) => {
