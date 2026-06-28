@@ -5,6 +5,9 @@ services:
       - "5000:5000"
     env_file:
       - .env
+    volumes:
+      - ./static:/app/static
+      - ./templates:/app/templates
     depends_on:
       postgres:
         condition: service_healthy
