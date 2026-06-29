@@ -4,16 +4,16 @@
 
 ## Build Order
 
-| Priority | Phase | Status |
-|----------|-------|--------|
-| 1 | Phase 2 — Always-On Wake Word | In Progress |
-| 2 | Phase 7 — Multi-User & Household | Up Next |
-| 3 | Phase 1 — Foundation & Parity | Planned |
-| 4 | Phase 4 — Smart Speaker & Local Hardware | Planned |
-| 5 | Phase 5 — Deeper Smart Home | Planned |
-| 6 | Phase 6 — Proactive & Ambient Intelligence | Planned |
-| 7 | Phase 8 — Developer & Extensibility Platform | Planned |
-| 8 | Phase 3 — Mobile PWA | Last |
+| Priority | Phase                                        | Status      |
+| -------- | -------------------------------------------- | ----------- |
+| 1        | Phase 2 — Always-On Wake Word                | In Progress |
+| 2        | Phase 7 — Multi-User & Household             | Up Next     |
+| 3        | Phase 1 — Foundation & Parity                | Planned     |
+| 4        | Phase 4 — Smart Speaker & Local Hardware     | Planned     |
+| 5        | Phase 5 — Deeper Smart Home                  | Planned     |
+| 6        | Phase 6 — Proactive & Ambient Intelligence   | Planned     |
+| 7        | Phase 8 — Developer & Extensibility Platform | Planned     |
+| 8        | Phase 3 — Mobile PWA                         | Last        |
 
 ---
 
