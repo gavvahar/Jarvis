@@ -15,6 +15,7 @@ asyncpg>=0.29
 itsdangerous>=2.1
 pymyq>=3.1.6
 aiohttp>=3.9
+aiomqtt>=2.0.0
 ruff
 nodeenv
 tox

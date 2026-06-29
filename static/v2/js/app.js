@@ -955,6 +955,13 @@
     speak(msg);
   });
 
+  socket.on("device_alert", ({ name, message, speak: speakText }) => {
+    const msg = speakText || message || "Device alert.";
+    if (window.__chat) window.__chat.addMsg(msg, "in");
+    if (_standby) wake();
+    speak(msg);
+  });
+
   socket.on("wake_trigger", ({ device_id }) => {
     if (_standby) {
       wake();
