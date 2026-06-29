@@ -3148,13 +3148,7 @@ def _get_party_base_url() -> str:
     base = os.getenv("JARVIS_PUBLIC_URL", "").rstrip("/")
     if base:
         return base
-    try:
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        s.connect(("8.8.8.8", 80))
-        ip = s.getsockname()[0]
-        s.close()
-    except Exception:
-        ip = "localhost"
+    ip = os.getenv("HOST_IP", "localhost")
     return f"http://{ip}:5000"
 
 
@@ -3172,7 +3166,7 @@ async def get_party_token(request: Request):
 async def party_guest_page(token: str, request: Request):
     if token not in _party_tokens:
         return HTMLResponse("<html><body style='background:#08111e;color:#7fe9ff;font-family:monospace;padding:40px'><h2>Party has ended.</h2></body></html>", status_code=404)
-    return templates.TemplateResponse("party.html", {"request": request})
+    return templates.TemplateResponse(request, "party.html")
 
 
 @fast_app.get("/party/{token}/now_playing")
