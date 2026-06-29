@@ -114,6 +114,29 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_shared_lists_name ON shared_lists (name);
 
 INSERT INTO shared_lists (name, items) VALUES ('shopping', '[]'), ('todo', '[]') ON CONFLICT (name) DO NOTHING;
 
+CREATE TABLE IF NOT EXISTS timers (
+    id          BIGSERIAL PRIMARY KEY,
+    user_id     TEXT NOT NULL REFERENCES user_configs(user_id) ON DELETE CASCADE,
+    label       TEXT NOT NULL DEFAULT 'Timer',
+    fire_at     TIMESTAMPTZ NOT NULL,
+    fired       BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_timers_user ON timers (user_id, fire_at);
+
+CREATE TABLE IF NOT EXISTS reminders (
+    id                  BIGSERIAL PRIMARY KEY,
+    user_id             TEXT NOT NULL REFERENCES user_configs(user_id) ON DELETE CASCADE,
+    text                TEXT NOT NULL,
+    fire_at             TIMESTAMPTZ NOT NULL,
+    recurring_minutes   INTEGER,
+    active              BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_reminders_user ON reminders (user_id, fire_at);
+
 CREATE TABLE IF NOT EXISTS phone_messages (
     id          BIGSERIAL PRIMARY KEY,
     user_id     TEXT NOT NULL REFERENCES user_configs(user_id) ON DELETE CASCADE,
@@ -395,6 +418,84 @@ async def _db_get_household_members() -> list:
             "SELECT user_id, email, display_name, is_kid_safe, voice_embedding IS NOT NULL AS has_voice FROM user_configs ORDER BY email"
         )
     return [dict(r) for r in rows]
+
+
+async def _db_set_timer(user_id: str, label: str, duration_seconds: int) -> int:
+    fire_at = datetime.datetime.utcnow() + datetime.timedelta(seconds=duration_seconds)
+    async with _pool().acquire() as conn:
+        row = await conn.fetchrow(
+            "INSERT INTO timers (user_id, label, fire_at) VALUES ($1, $2, $3) RETURNING id",
+            user_id, label, fire_at,
+        )
+    return row["id"]
+
+
+async def _db_list_timers(user_id: str) -> list:
+    async with _pool().acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT id, label, fire_at FROM timers WHERE user_id = $1 AND fired = FALSE AND fire_at > NOW() ORDER BY fire_at",
+            user_id,
+        )
+    return [dict(r) for r in rows]
+
+
+async def _db_cancel_timer(user_id: str, timer_id: int) -> bool:
+    async with _pool().acquire() as conn:
+        result = await conn.execute(
+            "UPDATE timers SET fired = TRUE WHERE id = $1 AND user_id = $2 AND fired = FALSE",
+            timer_id, user_id,
+        )
+    return result.split()[-1] == "1"
+
+
+async def _db_fire_due_timers() -> list:
+    async with _pool().acquire() as conn:
+        rows = await conn.fetch(
+            "UPDATE timers SET fired = TRUE WHERE fire_at <= NOW() AND fired = FALSE RETURNING user_id, label"
+        )
+    return [dict(r) for r in rows]
+
+
+async def _db_set_reminder(user_id: str, text: str, fire_at: datetime.datetime, recurring_minutes: int | None) -> int:
+    async with _pool().acquire() as conn:
+        row = await conn.fetchrow(
+            "INSERT INTO reminders (user_id, text, fire_at, recurring_minutes) VALUES ($1, $2, $3, $4) RETURNING id",
+            user_id, text, fire_at, recurring_minutes,
+        )
+    return row["id"]
+
+
+async def _db_list_reminders(user_id: str) -> list:
+    async with _pool().acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT id, text, fire_at, recurring_minutes FROM reminders WHERE user_id = $1 AND active = TRUE AND fire_at > NOW() ORDER BY fire_at",
+            user_id,
+        )
+    return [dict(r) for r in rows]
+
+
+async def _db_cancel_reminder(user_id: str, reminder_id: int) -> bool:
+    async with _pool().acquire() as conn:
+        result = await conn.execute(
+            "UPDATE reminders SET active = FALSE WHERE id = $1 AND user_id = $2",
+            reminder_id, user_id,
+        )
+    return result.split()[-1] == "1"
+
+
+async def _db_fire_due_reminders() -> list:
+    async with _pool().acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT id, user_id, text, recurring_minutes FROM reminders WHERE fire_at <= NOW() AND active = TRUE"
+        )
+        fired = [dict(r) for r in rows]
+        for r in fired:
+            if r["recurring_minutes"]:
+                next_fire = datetime.datetime.utcnow() + datetime.timedelta(minutes=r["recurring_minutes"])
+                await conn.execute("UPDATE reminders SET fire_at = $2 WHERE id = $1", r["id"], next_fire)
+            else:
+                await conn.execute("UPDATE reminders SET active = FALSE WHERE id = $1", r["id"])
+    return fired
 
 
 async def _db_store_phone_message(user_id: str, sender: str, body: str, important: bool, reason: str):
@@ -1902,6 +2003,215 @@ async def _execute_shared_list_tool(args: dict) -> str:
     return f"Unknown action: {action}"
 
 
+# ─── TIMER / REMINDER / NEWS TOOLS ───────────────────────────────────────────
+_TIMER_TOOL_ANTHROPIC = {
+    "name": "manage_timer",
+    "description": "Set, list, or cancel kitchen/task timers.",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "action": {"type": "string", "enum": ["set", "list", "cancel"]},
+            "label": {"type": "string", "description": "Name for the timer, e.g. pasta, laundry"},
+            "duration_seconds": {"type": "integer", "description": "Duration in seconds (required for set)"},
+            "timer_id": {"type": "integer", "description": "Timer ID to cancel (required for cancel)"},
+        },
+        "required": ["action"],
+    },
+}
+
+_TIMER_TOOL_OPENAI = {
+    "type": "function",
+    "function": {
+        "name": "manage_timer",
+        "description": "Set, list, or cancel timers.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "action": {"type": "string", "enum": ["set", "list", "cancel"]},
+                "label": {"type": "string"},
+                "duration_seconds": {"type": "integer"},
+                "timer_id": {"type": "integer"},
+            },
+            "required": ["action"],
+        },
+    },
+}
+
+_REMINDER_TOOL_ANTHROPIC = {
+    "name": "manage_reminder",
+    "description": "Set, list, or cancel reminders. fire_at must be ISO 8601 (use the current date/time from context to calculate it).",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "action": {"type": "string", "enum": ["set", "list", "cancel"]},
+            "text": {"type": "string", "description": "Reminder message"},
+            "fire_at": {"type": "string", "description": "ISO 8601 datetime when to fire"},
+            "recurring_minutes": {"type": "integer", "description": "Repeat interval in minutes (optional)"},
+            "reminder_id": {"type": "integer", "description": "Reminder ID to cancel"},
+        },
+        "required": ["action"],
+    },
+}
+
+_REMINDER_TOOL_OPENAI = {
+    "type": "function",
+    "function": {
+        "name": "manage_reminder",
+        "description": "Set, list, or cancel reminders.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "action": {"type": "string", "enum": ["set", "list", "cancel"]},
+                "text": {"type": "string"},
+                "fire_at": {"type": "string"},
+                "recurring_minutes": {"type": "integer"},
+                "reminder_id": {"type": "integer"},
+            },
+            "required": ["action"],
+        },
+    },
+}
+
+_NEWS_TOOL_ANTHROPIC = {
+    "name": "get_news_headlines",
+    "description": "Fetch the latest news headlines by category.",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "category": {
+                "type": "string",
+                "enum": ["general", "technology", "science", "health", "business", "sports"],
+            },
+            "count": {"type": "integer", "description": "Number of headlines (1–10, default 5)"},
+        },
+        "required": [],
+    },
+}
+
+_NEWS_TOOL_OPENAI = {
+    "type": "function",
+    "function": {
+        "name": "get_news_headlines",
+        "description": "Fetch latest news headlines by category.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "category": {"type": "string", "enum": ["general", "technology", "science", "health", "business", "sports"]},
+                "count": {"type": "integer"},
+            },
+            "required": [],
+        },
+    },
+}
+
+_NEWS_RSS = {
+    "general": "https://feeds.bbci.co.uk/news/rss.xml",
+    "technology": "https://feeds.bbci.co.uk/news/technology/rss.xml",
+    "science": "https://feeds.bbci.co.uk/news/science_and_environment/rss.xml",
+    "health": "https://feeds.bbci.co.uk/news/health/rss.xml",
+    "business": "https://feeds.bbci.co.uk/news/business/rss.xml",
+    "sports": "https://feeds.bbci.co.uk/news/sport/rss.xml",
+}
+
+
+def _get_parity_tools(provider: str) -> list:
+    if provider == "anthropic":
+        return [_TIMER_TOOL_ANTHROPIC, _REMINDER_TOOL_ANTHROPIC, _NEWS_TOOL_ANTHROPIC]
+    return [_TIMER_TOOL_OPENAI, _REMINDER_TOOL_OPENAI, _NEWS_TOOL_OPENAI]
+
+
+def _duration_str(seconds: int) -> str:
+    h, rem = divmod(seconds, 3600)
+    m, s = divmod(rem, 60)
+    parts = []
+    if h:
+        parts.append(f"{h}h")
+    if m:
+        parts.append(f"{m}m")
+    if s or not parts:
+        parts.append(f"{s}s")
+    return " ".join(parts)
+
+
+async def _execute_timer_tool(user_id: str, args: dict) -> str:
+    action = (args.get("action") or "").lower()
+    if action == "set":
+        label = (args.get("label") or "Timer").strip()[:100]
+        duration = int(args.get("duration_seconds") or 0)
+        if duration <= 0:
+            return "Please specify a duration greater than zero."
+        tid = await _db_set_timer(user_id, label, duration)
+        return f"Timer '{label}' set for {_duration_str(duration)}. ID: {tid}."
+    if action == "list":
+        timers = await _db_list_timers(user_id)
+        if not timers:
+            return "No active timers."
+        lines = []
+        for t in timers:
+            remaining = int((t["fire_at"].replace(tzinfo=None) - datetime.datetime.utcnow()).total_seconds())
+            lines.append(f"[{t['id']}] {t['label']} — {_duration_str(max(remaining, 0))} remaining")
+        return "\n".join(lines)
+    if action == "cancel":
+        tid = args.get("timer_id")
+        if not tid:
+            return "Specify a timer ID to cancel."
+        ok = await _db_cancel_timer(user_id, int(tid))
+        return "Timer cancelled." if ok else "Timer not found or already fired."
+    return f"Unknown action: {action}"
+
+
+async def _execute_reminder_tool(user_id: str, args: dict) -> str:
+    action = (args.get("action") or "").lower()
+    if action == "set":
+        text = (args.get("text") or "").strip()
+        fire_at_str = (args.get("fire_at") or "").strip()
+        if not text or not fire_at_str:
+            return "Specify both reminder text and fire_at datetime."
+        try:
+            fire_at = datetime.datetime.fromisoformat(fire_at_str.replace("Z", "+00:00"))
+        except ValueError:
+            return f"Invalid datetime: {fire_at_str}. Use ISO 8601."
+        recurring = args.get("recurring_minutes")
+        rid = await _db_set_reminder(user_id, text, fire_at, recurring)
+        recur = f", repeating every {recurring} min" if recurring else ""
+        return f"Reminder set: '{text}' at {fire_at.strftime('%I:%M %p on %b %d')}{recur}. ID: {rid}."
+    if action == "list":
+        reminders = await _db_list_reminders(user_id)
+        if not reminders:
+            return "No upcoming reminders."
+        return "\n".join(
+            f"[{r['id']}] {r['text']} — {r['fire_at'].strftime('%I:%M %p, %b %d')}"
+            + (f" (every {r['recurring_minutes']}m)" if r["recurring_minutes"] else "")
+            for r in reminders
+        )
+    if action == "cancel":
+        rid = args.get("reminder_id")
+        if not rid:
+            return "Specify a reminder ID to cancel."
+        ok = await _db_cancel_reminder(user_id, int(rid))
+        return "Reminder cancelled." if ok else "Reminder not found."
+    return f"Unknown action: {action}"
+
+
+async def _execute_news_tool(args: dict) -> str:
+    import xml.etree.ElementTree as ET
+    category = (args.get("category") or "general").lower()
+    count = min(max(int(args.get("count") or 5), 1), 10)
+    url = _NEWS_RSS.get(category, _NEWS_RSS["general"])
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(url, timeout=10, follow_redirects=True)
+            resp.raise_for_status()
+        root = ET.fromstring(resp.text)
+        headlines = [item.findtext("title", "").strip() for item in root.findall(".//item")[:count]]
+        headlines = [h for h in headlines if h]
+        if not headlines:
+            return "No headlines available right now."
+        return f"Top {category} news:\n" + "\n".join(f"• {h}" for h in headlines)
+    except Exception as e:
+        return f"Could not fetch news: {e}"
+
+
 # ─── CONFIG VALIDATION ────────────────────────────────────────────────────────
 def _openai_create_sync(client, model, messages, stream, max_out=500):
     last = None
@@ -2028,10 +2338,12 @@ async def lifespan(application: FastAPI):
     t1 = asyncio.create_task(_telemetry_loop())
     t2 = asyncio.create_task(_weather_loop())
     t3 = asyncio.create_task(_meeting_cleanup_loop())
+    t4 = asyncio.create_task(_timer_reminder_loop())
     yield
     t1.cancel()
     t2.cancel()
     t3.cancel()
+    t4.cancel()
     if _db_pool:
         await _db_pool.close()
 
@@ -3029,6 +3341,14 @@ async def api_messages(request: Request):
 # ─── LLM STREAMING ───────────────────────────────────────────────────────────
 def _build_system_prompt(config: dict, speaker_name: str | None = None, is_kid_safe: bool = False) -> str:
     system = JARVIS_SYSTEM
+    now = datetime.datetime.now()
+    system += f"\n\nCURRENT DATE AND TIME: {now.strftime('%A, %B %d, %Y, %I:%M %p')}."
+    system += (
+        "\n\nTIMERS & REMINDERS — use manage_timer to set/list/cancel timers by duration. "
+        "Use manage_reminder to set/list/cancel reminders at a specific datetime (ISO 8601). "
+        "Calculate fire_at from the current date/time above."
+    )
+    system += "\n\nNEWS — use get_news_headlines to fetch the latest headlines by category (general, technology, science, health, business, sports)."
     if speaker_name and speaker_name != "guest":
         system += f"\n\nYou are currently speaking with {speaker_name}. Address them by name when it feels natural."
     if is_kid_safe:
@@ -3148,6 +3468,7 @@ async def _stream_reply(state: dict, on_text):
         + _get_spotify_tools(config, provider)
         + _get_apple_music_tools(config, provider)
         + _get_shared_list_tools(provider)
+        + _get_parity_tools(provider)
     )
     local_msgs = list(state["conversation"])
 
@@ -3178,10 +3499,17 @@ async def _stream_reply(state: dict, on_text):
             results = []
             for block in final.content:
                 if block.type == "tool_use":
+                    uid = state.get("user_id", "")
                     if block.name == "manage_shared_list":
                         result = await _execute_shared_list_tool(dict(block.input))
+                    elif block.name == "manage_timer":
+                        result = await _execute_timer_tool(uid, dict(block.input))
+                    elif block.name == "manage_reminder":
+                        result = await _execute_reminder_tool(uid, dict(block.input))
+                    elif block.name == "get_news_headlines":
+                        result = await _execute_news_tool(dict(block.input))
                     else:
-                        result = await _execute_ha_tool(config, block.name, dict(block.input), state.get("user_id", ""))
+                        result = await _execute_ha_tool(config, block.name, dict(block.input), uid)
                     results.append(
                         {
                             "type": "tool_result",
@@ -3231,10 +3559,17 @@ async def _stream_reply(state: dict, on_text):
             tool_msgs = []
             for acc in tool_calls_acc.values():
                 args = json.loads(acc["args"] or "{}")
+                uid = state.get("user_id", "")
                 if acc["name"] == "manage_shared_list":
                     result = await _execute_shared_list_tool(args)
+                elif acc["name"] == "manage_timer":
+                    result = await _execute_timer_tool(uid, args)
+                elif acc["name"] == "manage_reminder":
+                    result = await _execute_reminder_tool(uid, args)
+                elif acc["name"] == "get_news_headlines":
+                    result = await _execute_news_tool(args)
                 else:
-                    result = await _execute_ha_tool(config, acc["name"], args, state.get("user_id", ""))
+                    result = await _execute_ha_tool(config, acc["name"], args, uid)
                 tc_list.append(
                     {
                         "id": acc["id"],
@@ -3707,6 +4042,27 @@ async def _weather_loop():
         except Exception:
             pass
         await asyncio.sleep(600)
+
+
+async def _timer_reminder_loop():
+    while True:
+        await asyncio.sleep(30)
+        if not _db_pool:
+            continue
+        try:
+            fired_timers = await _db_fire_due_timers()
+            for t in fired_timers:
+                speak = f"Your {t['label']} timer is done, sir."
+                for sid in _sids_for_user(t["user_id"]):
+                    await sio.emit("timer_fired", {"label": t["label"], "speak": speak}, to=sid)
+
+            fired_reminders = await _db_fire_due_reminders()
+            for r in fired_reminders:
+                speak = f"Reminder, sir: {r['text']}."
+                for sid in _sids_for_user(r["user_id"]):
+                    await sio.emit("reminder_fired", {"text": r["text"], "speak": speak}, to=sid)
+        except Exception as e:
+            print(f"[TIMER] {e}", flush=True)
 
 
 async def _meeting_cleanup_loop():
