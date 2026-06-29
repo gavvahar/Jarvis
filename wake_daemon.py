@@ -118,12 +118,15 @@ def main() -> None:
     signal.signal(signal.SIGINT, shutdown)
     signal.signal(signal.SIGTERM, shutdown)
 
-    with httpx.Client() as http, sd.InputStream(
-        samplerate=SAMPLE_RATE,
-        channels=1,
-        dtype="int16",
-        blocksize=CHUNK_SAMPLES,
-        callback=audio_callback,
+    with (
+        httpx.Client() as http,
+        sd.InputStream(
+            samplerate=SAMPLE_RATE,
+            channels=1,
+            dtype="int16",
+            blocksize=CHUNK_SAMPLES,
+            callback=audio_callback,
+        ),
     ):
         while True:
             # Wait until we have a full chunk
