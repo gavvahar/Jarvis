@@ -420,6 +420,10 @@ _user_locks: dict[str, asyncio.Lock] = {}
 _active_meetings: dict[str, dict] = {}
 _party_tokens: dict[str, str] = {}  # token → user_id
 
+# Dedup map for wake triggers — prevents two devices firing simultaneously
+_last_wake_time: dict[str, float] = {}
+_WAKE_DEDUP_WINDOW = 2.0  # seconds
+
 
 def _create_party_token(user_id: str) -> str:
     for t, uid in list(_party_tokens.items()):
@@ -2298,6 +2302,30 @@ async def api_doorbell_event(request: Request):
             )
 
     return {"ok": True}
+
+
+@fast_app.post("/api/wake")
+async def api_wake(request: Request):
+    auth = request.headers.get("Authorization", "")
+    if not auth.startswith("Bearer "):
+        raise HTTPException(401)
+    token = auth[7:].strip()
+    user_id = await _db_find_user_by_token(token)
+    if not user_id:
+        raise HTTPException(401)
+
+    data = await request.json()
+    device_id = (data.get("device_id") or "unknown").strip()[:100]
+
+    now = __import__("time").time()
+    if now - _last_wake_time.get(user_id, 0) < _WAKE_DEDUP_WINDOW:
+        return {"status": "ignored"}
+    _last_wake_time[user_id] = now
+
+    for sid in _sids_for_user(user_id):
+        await sio.emit("wake_trigger", {"device_id": device_id}, to=sid)
+
+    return {"status": "ok"}
 
 
 @fast_app.get("/api/doorbell/token")
