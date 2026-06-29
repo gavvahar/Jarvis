@@ -2,9 +2,22 @@
 
 **Goal:** Replace Siri, Google Assistant, and Alexa as a fully self-hosted, privacy-first AI assistant — always listening, deeply integrated, and extensible across all devices and platforms.
 
+## Build Order
+
+| Priority | Phase | Status |
+|----------|-------|--------|
+| 1 | Phase 2 — Always-On Wake Word | In Progress |
+| 2 | Phase 7 — Multi-User & Household | Up Next |
+| 3 | Phase 1 — Foundation & Parity | Planned |
+| 4 | Phase 4 — Smart Speaker & Local Hardware | Planned |
+| 5 | Phase 5 — Deeper Smart Home | Planned |
+| 6 | Phase 6 — Proactive & Ambient Intelligence | Planned |
+| 7 | Phase 8 — Developer & Extensibility Platform | Planned |
+| 8 | Phase 3 — Mobile PWA | Last |
+
 ---
 
-## Phase 1 — Foundation & Parity (Current → Baseline)
+## Phase 1 — Foundation & Parity
 
 Get Jarvis to feature parity with Siri/Google Assistant/Alexa on core everyday tasks.
 
@@ -19,7 +32,7 @@ Get Jarvis to feature parity with Siri/Google Assistant/Alexa on core everyday t
 
 ---
 
-## Phase 2 — Always-On Wake Word
+## Phase 2 — Always-On Wake Word ← Starting Here
 
 Move from browser/spacebar activation to always-listening hardware-grade detection.
 
@@ -31,26 +44,15 @@ Move from browser/spacebar activation to always-listening hardware-grade detecti
 
 ---
 
-## Phase 3 — Native Mobile Apps
+## Phase 3 — Mobile PWA (Last)
 
-Full assistant apps for iOS and Android, not just the SMS listener.
+Replace native iOS/Android apps with a Progressive Web App to avoid app store copyright issues.
 
-### Android
-
-- [ ] **Background assistant service** — always listening, foreground notification
-- [ ] **Voice overlay** — floating orb activatable from any app (like Assistant)
-- [ ] **On-device wake word** — openWakeWord running locally on device
-- [ ] **Notification reading** — read aloud incoming notifications on request or automatically
-- [ ] **Deep OS integration** — open apps, control volume/brightness, set alarms via Android APIs
-- [ ] **Offline fallback** — local Whisper + small LLM when no server reachable
-
-### iOS
-
-- [ ] **Siri Shortcut integration** — trigger Jarvis via Siri ("Hey Siri, ask Jarvis…")
-- [ ] **Live Activities widget** — show Jarvis listening state on Dynamic Island / Lock Screen
-- [ ] **Background audio session** — compliant always-on listening via iOS Audio Session APIs
-- [ ] **CallKit integration** — intercept and handle "call contact" requests
-- [ ] **App Intents** — expose Jarvis actions to Shortcuts, Focus filters, and Spotlight
+- [ ] **PWA manifest & service worker** — installable from browser, works offline
+- [ ] **Mobile-optimized UI** — touch-friendly orb, fullscreen mode
+- [ ] **Mobile microphone access** — wake via tap since background mic is OS-restricted
+- [ ] **Push notifications** — alerts, reminders, doorbell events delivered to home screen
+- [ ] **Offline mode** — cached UI + queue commands for when server is unreachable
 
 ---
 
@@ -95,7 +97,7 @@ Move from reactive (answer questions) to proactive (anticipate needs).
 
 ---
 
-## Phase 7 — Multi-User & Household
+## Phase 7 — Multi-User & Household ← Up Next After Phase 2
 
 Scale from single-user to full household with voice recognition.
 
