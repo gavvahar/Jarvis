@@ -36,6 +36,7 @@ Move from browser/spacebar activation to always-listening hardware-grade detecti
 Full assistant apps for iOS and Android, not just the SMS listener.
 
 ### Android
+
 - [ ] **Background assistant service** — always listening, foreground notification
 - [ ] **Voice overlay** — floating orb activatable from any app (like Assistant)
 - [ ] **On-device wake word** — openWakeWord running locally on device
@@ -44,6 +45,7 @@ Full assistant apps for iOS and Android, not just the SMS listener.
 - [ ] **Offline fallback** — local Whisper + small LLM when no server reachable
 
 ### iOS
+
 - [ ] **Siri Shortcut integration** — trigger Jarvis via Siri ("Hey Siri, ask Jarvis…")
 - [ ] **Live Activities widget** — show Jarvis listening state on Dynamic Island / Lock Screen
 - [ ] **Background audio session** — compliant always-on listening via iOS Audio Session APIs
