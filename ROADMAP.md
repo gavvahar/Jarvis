@@ -8,7 +8,7 @@
 | -------- | -------------------------------------------- | ----------- |
 | 1        | Phase 2 — Always-On Wake Word                | In Progress |
 | 2        | Phase 7 — Multi-User & Household             | Complete    |
-| 3        | Phase 1 — Foundation & Parity                | In Progress |
+| 3        | Phase 1 — Foundation & Parity                | Complete    |
 | 4        | Phase 4 — Smart Speaker & Local Hardware     | Planned     |
 | 5        | Phase 5 — Deeper Smart Home                  | In Progress |
 | 6        | Phase 6 — Proactive & Ambient Intelligence   | Planned     |
@@ -23,8 +23,8 @@ Get Jarvis to feature parity with Siri/Google Assistant/Alexa on core everyday t
 
 - [x] **Timers & alarms** — set, list, cancel; spoken countdown alerts
 - [x] **Reminders** — one-time and recurring; stored in DB, surfaced via voice
-- [ ] **Calendar integration** — read/create events (Google Calendar, Apple Calendar via CalDAV)
-- [ ] **Contacts lookup** — "call Mom", "text John" via Google/iCloud contacts
+- [x] **Calendar integration** — read/create events (Google Calendar, Apple Calendar via CalDAV)
+- [x] **Contacts lookup** — "call Mom", "text John" via Google/iCloud contacts
 - [x] **Music & media control** — Spotify, Apple Music, YouTube Music (play, pause, skip, volume)
 - [x] **Shopping & to-do lists** — add items, read back, mark done (local + Todoist/OmniFocus sync)
 - [x] **Unit conversion & calculations** — handled natively by the LLM, no tool needed
