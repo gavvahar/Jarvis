@@ -10,7 +10,7 @@ Three providers:
   • openai_compatible — any OpenAI-compatible endpoint (Ollama, OpenRouter, …)
 """
 
-import json, os, re, asyncio, secrets, socket, tempfile, urllib.parse, asyncpg, httpx, datetime, hashlib, base64, pathlib, jwt
+import json, os, re, asyncio, secrets, tempfile, urllib.parse, asyncpg, httpx, datetime, hashlib, base64, pathlib, jwt
 
 
 from contextlib import asynccontextmanager
