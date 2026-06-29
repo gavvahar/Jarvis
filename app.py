@@ -27,6 +27,7 @@ from personality import JARVIS_SYSTEM
 try:
     import librosa as _librosa
     import numpy as _np
+
     _VOICE_ID_OK = True
 except ImportError:
     _VOICE_ID_OK = False
@@ -381,9 +382,7 @@ async def _db_clear_voice_embedding(user_id: str) -> None:
 
 async def _db_get_all_voice_embeddings() -> dict:
     async with _pool().acquire() as conn:
-        rows = await conn.fetch(
-            "SELECT user_id, voice_embedding, display_name, is_kid_safe FROM user_configs WHERE voice_embedding IS NOT NULL"
-        )
+        rows = await conn.fetch("SELECT user_id, voice_embedding, display_name, is_kid_safe FROM user_configs WHERE voice_embedding IS NOT NULL")
     result = {}
     for row in rows:
         emb = row["voice_embedding"]
@@ -415,16 +414,13 @@ async def _db_get_shared_list(name: str) -> list:
 
 async def _db_create_shared_list(name: str) -> None:
     async with _pool().acquire() as conn:
-        await conn.execute(
-            "INSERT INTO shared_lists (name, items) VALUES ($1, '[]') ON CONFLICT (name) DO NOTHING", name
-        )
+        await conn.execute("INSERT INTO shared_lists (name, items) VALUES ($1, '[]') ON CONFLICT (name) DO NOTHING", name)
 
 
 async def _db_update_shared_list(name: str, items: list) -> None:
     async with _pool().acquire() as conn:
         await conn.execute(
-            "INSERT INTO shared_lists (name, items, updated_at) VALUES ($1, $2, NOW()) "
-            "ON CONFLICT (name) DO UPDATE SET items = $2, updated_at = NOW()",
+            "INSERT INTO shared_lists (name, items, updated_at) VALUES ($1, $2, NOW()) ON CONFLICT (name) DO UPDATE SET items = $2, updated_at = NOW()",
             name,
             json.dumps(items),
         )
@@ -442,18 +438,18 @@ async def _db_get_all_shared_lists() -> dict:
 
 async def _db_get_household_members() -> list:
     async with _pool().acquire() as conn:
-        rows = await conn.fetch(
-            "SELECT user_id, email, display_name, is_kid_safe, voice_embedding IS NOT NULL AS has_voice FROM user_configs ORDER BY email"
-        )
+        rows = await conn.fetch("SELECT user_id, email, display_name, is_kid_safe, voice_embedding IS NOT NULL AS has_voice FROM user_configs ORDER BY email")
     return [dict(r) for r in rows]
 
 
 async def _db_set_timer(user_id: str, label: str, duration_seconds: int) -> int:
-    fire_at = datetime.datetime.utcnow() + datetime.timedelta(seconds=duration_seconds)
+    fire_at = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None) + datetime.timedelta(seconds=duration_seconds)
     async with _pool().acquire() as conn:
         row = await conn.fetchrow(
             "INSERT INTO timers (user_id, label, fire_at) VALUES ($1, $2, $3) RETURNING id",
-            user_id, label, fire_at,
+            user_id,
+            label,
+            fire_at,
         )
     return row["id"]
 
@@ -471,16 +467,15 @@ async def _db_cancel_timer(user_id: str, timer_id: int) -> bool:
     async with _pool().acquire() as conn:
         result = await conn.execute(
             "UPDATE timers SET fired = TRUE WHERE id = $1 AND user_id = $2 AND fired = FALSE",
-            timer_id, user_id,
+            timer_id,
+            user_id,
         )
     return result.split()[-1] == "1"
 
 
 async def _db_fire_due_timers() -> list:
     async with _pool().acquire() as conn:
-        rows = await conn.fetch(
-            "UPDATE timers SET fired = TRUE WHERE fire_at <= NOW() AND fired = FALSE RETURNING user_id, label"
-        )
+        rows = await conn.fetch("UPDATE timers SET fired = TRUE WHERE fire_at <= NOW() AND fired = FALSE RETURNING user_id, label")
     return [dict(r) for r in rows]
 
 
@@ -488,7 +483,10 @@ async def _db_set_reminder(user_id: str, text: str, fire_at: datetime.datetime, 
     async with _pool().acquire() as conn:
         row = await conn.fetchrow(
             "INSERT INTO reminders (user_id, text, fire_at, recurring_minutes) VALUES ($1, $2, $3, $4) RETURNING id",
-            user_id, text, fire_at, recurring_minutes,
+            user_id,
+            text,
+            fire_at,
+            recurring_minutes,
         )
     return row["id"]
 
@@ -506,20 +504,19 @@ async def _db_cancel_reminder(user_id: str, reminder_id: int) -> bool:
     async with _pool().acquire() as conn:
         result = await conn.execute(
             "UPDATE reminders SET active = FALSE WHERE id = $1 AND user_id = $2",
-            reminder_id, user_id,
+            reminder_id,
+            user_id,
         )
     return result.split()[-1] == "1"
 
 
 async def _db_fire_due_reminders() -> list:
     async with _pool().acquire() as conn:
-        rows = await conn.fetch(
-            "SELECT id, user_id, text, recurring_minutes FROM reminders WHERE fire_at <= NOW() AND active = TRUE"
-        )
+        rows = await conn.fetch("SELECT id, user_id, text, recurring_minutes FROM reminders WHERE fire_at <= NOW() AND active = TRUE")
         fired = [dict(r) for r in rows]
         for r in fired:
             if r["recurring_minutes"]:
-                next_fire = datetime.datetime.utcnow() + datetime.timedelta(minutes=r["recurring_minutes"])
+                next_fire = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None) + datetime.timedelta(minutes=r["recurring_minutes"])
                 await conn.execute("UPDATE reminders SET fire_at = $2 WHERE id = $1", r["id"], next_fire)
             else:
                 await conn.execute("UPDATE reminders SET active = FALSE WHERE id = $1", r["id"])
@@ -531,7 +528,10 @@ async def _db_create_routine(user_id: str, name: str, trigger_phrases: list, ste
     async with _pool().acquire() as conn:
         row = await conn.fetchrow(
             "INSERT INTO routines (user_id, name, trigger_phrases, steps) VALUES ($1,$2,$3,$4) RETURNING id",
-            user_id, name, json.dumps(trigger_phrases), json.dumps(steps),
+            user_id,
+            name,
+            json.dumps(trigger_phrases),
+            json.dumps(steps),
         )
     return row["id"]
 
@@ -546,13 +546,15 @@ async def _db_list_routines(user_id: str) -> list:
     for row in rows:
         phrases = row["trigger_phrases"]
         steps = row["steps"]
-        result.append({
-            "id": row["id"],
-            "name": row["name"],
-            "trigger_phrases": json.loads(phrases) if isinstance(phrases, str) else (phrases or []),
-            "steps": json.loads(steps) if isinstance(steps, str) else (steps or []),
-            "active": row["active"],
-        })
+        result.append(
+            {
+                "id": row["id"],
+                "name": row["name"],
+                "trigger_phrases": json.loads(phrases) if isinstance(phrases, str) else (phrases or []),
+                "steps": json.loads(steps) if isinstance(steps, str) else (steps or []),
+                "active": row["active"],
+            }
+        )
     return result
 
 
@@ -564,21 +566,22 @@ async def _db_delete_routine(user_id: str, routine_id: int) -> bool:
 
 async def _db_toggle_routine(user_id: str, routine_id: int, active: bool) -> bool:
     async with _pool().acquire() as conn:
-        result = await conn.execute(
-            "UPDATE routines SET active = $3 WHERE id = $1 AND user_id = $2", routine_id, user_id, active
-        )
+        result = await conn.execute("UPDATE routines SET active = $3 WHERE id = $1 AND user_id = $2", routine_id, user_id, active)
     return result.split()[-1] == "1"
 
 
 # ─── DEVICE ALERTS DB ────────────────────────────────────────────────────────
-async def _db_create_device_alert(
-    user_id: str, name: str, entity_id: str, condition: str, value: str, message: str, cooldown_minutes: int
-) -> int:
+async def _db_create_device_alert(user_id: str, name: str, entity_id: str, condition: str, value: str, message: str, cooldown_minutes: int) -> int:
     async with _pool().acquire() as conn:
         row = await conn.fetchrow(
-            "INSERT INTO device_alert_rules (user_id, name, entity_id, condition, value, message, cooldown_minutes) "
-            "VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id",
-            user_id, name, entity_id, condition, value, message, cooldown_minutes,
+            "INSERT INTO device_alert_rules (user_id, name, entity_id, condition, value, message, cooldown_minutes) VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id",
+            user_id,
+            name,
+            entity_id,
+            condition,
+            value,
+            message,
+            cooldown_minutes,
         )
     return row["id"]
 
@@ -586,8 +589,7 @@ async def _db_create_device_alert(
 async def _db_list_device_alerts(user_id: str) -> list:
     async with _pool().acquire() as conn:
         rows = await conn.fetch(
-            "SELECT id, name, entity_id, condition, value, message, cooldown_minutes, active "
-            "FROM device_alert_rules WHERE user_id = $1 ORDER BY name",
+            "SELECT id, name, entity_id, condition, value, message, cooldown_minutes, active FROM device_alert_rules WHERE user_id = $1 ORDER BY name",
             user_id,
         )
     return [dict(r) for r in rows]
@@ -595,18 +597,13 @@ async def _db_list_device_alerts(user_id: str) -> list:
 
 async def _db_delete_device_alert(user_id: str, alert_id: int) -> bool:
     async with _pool().acquire() as conn:
-        result = await conn.execute(
-            "DELETE FROM device_alert_rules WHERE id = $1 AND user_id = $2", alert_id, user_id
-        )
+        result = await conn.execute("DELETE FROM device_alert_rules WHERE id = $1 AND user_id = $2", alert_id, user_id)
     return result.split()[-1] == "1"
 
 
 async def _db_get_active_device_alerts() -> list:
     async with _pool().acquire() as conn:
-        rows = await conn.fetch(
-            "SELECT id, user_id, name, entity_id, condition, value, message, cooldown_minutes, last_fired "
-            "FROM device_alert_rules WHERE active = TRUE"
-        )
+        rows = await conn.fetch("SELECT id, user_id, name, entity_id, condition, value, message, cooldown_minutes, last_fired FROM device_alert_rules WHERE active = TRUE")
     return [dict(r) for r in rows]
 
 
@@ -2277,7 +2274,7 @@ async def _execute_timer_tool(user_id: str, args: dict) -> str:
             return "No active timers."
         lines = []
         for t in timers:
-            remaining = int((t["fire_at"].replace(tzinfo=None) - datetime.datetime.utcnow()).total_seconds())
+            remaining = int((t["fire_at"].replace(tzinfo=None) - datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)).total_seconds())
             lines.append(f"[{t['id']}] {t['label']} — {_duration_str(max(remaining, 0))} remaining")
         return "\n".join(lines)
     if action == "cancel":
@@ -2309,9 +2306,7 @@ async def _execute_reminder_tool(user_id: str, args: dict) -> str:
         if not reminders:
             return "No upcoming reminders."
         return "\n".join(
-            f"[{r['id']}] {r['text']} — {r['fire_at'].strftime('%I:%M %p, %b %d')}"
-            + (f" (every {r['recurring_minutes']}m)" if r["recurring_minutes"] else "")
-            for r in reminders
+            f"[{r['id']}] {r['text']} — {r['fire_at'].strftime('%I:%M %p, %b %d')}" + (f" (every {r['recurring_minutes']}m)" if r["recurring_minutes"] else "") for r in reminders
         )
     if action == "cancel":
         rid = args.get("reminder_id")
@@ -2324,6 +2319,7 @@ async def _execute_reminder_tool(user_id: str, args: dict) -> str:
 
 async def _execute_news_tool(args: dict) -> str:
     import xml.etree.ElementTree as ET
+
     category = (args.get("category") or "general").lower()
     count = min(max(int(args.get("count") or 5), 1), 10)
     url = _NEWS_RSS.get(category, _NEWS_RSS["general"])
@@ -2397,10 +2393,7 @@ _ROUTINE_TOOL_OPENAI = {
 
 _DEVICE_ALERT_TOOL_ANTHROPIC = {
     "name": "manage_device_alert",
-    "description": (
-        "Create, list, or delete proactive device alert rules. "
-        "When an HA entity's state matches the condition, Jarvis speaks the alert message."
-    ),
+    "description": ("Create, list, or delete proactive device alert rules. When an HA entity's state matches the condition, Jarvis speaks the alert message."),
     "input_schema": {
         "type": "object",
         "properties": {
@@ -2445,15 +2438,12 @@ _DEVICE_ALERT_TOOL_OPENAI = {
 
 _ZIGBEE_TOOL_ANTHROPIC = {
     "name": "zigbee_control",
-    "description": (
-        "Send a command to a Zigbee device via Zigbee2MQTT. "
-        "Use for devices not in Home Assistant. Payload is merged into the set topic."
-    ),
+    "description": ("Send a command to a Zigbee device via Zigbee2MQTT. Use for devices not in Home Assistant. Payload is merged into the set topic."),
     "input_schema": {
         "type": "object",
         "properties": {
             "device": {"type": "string", "description": "Zigbee2MQTT device friendly name"},
-            "payload": {"type": "object", "description": "Command payload, e.g. {\"state\": \"ON\", \"brightness\": 128}"},
+            "payload": {"type": "object", "description": 'Command payload, e.g. {"state": "ON", "brightness": 128}'},
         },
         "required": ["device", "payload"],
     },
@@ -2532,9 +2522,7 @@ async def _execute_routine_tool(user_id: str, args: dict, config: dict) -> str:
         if not routines:
             return "No routines configured."
         return "\n".join(
-            f"[{r['id']}] {r['name']} ({'active' if r['active'] else 'disabled'}) — "
-            f"{len(r['steps'])} steps, phrases: {', '.join(r['trigger_phrases']) or 'none'}"
-            for r in routines
+            f"[{r['id']}] {r['name']} ({'active' if r['active'] else 'disabled'}) — {len(r['steps'])} steps, phrases: {', '.join(r['trigger_phrases']) or 'none'}" for r in routines
         )
     if action == "delete":
         rid = args.get("routine_id")
@@ -2571,8 +2559,7 @@ async def _execute_device_alert_tool(user_id: str, args: dict) -> str:
         if not alerts:
             return "No alert rules configured."
         return "\n".join(
-            f"[{a['id']}] {a['name']} — {a['entity_id']} {a['condition']} '{a['value']}' "
-            f"({'active' if a['active'] else 'disabled'}, cooldown {a['cooldown_minutes']}m)"
+            f"[{a['id']}] {a['name']} — {a['entity_id']} {a['condition']} '{a['value']}' ({'active' if a['active'] else 'disabled'}, cooldown {a['cooldown_minutes']}m)"
             for a in alerts
         )
     if action == "delete":
@@ -2593,6 +2580,7 @@ async def _execute_zigbee_tool(args: dict) -> str:
         return "Specify a device name."
     try:
         import aiomqtt
+
         topic = f"{Z2M_BASE_TOPIC}/{device}/set"
         async with aiomqtt.Client(
             hostname=MQTT_BROKER,
@@ -2633,7 +2621,7 @@ async def _device_alert_loop():
             alerts = await _db_get_active_device_alerts()
             if not alerts:
                 continue
-            now_utc = datetime.datetime.utcnow()
+            now_utc = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
             for alert in alerts:
                 uid = alert["user_id"]
                 state = _user_states.get(uid)
@@ -3355,6 +3343,7 @@ async def api_voice_enroll_finish(request: Request):
     if not embeddings or len(embeddings) < 2:
         raise HTTPException(400, "At least 2 samples required.")
     import numpy as _np2
+
     avg = _np2.mean([_np2.array(e) for e in embeddings], axis=0).tolist()
     await _db_save_voice_embedding(user_id, avg)
     await _refresh_voice_cache()
@@ -3873,8 +3862,7 @@ def _build_system_prompt(config: dict, speaker_name: str | None = None, is_kid_s
         )
     if MQTT_BROKER:
         system += (
-            "\n\nZIGBEE — use zigbee_control to send commands directly to Zigbee devices via MQTT. "
-            "Payload examples: {\"state\": \"ON\"}, {\"brightness\": 128}, {\"color_temp\": 300}."
+            '\n\nZIGBEE — use zigbee_control to send commands directly to Zigbee devices via MQTT. Payload examples: {"state": "ON"}, {"brightness": 128}, {"color_temp": 300}.'
         )
     return system
 
