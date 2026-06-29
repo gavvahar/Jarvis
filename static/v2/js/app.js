@@ -938,6 +938,25 @@
     setTimeout(() => toast && toast.remove(), 10000);
   }
 
+  socket.on("wake_trigger", ({ device_id }) => {
+    if (_standby) {
+      wake();
+      const acks = [
+        "Yes, sir?",
+        "Sir?",
+        "Go ahead.",
+        "At your service.",
+        "Right here, sir.",
+        "You rang, sir?",
+      ];
+      const a = acks[Math.floor(Math.random() * acks.length)];
+      if (window.__chat) window.__chat.addMsg(a, "in");
+      _vizState = "speaking";
+      window.__recognition = "RESPONDING";
+      speak(a);
+    }
+  });
+
   socket.on("doorbell_alert", ({ event_type, speak: speakText }) => {
     const msg = speakText || "Doorbell alert.";
     showDoorbellToast(event_type, msg);
