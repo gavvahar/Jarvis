@@ -10,12 +10,12 @@ Three providers:
   • openai_compatible — any OpenAI-compatible endpoint (Ollama, OpenRouter, …)
 """
 
-import json, os, re, asyncio, secrets, tempfile, urllib.parse, asyncpg, httpx, datetime, hashlib, base64, pathlib
+import json, os, re, asyncio, secrets, tempfile, urllib.parse, asyncpg, httpx, datetime, hashlib, base64, pathlib, jwt
 
 
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Request, File, UploadFile
-from fastapi.responses import HTMLResponse, RedirectResponse, FileResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
@@ -23,6 +23,14 @@ import socketio
 from dotenv import load_dotenv
 
 from personality import JARVIS_SYSTEM
+
+try:
+    import librosa as _librosa
+    import numpy as _np
+
+    _VOICE_ID_OK = True
+except ImportError:
+    _VOICE_ID_OK = False
 
 load_dotenv()
 
@@ -50,6 +58,11 @@ SECRET_KEY = os.environ.get("SECRET_KEY", "change-me")
 OIDC_ADMIN_GROUP = os.environ.get("OIDC_ADMIN_GROUP", "jarvis-admins")
 TESLA_CLIENT_ID = os.environ.get("TESLA_CLIENT_ID", "")
 TESLA_CLIENT_SECRET = os.environ.get("TESLA_CLIENT_SECRET", "")
+SPOTIFY_CLIENT_ID = os.environ.get("SPOTIFY_CLIENT_ID", "")
+SPOTIFY_CLIENT_SECRET = os.environ.get("SPOTIFY_CLIENT_SECRET", "")
+APPLE_MUSIC_TEAM_ID = os.environ.get("APPLE_MUSIC_TEAM_ID", "")
+APPLE_MUSIC_KEY_ID = os.environ.get("APPLE_MUSIC_KEY_ID", "")
+APPLE_MUSIC_PRIVATE_KEY = os.environ.get("APPLE_MUSIC_PRIVATE_KEY", "")
 
 # ─── DB ───────────────────────────────────────────────────────────────────────
 _db_pool: asyncpg.Pool | None = None
@@ -81,6 +94,77 @@ ALTER TABLE user_configs ADD COLUMN IF NOT EXISTS myq_password TEXT NOT NULL DEF
 ALTER TABLE user_configs ADD COLUMN IF NOT EXISTS tesla_method TEXT NOT NULL DEFAULT '';
 ALTER TABLE user_configs ADD COLUMN IF NOT EXISTS tesla_refresh_token TEXT NOT NULL DEFAULT '';
 ALTER TABLE user_configs ADD COLUMN IF NOT EXISTS tesla_fleet_refresh_token TEXT NOT NULL DEFAULT '';
+ALTER TABLE user_configs ADD COLUMN IF NOT EXISTS spotify_refresh_token TEXT NOT NULL DEFAULT '';
+ALTER TABLE user_configs ADD COLUMN IF NOT EXISTS spotify_access_token TEXT NOT NULL DEFAULT '';
+ALTER TABLE user_configs ADD COLUMN IF NOT EXISTS spotify_token_expiry DOUBLE PRECISION NOT NULL DEFAULT 0;
+ALTER TABLE user_configs ADD COLUMN IF NOT EXISTS apple_music_user_token TEXT NOT NULL DEFAULT '';
+ALTER TABLE user_configs ADD COLUMN IF NOT EXISTS apple_music_storefront TEXT NOT NULL DEFAULT 'us';
+ALTER TABLE user_configs ADD COLUMN IF NOT EXISTS display_name TEXT NOT NULL DEFAULT '';
+ALTER TABLE user_configs ADD COLUMN IF NOT EXISTS voice_embedding JSONB;
+ALTER TABLE user_configs ADD COLUMN IF NOT EXISTS is_kid_safe BOOLEAN NOT NULL DEFAULT FALSE;
+
+CREATE TABLE IF NOT EXISTS shared_lists (
+    id          BIGSERIAL PRIMARY KEY,
+    name        TEXT NOT NULL,
+    items       JSONB NOT NULL DEFAULT '[]',
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_shared_lists_name ON shared_lists (name);
+
+INSERT INTO shared_lists (name, items) VALUES ('shopping', '[]'), ('todo', '[]') ON CONFLICT (name) DO NOTHING;
+
+CREATE TABLE IF NOT EXISTS timers (
+    id          BIGSERIAL PRIMARY KEY,
+    user_id     TEXT NOT NULL REFERENCES user_configs(user_id) ON DELETE CASCADE,
+    label       TEXT NOT NULL DEFAULT 'Timer',
+    fire_at     TIMESTAMPTZ NOT NULL,
+    fired       BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_timers_user ON timers (user_id, fire_at);
+
+CREATE TABLE IF NOT EXISTS reminders (
+    id                  BIGSERIAL PRIMARY KEY,
+    user_id             TEXT NOT NULL REFERENCES user_configs(user_id) ON DELETE CASCADE,
+    text                TEXT NOT NULL,
+    fire_at             TIMESTAMPTZ NOT NULL,
+    recurring_minutes   INTEGER,
+    active              BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_reminders_user ON reminders (user_id, fire_at);
+
+CREATE TABLE IF NOT EXISTS routines (
+    id              BIGSERIAL PRIMARY KEY,
+    user_id         TEXT NOT NULL REFERENCES user_configs(user_id) ON DELETE CASCADE,
+    name            TEXT NOT NULL,
+    trigger_phrases JSONB NOT NULL DEFAULT '[]',
+    steps           JSONB NOT NULL DEFAULT '[]',
+    active          BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_routines_user ON routines (user_id);
+
+CREATE TABLE IF NOT EXISTS device_alert_rules (
+    id               BIGSERIAL PRIMARY KEY,
+    user_id          TEXT NOT NULL REFERENCES user_configs(user_id) ON DELETE CASCADE,
+    name             TEXT NOT NULL,
+    entity_id        TEXT NOT NULL,
+    condition        TEXT NOT NULL,
+    value            TEXT NOT NULL DEFAULT '',
+    message          TEXT NOT NULL,
+    cooldown_minutes INTEGER NOT NULL DEFAULT 30,
+    last_fired       TIMESTAMPTZ,
+    active           BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_device_alerts_user ON device_alert_rules (user_id);
 
 CREATE TABLE IF NOT EXISTS phone_messages (
     id          BIGSERIAL PRIMARY KEY,
@@ -152,7 +236,7 @@ async def _db_ensure_user(user_id: str, email: str, role: str):
 async def _db_load_config(user_id: str) -> dict:
     async with _pool().acquire() as conn:
         row = await conn.fetchrow(
-            "SELECT role, provider, api_key, model, base_url, ha_url, ha_token, myq_email, myq_password, tesla_method, tesla_refresh_token, tesla_fleet_refresh_token FROM user_configs WHERE user_id = $1",
+            "SELECT role, provider, api_key, model, base_url, ha_url, ha_token, myq_email, myq_password, tesla_method, tesla_refresh_token, tesla_fleet_refresh_token, spotify_refresh_token, spotify_access_token, spotify_token_expiry, display_name, voice_embedding, is_kid_safe FROM user_configs WHERE user_id = $1",
             user_id,
         )
     if row is None:
@@ -169,12 +253,22 @@ async def _db_load_config(user_id: str) -> dict:
             "tesla_method": "",
             "tesla_refresh_token": "",
             "tesla_fleet_refresh_token": "",
+            "spotify_refresh_token": "",
+            "spotify_access_token": "",
+            "spotify_token_expiry": 0.0,
+            "display_name": "",
+            "voice_embedding": None,
+            "is_kid_safe": False,
         }
     return dict(row)
 
 
 async def _db_save_config(user_id: str, config: dict):
     async with _pool().acquire() as conn:
+        await conn.execute(
+            "INSERT INTO user_configs (user_id, email, role) VALUES ($1, '', 'user') ON CONFLICT (user_id) DO NOTHING",
+            user_id,
+        )
         await conn.execute(
             """
             UPDATE user_configs
@@ -274,6 +368,252 @@ async def _db_find_user_by_token(token: str) -> str | None:
             token,
         )
     return row["user_id"] if row else None
+
+
+async def _db_save_voice_embedding(user_id: str, embedding: list) -> None:
+    async with _pool().acquire() as conn:
+        await conn.execute(
+            "UPDATE user_configs SET voice_embedding = $2 WHERE user_id = $1",
+            user_id,
+            json.dumps(embedding),
+        )
+
+
+async def _db_clear_voice_embedding(user_id: str) -> None:
+    async with _pool().acquire() as conn:
+        await conn.execute("UPDATE user_configs SET voice_embedding = NULL WHERE user_id = $1", user_id)
+
+
+async def _db_get_all_voice_embeddings() -> dict:
+    async with _pool().acquire() as conn:
+        rows = await conn.fetch("SELECT user_id, voice_embedding, display_name, is_kid_safe FROM user_configs WHERE voice_embedding IS NOT NULL")
+    result = {}
+    for row in rows:
+        emb = row["voice_embedding"]
+        if emb:
+            parsed = json.loads(emb) if isinstance(emb, str) else emb
+            result[row["user_id"]] = (parsed, row["display_name"] or row["user_id"][:8], row["is_kid_safe"])
+    return result
+
+
+async def _db_set_kid_safe(user_id: str, value: bool) -> None:
+    async with _pool().acquire() as conn:
+        await conn.execute("UPDATE user_configs SET is_kid_safe = $2 WHERE user_id = $1", user_id, value)
+
+
+async def _db_set_display_name(user_id: str, name: str) -> None:
+    async with _pool().acquire() as conn:
+        await conn.execute("UPDATE user_configs SET display_name = $2 WHERE user_id = $1", user_id, name)
+
+
+async def _db_get_shared_list(name: str) -> list:
+    async with _pool().acquire() as conn:
+        row = await conn.fetchrow("SELECT items FROM shared_lists WHERE name = $1", name)
+    if row is None:
+        await _db_create_shared_list(name)
+        return []
+    items = row["items"]
+    return json.loads(items) if isinstance(items, str) else (items or [])
+
+
+async def _db_create_shared_list(name: str) -> None:
+    async with _pool().acquire() as conn:
+        await conn.execute("INSERT INTO shared_lists (name, items) VALUES ($1, '[]') ON CONFLICT (name) DO NOTHING", name)
+
+
+async def _db_update_shared_list(name: str, items: list) -> None:
+    async with _pool().acquire() as conn:
+        await conn.execute(
+            "INSERT INTO shared_lists (name, items, updated_at) VALUES ($1, $2, NOW()) ON CONFLICT (name) DO UPDATE SET items = $2, updated_at = NOW()",
+            name,
+            json.dumps(items),
+        )
+
+
+async def _db_get_all_shared_lists() -> dict:
+    async with _pool().acquire() as conn:
+        rows = await conn.fetch("SELECT name, items FROM shared_lists ORDER BY name")
+    result = {}
+    for row in rows:
+        items = row["items"]
+        result[row["name"]] = json.loads(items) if isinstance(items, str) else (items or [])
+    return result
+
+
+async def _db_get_household_members() -> list:
+    async with _pool().acquire() as conn:
+        rows = await conn.fetch("SELECT user_id, email, display_name, is_kid_safe, voice_embedding IS NOT NULL AS has_voice FROM user_configs ORDER BY email")
+    return [dict(r) for r in rows]
+
+
+async def _db_set_timer(user_id: str, label: str, duration_seconds: int) -> int:
+    fire_at = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None) + datetime.timedelta(seconds=duration_seconds)
+    async with _pool().acquire() as conn:
+        row = await conn.fetchrow(
+            "INSERT INTO timers (user_id, label, fire_at) VALUES ($1, $2, $3) RETURNING id",
+            user_id,
+            label,
+            fire_at,
+        )
+    return row["id"]
+
+
+async def _db_list_timers(user_id: str) -> list:
+    async with _pool().acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT id, label, fire_at FROM timers WHERE user_id = $1 AND fired = FALSE AND fire_at > NOW() ORDER BY fire_at",
+            user_id,
+        )
+    return [dict(r) for r in rows]
+
+
+async def _db_cancel_timer(user_id: str, timer_id: int) -> bool:
+    async with _pool().acquire() as conn:
+        result = await conn.execute(
+            "UPDATE timers SET fired = TRUE WHERE id = $1 AND user_id = $2 AND fired = FALSE",
+            timer_id,
+            user_id,
+        )
+    return result.split()[-1] == "1"
+
+
+async def _db_fire_due_timers() -> list:
+    async with _pool().acquire() as conn:
+        rows = await conn.fetch("UPDATE timers SET fired = TRUE WHERE fire_at <= NOW() AND fired = FALSE RETURNING user_id, label")
+    return [dict(r) for r in rows]
+
+
+async def _db_set_reminder(user_id: str, text: str, fire_at: datetime.datetime, recurring_minutes: int | None) -> int:
+    async with _pool().acquire() as conn:
+        row = await conn.fetchrow(
+            "INSERT INTO reminders (user_id, text, fire_at, recurring_minutes) VALUES ($1, $2, $3, $4) RETURNING id",
+            user_id,
+            text,
+            fire_at,
+            recurring_minutes,
+        )
+    return row["id"]
+
+
+async def _db_list_reminders(user_id: str) -> list:
+    async with _pool().acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT id, text, fire_at, recurring_minutes FROM reminders WHERE user_id = $1 AND active = TRUE AND fire_at > NOW() ORDER BY fire_at",
+            user_id,
+        )
+    return [dict(r) for r in rows]
+
+
+async def _db_cancel_reminder(user_id: str, reminder_id: int) -> bool:
+    async with _pool().acquire() as conn:
+        result = await conn.execute(
+            "UPDATE reminders SET active = FALSE WHERE id = $1 AND user_id = $2",
+            reminder_id,
+            user_id,
+        )
+    return result.split()[-1] == "1"
+
+
+async def _db_fire_due_reminders() -> list:
+    async with _pool().acquire() as conn:
+        rows = await conn.fetch("SELECT id, user_id, text, recurring_minutes FROM reminders WHERE fire_at <= NOW() AND active = TRUE")
+        fired = [dict(r) for r in rows]
+        for r in fired:
+            if r["recurring_minutes"]:
+                next_fire = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None) + datetime.timedelta(minutes=r["recurring_minutes"])
+                await conn.execute("UPDATE reminders SET fire_at = $2 WHERE id = $1", r["id"], next_fire)
+            else:
+                await conn.execute("UPDATE reminders SET active = FALSE WHERE id = $1", r["id"])
+    return fired
+
+
+# ─── ROUTINES DB ─────────────────────────────────────────────────────────────
+async def _db_create_routine(user_id: str, name: str, trigger_phrases: list, steps: list) -> int:
+    async with _pool().acquire() as conn:
+        row = await conn.fetchrow(
+            "INSERT INTO routines (user_id, name, trigger_phrases, steps) VALUES ($1,$2,$3,$4) RETURNING id",
+            user_id,
+            name,
+            json.dumps(trigger_phrases),
+            json.dumps(steps),
+        )
+    return row["id"]
+
+
+async def _db_list_routines(user_id: str) -> list:
+    async with _pool().acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT id, name, trigger_phrases, steps, active FROM routines WHERE user_id = $1 ORDER BY name",
+            user_id,
+        )
+    result = []
+    for row in rows:
+        phrases = row["trigger_phrases"]
+        steps = row["steps"]
+        result.append(
+            {
+                "id": row["id"],
+                "name": row["name"],
+                "trigger_phrases": json.loads(phrases) if isinstance(phrases, str) else (phrases or []),
+                "steps": json.loads(steps) if isinstance(steps, str) else (steps or []),
+                "active": row["active"],
+            }
+        )
+    return result
+
+
+async def _db_delete_routine(user_id: str, routine_id: int) -> bool:
+    async with _pool().acquire() as conn:
+        result = await conn.execute("DELETE FROM routines WHERE id = $1 AND user_id = $2", routine_id, user_id)
+    return result.split()[-1] == "1"
+
+
+async def _db_toggle_routine(user_id: str, routine_id: int, active: bool) -> bool:
+    async with _pool().acquire() as conn:
+        result = await conn.execute("UPDATE routines SET active = $3 WHERE id = $1 AND user_id = $2", routine_id, user_id, active)
+    return result.split()[-1] == "1"
+
+
+# ─── DEVICE ALERTS DB ────────────────────────────────────────────────────────
+async def _db_create_device_alert(user_id: str, name: str, entity_id: str, condition: str, value: str, message: str, cooldown_minutes: int) -> int:
+    async with _pool().acquire() as conn:
+        row = await conn.fetchrow(
+            "INSERT INTO device_alert_rules (user_id, name, entity_id, condition, value, message, cooldown_minutes) VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id",
+            user_id,
+            name,
+            entity_id,
+            condition,
+            value,
+            message,
+            cooldown_minutes,
+        )
+    return row["id"]
+
+
+async def _db_list_device_alerts(user_id: str) -> list:
+    async with _pool().acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT id, name, entity_id, condition, value, message, cooldown_minutes, active FROM device_alert_rules WHERE user_id = $1 ORDER BY name",
+            user_id,
+        )
+    return [dict(r) for r in rows]
+
+
+async def _db_delete_device_alert(user_id: str, alert_id: int) -> bool:
+    async with _pool().acquire() as conn:
+        result = await conn.execute("DELETE FROM device_alert_rules WHERE id = $1 AND user_id = $2", alert_id, user_id)
+    return result.split()[-1] == "1"
+
+
+async def _db_get_active_device_alerts() -> list:
+    async with _pool().acquire() as conn:
+        rows = await conn.fetch("SELECT id, user_id, name, entity_id, condition, value, message, cooldown_minutes, last_fired FROM device_alert_rules WHERE active = TRUE")
+    return [dict(r) for r in rows]
+
+
+async def _db_update_alert_last_fired(alert_id: int) -> None:
+    async with _pool().acquire() as conn:
+        await conn.execute("UPDATE device_alert_rules SET last_fired = NOW() WHERE id = $1", alert_id)
 
 
 async def _db_store_phone_message(user_id: str, sender: str, body: str, important: bool, reason: str):
@@ -405,6 +745,27 @@ _user_locks: dict[str, asyncio.Lock] = {}
 
 # {user_id: {meeting_id, segments}}
 _active_meetings: dict[str, dict] = {}
+_party_tokens: dict[str, str] = {}  # token → user_id
+
+# Dedup map for wake triggers — prevents two devices firing simultaneously
+_last_wake_time: dict[str, float] = {}
+_WAKE_DEDUP_WINDOW = 2.0  # seconds
+
+
+def _create_party_token(user_id: str) -> str:
+    for t, uid in list(_party_tokens.items()):
+        if uid == user_id:
+            _party_tokens.pop(t, None)
+    token = secrets.token_urlsafe(8)
+    _party_tokens[token] = user_id
+    return token
+
+
+def _clear_party_tokens(user_id: str):
+    for t, uid in list(_party_tokens.items()):
+        if uid == user_id:
+            _party_tokens.pop(t, None)
+
 
 # socket sid → user_id
 _sid_to_user: dict[str, str] = {}
@@ -427,6 +788,46 @@ def _get_whisper():
 
         _whisper = WhisperModel("tiny.en", device="cpu", compute_type="int8")
     return _whisper
+
+
+# Voice embedding cache: user_id → (embedding, display_name, is_kid_safe)
+_voice_cache: dict = {}
+_VOICE_THRESHOLD = 0.82
+
+
+def _cosine_similarity(a: list, b: list) -> float:
+    av = _np.array(a, dtype=float)
+    bv = _np.array(b, dtype=float)
+    denom = _np.linalg.norm(av) * _np.linalg.norm(bv)
+    return float(_np.dot(av, bv) / denom) if denom > 0 else 0.0
+
+
+def _extract_voice_embedding(audio_path: str) -> list | None:
+    if not _VOICE_ID_OK:
+        return None
+    y, _ = _librosa.load(audio_path, sr=16000, mono=True)
+    mfcc = _librosa.feature.mfcc(y=y, sr=16000, n_mfcc=40)
+    return [*mfcc.mean(axis=1).tolist(), *mfcc.std(axis=1).tolist()]
+
+
+async def _refresh_voice_cache() -> None:
+    rows = await _db_get_all_voice_embeddings()
+    _voice_cache.clear()
+    _voice_cache.update(rows)
+
+
+def _identify_speaker_from_embedding(embedding: list) -> tuple:
+    """Returns (user_id | None, display_name, is_kid_safe)."""
+    if not _voice_cache or not embedding:
+        return None, "", False
+    best_uid, best_name, best_safe, best_score = None, "", False, 0.0
+    for uid, (stored, name, is_safe) in _voice_cache.items():
+        score = _cosine_similarity(embedding, stored)
+        if score > best_score:
+            best_uid, best_name, best_safe, best_score = uid, name, is_safe, score
+    if best_score >= _VOICE_THRESHOLD:
+        return best_uid, best_name, best_safe
+    return None, "guest", False
 
 
 def _get_user_lock(user_id: str) -> asyncio.Lock:
@@ -1213,6 +1614,18 @@ async def _validate_ha(url, token):
         return False, f"Could not reach Home Assistant: {e}"
 
 
+async def _ha_get_entity_state(config: dict, entity_id: str) -> str | None:
+    url = config["ha_url"].rstrip("/") + f"/api/states/{entity_id}"
+    try:
+        async with httpx.AsyncClient(timeout=5) as c:
+            r = await c.get(url, headers=_ha_headers(config))
+        if r.status_code == 200:
+            return r.json().get("state")
+        return None
+    except Exception:
+        return None
+
+
 async def _ha_get_states(config: dict, domain=None):
     url = config["ha_url"].rstrip("/") + "/api/states"
     async with httpx.AsyncClient(timeout=8) as c:
@@ -1273,9 +1686,970 @@ async def _execute_ha_tool(config: dict, name, args, user_id: str = ""):
             return await _myq_set_door(config, args.get("device"), args.get("action", "close"))
         if name in _TESLA_TOOL_NAMES:
             return await _execute_tesla_tool(config, name, args, user_id)
+        if name in _SPOTIFY_TOOL_NAMES:
+            return await _execute_spotify_tool(name, args, user_id, config)
+        if name in _AM_TOOL_NAMES:
+            return await _execute_apple_music_tool(name, args, user_id)
         return f"Unknown tool: {name}"
     except Exception as e:
         return f"Error: {e}"
+
+
+# ─── SPOTIFY ──────────────────────────────────────────────────────────────────
+_SPOTIFY_AUTH_BASE = "https://accounts.spotify.com"
+_SPOTIFY_API_BASE = "https://api.spotify.com/v1"
+_SPOTIFY_SCOPES = "user-read-playback-state user-modify-playback-state user-read-currently-playing"
+
+_spotify_auth_pending: dict[str, str] = {}
+_spotify_tokens: dict[str, dict] = {}
+
+
+def _spotify_configured(config: dict) -> bool:
+    return bool(config.get("spotify_refresh_token"))
+
+
+async def _db_save_spotify_tokens(user_id: str, access_token: str, refresh_token: str, expiry: float):
+    async with _pool().acquire() as conn:
+        await conn.execute(
+            "UPDATE user_configs SET spotify_access_token=$2, spotify_refresh_token=$3, spotify_token_expiry=$4 WHERE user_id=$1",
+            user_id,
+            access_token,
+            refresh_token,
+            expiry,
+        )
+
+
+async def _spotify_access_token(user_id: str, config: dict) -> str:
+    cached = _spotify_tokens.get(user_id, {})
+    now = datetime.datetime.now().timestamp()
+    if cached.get("access") and cached.get("expiry", 0) > now + 60:
+        return cached["access"]
+
+    refresh = config.get("spotify_refresh_token", "")
+    if not refresh:
+        raise ValueError("Spotify not connected")
+
+    async with httpx.AsyncClient(timeout=15) as c:
+        r = await c.post(
+            f"{_SPOTIFY_AUTH_BASE}/api/token",
+            data={
+                "grant_type": "refresh_token",
+                "refresh_token": refresh,
+                "client_id": SPOTIFY_CLIENT_ID,
+                "client_secret": SPOTIFY_CLIENT_SECRET,
+            },
+        )
+        r.raise_for_status()
+        data = r.json()
+
+    access = data["access_token"]
+    expiry = now + data.get("expires_in", 3600)
+    new_refresh = data.get("refresh_token", refresh)
+
+    _spotify_tokens[user_id] = {"access": access, "expiry": expiry}
+    config["spotify_access_token"] = access
+    config["spotify_refresh_token"] = new_refresh
+    config["spotify_token_expiry"] = expiry
+    await _db_save_spotify_tokens(user_id, access, new_refresh, expiry)
+    return access
+
+
+async def _spotify_req(method: str, endpoint: str, user_id: str, config: dict, **kwargs):
+    token = await _spotify_access_token(user_id, config)
+    headers = {"Authorization": f"Bearer {token}"}
+    async with httpx.AsyncClient(timeout=15) as c:
+        return await getattr(c, method)(f"{_SPOTIFY_API_BASE}{endpoint}", headers=headers, **kwargs)
+
+
+async def _spotify_start_party(user_id: str, config: dict):
+    try:
+        await _spotify_req("put", "/me/player/shuffle", user_id, config, params={"state": "true"})
+        await _spotify_req("put", "/me/player/play", user_id, config)
+    except Exception:
+        pass
+
+
+async def _execute_spotify_tool(name: str, args: dict, user_id: str, config: dict) -> str:
+    if name == "spotify_now_playing":
+        r = await _spotify_req("get", "/me/player/currently-playing", user_id, config)
+        if r.status_code == 204 or not r.text:
+            return "Nothing is currently playing."
+        d = r.json()
+        item = d.get("item") or {}
+        track = item.get("name", "Unknown")
+        artists = ", ".join(a["name"] for a in item.get("artists", []))
+        state = "playing" if d.get("is_playing") else "paused"
+        return f"Currently {state}: {track} by {artists}."
+    if name == "spotify_play":
+        r = await _spotify_req("put", "/me/player/play", user_id, config)
+        return "Resumed playback." if r.status_code in (200, 204) else f"Spotify returned {r.status_code}."
+    if name == "spotify_pause":
+        r = await _spotify_req("put", "/me/player/pause", user_id, config)
+        return "Playback paused." if r.status_code in (200, 204) else f"Spotify returned {r.status_code}."
+    if name == "spotify_next":
+        r = await _spotify_req("post", "/me/player/next", user_id, config)
+        return "Skipped to next track." if r.status_code in (200, 204) else f"Spotify returned {r.status_code}."
+    if name == "spotify_previous":
+        r = await _spotify_req("post", "/me/player/previous", user_id, config)
+        return "Back to previous track." if r.status_code in (200, 204) else f"Spotify returned {r.status_code}."
+    if name == "spotify_volume":
+        vol = max(0, min(100, int(args.get("volume_percent", 50))))
+        r = await _spotify_req("put", "/me/player/volume", user_id, config, params={"volume_percent": vol})
+        return f"Volume set to {vol}%." if r.status_code in (200, 204) else f"Spotify returned {r.status_code}."
+    if name == "spotify_search_and_play":
+        query = args.get("query", "")
+        search_type = args.get("type", "track")
+        r = await _spotify_req("get", "/search", user_id, config, params={"q": query, "type": search_type, "limit": 1})
+        r.raise_for_status()
+        data = r.json()
+        uri = label = None
+        if search_type == "track":
+            items = data.get("tracks", {}).get("items", [])
+            if items:
+                uri = items[0]["uri"]
+                label = f"{items[0]['name']} by {items[0]['artists'][0]['name']}"
+        elif search_type == "playlist":
+            items = data.get("playlists", {}).get("items", [])
+            if items:
+                uri, label = items[0]["uri"], items[0]["name"]
+        elif search_type == "artist":
+            items = data.get("artists", {}).get("items", [])
+            if items:
+                uri, label = items[0]["uri"], items[0]["name"]
+        elif search_type == "album":
+            items = data.get("albums", {}).get("items", [])
+            if items:
+                uri = items[0]["uri"]
+                label = f"{items[0]['name']} by {items[0]['artists'][0]['name']}"
+        if not uri:
+            return f"Could not find any {search_type} matching '{query}'."
+        play_body = {"uris": [uri]} if search_type == "track" else {"context_uri": uri}
+        r2 = await _spotify_req("put", "/me/player/play", user_id, config, json=play_body)
+        if r2.status_code in (200, 204):
+            return f"Now playing {label}."
+        return f"Found {label} but playback failed (Spotify returned {r2.status_code})."
+    return f"Unknown Spotify tool: {name}"
+
+
+SPOTIFY_TOOLS_ANTHROPIC = [
+    {
+        "name": "spotify_now_playing",
+        "description": "Get the currently playing track on Spotify.",
+        "input_schema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "spotify_play",
+        "description": "Resume or start Spotify playback.",
+        "input_schema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "spotify_pause",
+        "description": "Pause Spotify playback.",
+        "input_schema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "spotify_next",
+        "description": "Skip to the next track on Spotify.",
+        "input_schema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "spotify_previous",
+        "description": "Go back to the previous track on Spotify.",
+        "input_schema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "spotify_volume",
+        "description": "Set the Spotify playback volume (0–100).",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "volume_percent": {"type": "integer", "description": "Volume from 0 to 100."},
+            },
+            "required": ["volume_percent"],
+        },
+    },
+    {
+        "name": "spotify_search_and_play",
+        "description": "Search Spotify and play the best matching track, artist, album, or playlist.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Search query (artist, song, playlist name, etc.)"},
+                "type": {
+                    "type": "string",
+                    "enum": ["track", "artist", "album", "playlist"],
+                    "description": "What to search for. Default: track.",
+                },
+            },
+            "required": ["query"],
+        },
+    },
+]
+
+SPOTIFY_TOOLS_OPENAI = [
+    {
+        "type": "function",
+        "function": {"name": "spotify_now_playing", "description": "Get the currently playing track on Spotify.", "parameters": {"type": "object", "properties": {}}},
+    },
+    {"type": "function", "function": {"name": "spotify_play", "description": "Resume or start Spotify playback.", "parameters": {"type": "object", "properties": {}}}},
+    {"type": "function", "function": {"name": "spotify_pause", "description": "Pause Spotify playback.", "parameters": {"type": "object", "properties": {}}}},
+    {"type": "function", "function": {"name": "spotify_next", "description": "Skip to the next track on Spotify.", "parameters": {"type": "object", "properties": {}}}},
+    {"type": "function", "function": {"name": "spotify_previous", "description": "Go back to the previous track on Spotify.", "parameters": {"type": "object", "properties": {}}}},
+    {
+        "type": "function",
+        "function": {
+            "name": "spotify_volume",
+            "description": "Set the Spotify playback volume (0–100).",
+            "parameters": {"type": "object", "properties": {"volume_percent": {"type": "integer", "description": "Volume 0–100."}}, "required": ["volume_percent"]},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "spotify_search_and_play",
+            "description": "Search Spotify and play the best matching track, artist, album, or playlist.",
+            "parameters": {
+                "type": "object",
+                "properties": {"query": {"type": "string", "description": "Search query"}, "type": {"type": "string", "enum": ["track", "artist", "album", "playlist"]}},
+                "required": ["query"],
+            },
+        },
+    },
+]
+
+_SPOTIFY_TOOL_NAMES = {t["name"] for t in SPOTIFY_TOOLS_ANTHROPIC}
+
+
+def _get_spotify_tools(config: dict, provider: str) -> list:
+    if not _spotify_configured(config):
+        return []
+    return SPOTIFY_TOOLS_ANTHROPIC if provider == "anthropic" else SPOTIFY_TOOLS_OPENAI
+
+
+# ─── APPLE MUSIC ──────────────────────────────────────────────────────────────
+_am_callbacks: dict[str, asyncio.Future] = {}
+
+
+def _apple_music_server_configured() -> bool:
+    return bool(APPLE_MUSIC_TEAM_ID and APPLE_MUSIC_KEY_ID and APPLE_MUSIC_PRIVATE_KEY)
+
+
+def _apple_music_configured(config: dict) -> bool:
+    return _apple_music_server_configured() and bool(config.get("apple_music_user_token"))
+
+
+def _apple_music_dev_token() -> str:
+    now = int(datetime.datetime.now().timestamp())
+    return jwt.encode(
+        {"iss": APPLE_MUSIC_TEAM_ID, "iat": now, "exp": now + 15777000},
+        APPLE_MUSIC_PRIVATE_KEY,
+        algorithm="ES256",
+        headers={"kid": APPLE_MUSIC_KEY_ID},
+    )
+
+
+async def _am_request_callback(sid: str, action: str, extra: dict | None = None, timeout: float = 7.0) -> str:
+    cb_id = secrets.token_hex(8)
+    fut: asyncio.Future = asyncio.get_event_loop().create_future()
+    _am_callbacks[cb_id] = fut
+    await sio.emit("apple_music_cmd", {"action": action, "cb": cb_id, **(extra or {})}, to=sid)
+    try:
+        return await asyncio.wait_for(fut, timeout=timeout)
+    except asyncio.TimeoutError:
+        return "Request timed out."
+    finally:
+        _am_callbacks.pop(cb_id, None)
+
+
+async def _apple_music_start_party(user_id: str):
+    sids = [sid for sid, uid in _sid_to_user.items() if uid == user_id]
+    if sids:
+        await sio.emit("apple_music_cmd", {"action": "party"}, to=sids[0])
+
+
+async def _execute_apple_music_tool(name: str, args: dict, user_id: str) -> str:
+    sids = [sid for sid, uid in _sid_to_user.items() if uid == user_id]
+    if not sids:
+        return "No active Apple Music session."
+    sid = sids[0]
+
+    _simple: dict[str, tuple[str, str]] = {
+        "apple_music_play": ("play", "Playback started."),
+        "apple_music_pause": ("pause", "Playback paused."),
+        "apple_music_next": ("next", "Skipped to next track."),
+        "apple_music_previous": ("previous", "Back to previous track."),
+    }
+    if name in _simple:
+        action, msg = _simple[name]
+        await sio.emit("apple_music_cmd", {"action": action}, to=sid)
+        return msg
+    if name == "apple_music_now_playing":
+        return await _am_request_callback(sid, "now_playing")
+    if name == "apple_music_volume":
+        vol = max(0, min(100, int(args.get("volume_percent", 50))))
+        await sio.emit("apple_music_cmd", {"action": "volume", "value": vol / 100}, to=sid)
+        return f"Volume set to {vol}%."
+    if name == "apple_music_search_and_play":
+        type_map = {"track": "songs", "artist": "artists", "album": "albums", "playlist": "playlists"}
+        am_type = type_map.get(args.get("type", "track"), "songs")
+        return await _am_request_callback(sid, "search_and_play", {"query": args.get("query", ""), "type": am_type}, timeout=12.0)
+    return f"Unknown Apple Music tool: {name}"
+
+
+APPLE_MUSIC_TOOLS_ANTHROPIC = [
+    {"name": "apple_music_now_playing", "description": "Get the currently playing track on Apple Music.", "input_schema": {"type": "object", "properties": {}}},
+    {"name": "apple_music_play", "description": "Resume or start Apple Music playback.", "input_schema": {"type": "object", "properties": {}}},
+    {"name": "apple_music_pause", "description": "Pause Apple Music playback.", "input_schema": {"type": "object", "properties": {}}},
+    {"name": "apple_music_next", "description": "Skip to the next track on Apple Music.", "input_schema": {"type": "object", "properties": {}}},
+    {"name": "apple_music_previous", "description": "Go back to the previous track on Apple Music.", "input_schema": {"type": "object", "properties": {}}},
+    {
+        "name": "apple_music_volume",
+        "description": "Set the Apple Music playback volume (0–100).",
+        "input_schema": {
+            "type": "object",
+            "properties": {"volume_percent": {"type": "integer", "description": "Volume from 0 to 100."}},
+            "required": ["volume_percent"],
+        },
+    },
+    {
+        "name": "apple_music_search_and_play",
+        "description": "Search Apple Music and play the best matching song, artist, album, or playlist.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Search query (artist, song, playlist name, etc.)"},
+                "type": {"type": "string", "enum": ["track", "artist", "album", "playlist"], "description": "What to search for. Default: track."},
+            },
+            "required": ["query"],
+        },
+    },
+]
+
+APPLE_MUSIC_TOOLS_OPENAI = [
+    {
+        "type": "function",
+        "function": {"name": "apple_music_now_playing", "description": "Get the currently playing track on Apple Music.", "parameters": {"type": "object", "properties": {}}},
+    },
+    {"type": "function", "function": {"name": "apple_music_play", "description": "Resume or start Apple Music playback.", "parameters": {"type": "object", "properties": {}}}},
+    {"type": "function", "function": {"name": "apple_music_pause", "description": "Pause Apple Music playback.", "parameters": {"type": "object", "properties": {}}}},
+    {"type": "function", "function": {"name": "apple_music_next", "description": "Skip to the next track on Apple Music.", "parameters": {"type": "object", "properties": {}}}},
+    {
+        "type": "function",
+        "function": {"name": "apple_music_previous", "description": "Go back to the previous track on Apple Music.", "parameters": {"type": "object", "properties": {}}},
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "apple_music_volume",
+            "description": "Set the Apple Music playback volume (0–100).",
+            "parameters": {"type": "object", "properties": {"volume_percent": {"type": "integer", "description": "Volume 0–100."}}, "required": ["volume_percent"]},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "apple_music_search_and_play",
+            "description": "Search Apple Music and play the best matching song, artist, album, or playlist.",
+            "parameters": {
+                "type": "object",
+                "properties": {"query": {"type": "string", "description": "Search query"}, "type": {"type": "string", "enum": ["track", "artist", "album", "playlist"]}},
+                "required": ["query"],
+            },
+        },
+    },
+]
+
+_AM_TOOL_NAMES = {t["name"] for t in APPLE_MUSIC_TOOLS_ANTHROPIC}
+
+
+def _get_apple_music_tools(config: dict, provider: str) -> list:
+    if not _apple_music_configured(config):
+        return []
+    return APPLE_MUSIC_TOOLS_ANTHROPIC if provider == "anthropic" else APPLE_MUSIC_TOOLS_OPENAI
+
+
+# ─── SHARED LIST TOOLS ───────────────────────────────────────────────────────
+_SHARED_LIST_TOOL_ANTHROPIC = {
+    "name": "manage_shared_list",
+    "description": "Manage shared household lists such as shopping or todo. Use to add, remove, read, or clear items.",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "action": {"type": "string", "enum": ["add", "remove", "read", "clear"], "description": "Operation to perform"},
+            "list_name": {"type": "string", "description": "Name of the list, e.g. shopping or todo"},
+            "item": {"type": "string", "description": "Item to add or remove (omit for read/clear)"},
+        },
+        "required": ["action", "list_name"],
+    },
+}
+
+_SHARED_LIST_TOOL_OPENAI = {
+    "type": "function",
+    "function": {
+        "name": "manage_shared_list",
+        "description": "Manage shared household lists such as shopping or todo.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "action": {"type": "string", "enum": ["add", "remove", "read", "clear"]},
+                "list_name": {"type": "string", "description": "Name of the list, e.g. shopping or todo"},
+                "item": {"type": "string", "description": "Item to add or remove (omit for read/clear)"},
+            },
+            "required": ["action", "list_name"],
+        },
+    },
+}
+
+
+def _get_shared_list_tools(provider: str) -> list:
+    return [_SHARED_LIST_TOOL_ANTHROPIC] if provider == "anthropic" else [_SHARED_LIST_TOOL_OPENAI]
+
+
+async def _execute_shared_list_tool(args: dict) -> str:
+    action = (args.get("action") or "").lower()
+    list_name = (args.get("list_name") or "shopping").lower().strip()[:50]
+    item = (args.get("item") or "").strip()[:200]
+    items = await _db_get_shared_list(list_name)
+    if action == "read":
+        return f"{list_name.title()} list is empty." if not items else f"{list_name.title()}: " + ", ".join(items) + "."
+    if action == "add":
+        if not item:
+            return "No item specified."
+        if item.lower() not in [i.lower() for i in items]:
+            items.append(item)
+            await _db_update_shared_list(list_name, items)
+        return f"Added '{item}' to {list_name}. {len(items)} item(s) now."
+    if action == "remove":
+        if not item:
+            return "No item specified."
+        new = [i for i in items if i.lower() != item.lower()]
+        if len(new) == len(items):
+            return f"'{item}' not found in {list_name}."
+        await _db_update_shared_list(list_name, new)
+        return f"Removed '{item}' from {list_name}."
+    if action == "clear":
+        await _db_update_shared_list(list_name, [])
+        return f"{list_name.title()} list cleared."
+    return f"Unknown action: {action}"
+
+
+# ─── TIMER / REMINDER / NEWS TOOLS ───────────────────────────────────────────
+_TIMER_TOOL_ANTHROPIC = {
+    "name": "manage_timer",
+    "description": "Set, list, or cancel kitchen/task timers.",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "action": {"type": "string", "enum": ["set", "list", "cancel"]},
+            "label": {"type": "string", "description": "Name for the timer, e.g. pasta, laundry"},
+            "duration_seconds": {"type": "integer", "description": "Duration in seconds (required for set)"},
+            "timer_id": {"type": "integer", "description": "Timer ID to cancel (required for cancel)"},
+        },
+        "required": ["action"],
+    },
+}
+
+_TIMER_TOOL_OPENAI = {
+    "type": "function",
+    "function": {
+        "name": "manage_timer",
+        "description": "Set, list, or cancel timers.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "action": {"type": "string", "enum": ["set", "list", "cancel"]},
+                "label": {"type": "string"},
+                "duration_seconds": {"type": "integer"},
+                "timer_id": {"type": "integer"},
+            },
+            "required": ["action"],
+        },
+    },
+}
+
+_REMINDER_TOOL_ANTHROPIC = {
+    "name": "manage_reminder",
+    "description": "Set, list, or cancel reminders. fire_at must be ISO 8601 (use the current date/time from context to calculate it).",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "action": {"type": "string", "enum": ["set", "list", "cancel"]},
+            "text": {"type": "string", "description": "Reminder message"},
+            "fire_at": {"type": "string", "description": "ISO 8601 datetime when to fire"},
+            "recurring_minutes": {"type": "integer", "description": "Repeat interval in minutes (optional)"},
+            "reminder_id": {"type": "integer", "description": "Reminder ID to cancel"},
+        },
+        "required": ["action"],
+    },
+}
+
+_REMINDER_TOOL_OPENAI = {
+    "type": "function",
+    "function": {
+        "name": "manage_reminder",
+        "description": "Set, list, or cancel reminders.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "action": {"type": "string", "enum": ["set", "list", "cancel"]},
+                "text": {"type": "string"},
+                "fire_at": {"type": "string"},
+                "recurring_minutes": {"type": "integer"},
+                "reminder_id": {"type": "integer"},
+            },
+            "required": ["action"],
+        },
+    },
+}
+
+_NEWS_TOOL_ANTHROPIC = {
+    "name": "get_news_headlines",
+    "description": "Fetch the latest news headlines by category.",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "category": {
+                "type": "string",
+                "enum": ["general", "technology", "science", "health", "business", "sports"],
+            },
+            "count": {"type": "integer", "description": "Number of headlines (1–10, default 5)"},
+        },
+        "required": [],
+    },
+}
+
+_NEWS_TOOL_OPENAI = {
+    "type": "function",
+    "function": {
+        "name": "get_news_headlines",
+        "description": "Fetch latest news headlines by category.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "category": {"type": "string", "enum": ["general", "technology", "science", "health", "business", "sports"]},
+                "count": {"type": "integer"},
+            },
+            "required": [],
+        },
+    },
+}
+
+_NEWS_RSS = {
+    "general": "https://feeds.bbci.co.uk/news/rss.xml",
+    "technology": "https://feeds.bbci.co.uk/news/technology/rss.xml",
+    "science": "https://feeds.bbci.co.uk/news/science_and_environment/rss.xml",
+    "health": "https://feeds.bbci.co.uk/news/health/rss.xml",
+    "business": "https://feeds.bbci.co.uk/news/business/rss.xml",
+    "sports": "https://feeds.bbci.co.uk/news/sport/rss.xml",
+}
+
+
+def _get_parity_tools(provider: str) -> list:
+    if provider == "anthropic":
+        return [_TIMER_TOOL_ANTHROPIC, _REMINDER_TOOL_ANTHROPIC, _NEWS_TOOL_ANTHROPIC]
+    return [_TIMER_TOOL_OPENAI, _REMINDER_TOOL_OPENAI, _NEWS_TOOL_OPENAI]
+
+
+def _duration_str(seconds: int) -> str:
+    h, rem = divmod(seconds, 3600)
+    m, s = divmod(rem, 60)
+    parts = []
+    if h:
+        parts.append(f"{h}h")
+    if m:
+        parts.append(f"{m}m")
+    if s or not parts:
+        parts.append(f"{s}s")
+    return " ".join(parts)
+
+
+async def _execute_timer_tool(user_id: str, args: dict) -> str:
+    action = (args.get("action") or "").lower()
+    if action == "set":
+        label = (args.get("label") or "Timer").strip()[:100]
+        duration = int(args.get("duration_seconds") or 0)
+        if duration <= 0:
+            return "Please specify a duration greater than zero."
+        tid = await _db_set_timer(user_id, label, duration)
+        return f"Timer '{label}' set for {_duration_str(duration)}. ID: {tid}."
+    if action == "list":
+        timers = await _db_list_timers(user_id)
+        if not timers:
+            return "No active timers."
+        lines = []
+        for t in timers:
+            remaining = int((t["fire_at"].replace(tzinfo=None) - datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)).total_seconds())
+            lines.append(f"[{t['id']}] {t['label']} — {_duration_str(max(remaining, 0))} remaining")
+        return "\n".join(lines)
+    if action == "cancel":
+        tid = args.get("timer_id")
+        if not tid:
+            return "Specify a timer ID to cancel."
+        ok = await _db_cancel_timer(user_id, int(tid))
+        return "Timer cancelled." if ok else "Timer not found or already fired."
+    return f"Unknown action: {action}"
+
+
+async def _execute_reminder_tool(user_id: str, args: dict) -> str:
+    action = (args.get("action") or "").lower()
+    if action == "set":
+        text = (args.get("text") or "").strip()
+        fire_at_str = (args.get("fire_at") or "").strip()
+        if not text or not fire_at_str:
+            return "Specify both reminder text and fire_at datetime."
+        try:
+            fire_at = datetime.datetime.fromisoformat(fire_at_str.replace("Z", "+00:00"))
+        except ValueError:
+            return f"Invalid datetime: {fire_at_str}. Use ISO 8601."
+        recurring = args.get("recurring_minutes")
+        rid = await _db_set_reminder(user_id, text, fire_at, recurring)
+        recur = f", repeating every {recurring} min" if recurring else ""
+        return f"Reminder set: '{text}' at {fire_at.strftime('%I:%M %p on %b %d')}{recur}. ID: {rid}."
+    if action == "list":
+        reminders = await _db_list_reminders(user_id)
+        if not reminders:
+            return "No upcoming reminders."
+        return "\n".join(
+            f"[{r['id']}] {r['text']} — {r['fire_at'].strftime('%I:%M %p, %b %d')}" + (f" (every {r['recurring_minutes']}m)" if r["recurring_minutes"] else "") for r in reminders
+        )
+    if action == "cancel":
+        rid = args.get("reminder_id")
+        if not rid:
+            return "Specify a reminder ID to cancel."
+        ok = await _db_cancel_reminder(user_id, int(rid))
+        return "Reminder cancelled." if ok else "Reminder not found."
+    return f"Unknown action: {action}"
+
+
+async def _execute_news_tool(args: dict) -> str:
+    import xml.etree.ElementTree as ET
+
+    category = (args.get("category") or "general").lower()
+    count = min(max(int(args.get("count") or 5), 1), 10)
+    url = _NEWS_RSS.get(category, _NEWS_RSS["general"])
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(url, timeout=10, follow_redirects=True)
+            resp.raise_for_status()
+        root = ET.fromstring(resp.text)
+        headlines = [item.findtext("title", "").strip() for item in root.findall(".//item")[:count]]
+        headlines = [h for h in headlines if h]
+        if not headlines:
+            return "No headlines available right now."
+        return f"Top {category} news:\n" + "\n".join(f"• {h}" for h in headlines)
+    except Exception as e:
+        return f"Could not fetch news: {e}"
+
+
+# ─── PHASE 5: ROUTINES & DEVICE ALERTS ───────────────────────────────────────
+MQTT_BROKER = os.environ.get("MQTT_BROKER", "")
+MQTT_PORT = int(os.environ.get("MQTT_PORT", "1883"))
+MQTT_USER = os.environ.get("MQTT_USER", "")
+MQTT_PASSWORD = os.environ.get("MQTT_PASSWORD", "")
+Z2M_BASE_TOPIC = os.environ.get("Z2M_BASE_TOPIC", "zigbee2mqtt")
+
+_ROUTINE_TOOL_ANTHROPIC = {
+    "name": "manage_routine",
+    "description": (
+        "Create, list, delete, or run named routines. A routine is a sequence of steps "
+        "(ha_service, speak, delay) triggered by voice phrases. "
+        "Steps: ha_service={domain,service,entity_id?,service_data?}, speak={text}, delay={seconds}."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "action": {"type": "string", "enum": ["create", "list", "delete", "run"]},
+            "name": {"type": "string", "description": "Routine name"},
+            "trigger_phrases": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Voice phrases that trigger this routine",
+            },
+            "steps": {
+                "type": "array",
+                "description": "Ordered steps to execute",
+                "items": {"type": "object"},
+            },
+            "routine_id": {"type": "integer", "description": "ID to delete"},
+        },
+        "required": ["action"],
+    },
+}
+
+_ROUTINE_TOOL_OPENAI = {
+    "type": "function",
+    "function": {
+        "name": "manage_routine",
+        "description": "Create, list, delete, or run named routines (ha_service/speak/delay steps).",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "action": {"type": "string", "enum": ["create", "list", "delete", "run"]},
+                "name": {"type": "string"},
+                "trigger_phrases": {"type": "array", "items": {"type": "string"}},
+                "steps": {"type": "array", "items": {"type": "object"}},
+                "routine_id": {"type": "integer"},
+            },
+            "required": ["action"],
+        },
+    },
+}
+
+_DEVICE_ALERT_TOOL_ANTHROPIC = {
+    "name": "manage_device_alert",
+    "description": ("Create, list, or delete proactive device alert rules. When an HA entity's state matches the condition, Jarvis speaks the alert message."),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "action": {"type": "string", "enum": ["create", "list", "delete"]},
+            "name": {"type": "string", "description": "Human-readable alert name"},
+            "entity_id": {"type": "string", "description": "HA entity to monitor, e.g. sensor.front_door"},
+            "condition": {
+                "type": "string",
+                "enum": ["equals", "not_equals", "greater_than", "less_than"],
+                "description": "Comparison operator",
+            },
+            "value": {"type": "string", "description": "Target state value to compare against"},
+            "message": {"type": "string", "description": "What Jarvis should say when the alert fires"},
+            "cooldown_minutes": {"type": "integer", "description": "Minutes before re-alerting (default 30)"},
+            "alert_id": {"type": "integer", "description": "Alert ID to delete"},
+        },
+        "required": ["action"],
+    },
+}
+
+_DEVICE_ALERT_TOOL_OPENAI = {
+    "type": "function",
+    "function": {
+        "name": "manage_device_alert",
+        "description": "Create, list, or delete proactive HA device alert rules.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "action": {"type": "string", "enum": ["create", "list", "delete"]},
+                "name": {"type": "string"},
+                "entity_id": {"type": "string"},
+                "condition": {"type": "string", "enum": ["equals", "not_equals", "greater_than", "less_than"]},
+                "value": {"type": "string"},
+                "message": {"type": "string"},
+                "cooldown_minutes": {"type": "integer"},
+                "alert_id": {"type": "integer"},
+            },
+            "required": ["action"],
+        },
+    },
+}
+
+_ZIGBEE_TOOL_ANTHROPIC = {
+    "name": "zigbee_control",
+    "description": ("Send a command to a Zigbee device via Zigbee2MQTT. Use for devices not in Home Assistant. Payload is merged into the set topic."),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "device": {"type": "string", "description": "Zigbee2MQTT device friendly name"},
+            "payload": {"type": "object", "description": 'Command payload, e.g. {"state": "ON", "brightness": 128}'},
+        },
+        "required": ["device", "payload"],
+    },
+}
+
+_ZIGBEE_TOOL_OPENAI = {
+    "type": "function",
+    "function": {
+        "name": "zigbee_control",
+        "description": "Send a command to a Zigbee device via Zigbee2MQTT.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "device": {"type": "string"},
+                "payload": {"type": "object"},
+            },
+            "required": ["device", "payload"],
+        },
+    },
+}
+
+
+def _get_phase5_tools(config: dict, provider: str) -> list:
+    tools = []
+    if _ha_configured(config):
+        if provider == "anthropic":
+            tools += [_ROUTINE_TOOL_ANTHROPIC, _DEVICE_ALERT_TOOL_ANTHROPIC]
+        else:
+            tools += [_ROUTINE_TOOL_OPENAI, _DEVICE_ALERT_TOOL_OPENAI]
+    if MQTT_BROKER:
+        tools.append(_ZIGBEE_TOOL_ANTHROPIC if provider == "anthropic" else _ZIGBEE_TOOL_OPENAI)
+    return tools
+
+
+async def _run_routine(user_id: str, config: dict, steps: list) -> None:
+    sids = _sids_for_user(user_id)
+    for i, step in enumerate(steps):
+        step_type = (step.get("type") or "").lower()
+        try:
+            if step_type == "ha_service" and _ha_configured(config):
+                await _ha_call_service(
+                    config,
+                    step.get("domain", ""),
+                    step.get("service", ""),
+                    step.get("entity_id"),
+                    step.get("service_data"),
+                )
+            elif step_type == "speak":
+                text = (step.get("text") or "").strip()
+                if text:
+                    for sid in sids:
+                        await sio.emit("speak_sentence", {"text": text, "seq": i}, to=sid)
+            elif step_type == "delay":
+                secs = float(step.get("seconds") or 0)
+                if secs > 0:
+                    await asyncio.sleep(min(secs, 300))
+        except Exception as e:
+            print(f"[ROUTINE] Step {i} ({step_type}) error: {e}", flush=True)
+
+
+async def _execute_routine_tool(user_id: str, args: dict, config: dict) -> str:
+    action = (args.get("action") or "").lower()
+    if action == "create":
+        name = (args.get("name") or "").strip()
+        if not name:
+            return "Specify a routine name."
+        phrases = args.get("trigger_phrases") or []
+        steps = args.get("steps") or []
+        if not steps:
+            return "Specify at least one step."
+        rid = await _db_create_routine(user_id, name, phrases, steps)
+        phrase_str = ", ".join(f'"{p}"' for p in phrases[:3]) if phrases else "none"
+        return f"Routine '{name}' created with {len(steps)} step(s). Trigger phrases: {phrase_str}. ID: {rid}."
+    if action == "list":
+        routines = await _db_list_routines(user_id)
+        if not routines:
+            return "No routines configured."
+        return "\n".join(
+            f"[{r['id']}] {r['name']} ({'active' if r['active'] else 'disabled'}) — {len(r['steps'])} steps, phrases: {', '.join(r['trigger_phrases']) or 'none'}" for r in routines
+        )
+    if action == "delete":
+        rid = args.get("routine_id")
+        if not rid:
+            return "Specify a routine_id to delete."
+        ok = await _db_delete_routine(user_id, int(rid))
+        return "Routine deleted." if ok else "Routine not found."
+    if action == "run":
+        name = (args.get("name") or "").strip()
+        routines = await _db_list_routines(user_id)
+        routine = next((r for r in routines if r["name"].lower() == name.lower()), None)
+        if not routine:
+            return f"No routine named '{name}'."
+        asyncio.create_task(_run_routine(user_id, config, routine["steps"]))
+        return f"Running routine '{name}'."
+    return f"Unknown action: {action}"
+
+
+async def _execute_device_alert_tool(user_id: str, args: dict) -> str:
+    action = (args.get("action") or "").lower()
+    if action == "create":
+        name = (args.get("name") or "").strip()
+        entity_id = (args.get("entity_id") or "").strip()
+        condition = (args.get("condition") or "equals").strip()
+        value = str(args.get("value") or "").strip()
+        message = (args.get("message") or "").strip()
+        cooldown = int(args.get("cooldown_minutes") or 30)
+        if not all([name, entity_id, message]):
+            return "Specify name, entity_id, and message."
+        aid = await _db_create_device_alert(user_id, name, entity_id, condition, value, message, cooldown)
+        return f"Alert '{name}' created (ID: {aid}). Will notify when {entity_id} {condition} '{value}'."
+    if action == "list":
+        alerts = await _db_list_device_alerts(user_id)
+        if not alerts:
+            return "No alert rules configured."
+        return "\n".join(
+            f"[{a['id']}] {a['name']} — {a['entity_id']} {a['condition']} '{a['value']}' ({'active' if a['active'] else 'disabled'}, cooldown {a['cooldown_minutes']}m)"
+            for a in alerts
+        )
+    if action == "delete":
+        aid = args.get("alert_id")
+        if not aid:
+            return "Specify an alert_id to delete."
+        ok = await _db_delete_device_alert(user_id, int(aid))
+        return "Alert deleted." if ok else "Alert not found."
+    return f"Unknown action: {action}"
+
+
+async def _execute_zigbee_tool(args: dict) -> str:
+    if not MQTT_BROKER:
+        return "MQTT broker not configured."
+    device = (args.get("device") or "").strip()
+    payload = args.get("payload") or {}
+    if not device:
+        return "Specify a device name."
+    try:
+        import aiomqtt
+
+        topic = f"{Z2M_BASE_TOPIC}/{device}/set"
+        async with aiomqtt.Client(
+            hostname=MQTT_BROKER,
+            port=MQTT_PORT,
+            username=MQTT_USER or None,
+            password=MQTT_PASSWORD or None,
+        ) as client:
+            await client.publish(topic, json.dumps(payload))
+        return f"Command sent to {device}: {payload}"
+    except ImportError:
+        return "aiomqtt not installed — Zigbee control unavailable."
+    except Exception as e:
+        return f"MQTT error: {e}"
+
+
+def _evaluate_alert_condition(state: str, condition: str, value: str) -> bool:
+    if condition == "equals":
+        return state.lower() == value.lower()
+    if condition == "not_equals":
+        return state.lower() != value.lower()
+    try:
+        sn, vn = float(state), float(value)
+        if condition == "greater_than":
+            return sn > vn
+        if condition == "less_than":
+            return sn < vn
+    except (ValueError, TypeError):
+        pass
+    return False
+
+
+async def _device_alert_loop():
+    while True:
+        await asyncio.sleep(120)
+        if not _db_pool:
+            continue
+        try:
+            alerts = await _db_get_active_device_alerts()
+            if not alerts:
+                continue
+            now_utc = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
+            for alert in alerts:
+                uid = alert["user_id"]
+                state = _user_states.get(uid)
+                if not state or not _ha_configured(state["config"]):
+                    continue
+                last_fired = alert.get("last_fired")
+                if last_fired:
+                    elapsed = now_utc - last_fired.replace(tzinfo=None)
+                    if elapsed < datetime.timedelta(minutes=alert["cooldown_minutes"]):
+                        continue
+                entity_state = await _ha_get_entity_state(state["config"], alert["entity_id"])
+                if entity_state is None:
+                    continue
+                if _evaluate_alert_condition(entity_state, alert["condition"], alert["value"]):
+                    await _db_update_alert_last_fired(alert["id"])
+                    speak = alert["message"]
+                    for sid in _sids_for_user(uid):
+                        await sio.emit(
+                            "device_alert",
+                            {"name": alert["name"], "message": speak, "speak": speak},
+                            to=sid,
+                        )
+        except Exception as e:
+            print(f"[ALERT] {e}", flush=True)
 
 
 # ─── CONFIG VALIDATION ────────────────────────────────────────────────────────
@@ -1404,10 +2778,14 @@ async def lifespan(application: FastAPI):
     t1 = asyncio.create_task(_telemetry_loop())
     t2 = asyncio.create_task(_weather_loop())
     t3 = asyncio.create_task(_meeting_cleanup_loop())
+    t4 = asyncio.create_task(_timer_reminder_loop())
+    t5 = asyncio.create_task(_device_alert_loop())
     yield
     t1.cancel()
     t2.cancel()
     t3.cancel()
+    t4.cancel()
+    t5.cancel()
     if _db_pool:
         await _db_pool.close()
 
@@ -1531,6 +2909,10 @@ async def api_status(request: Request):
         "tesla_configured": _tesla_configured(config),
         "tesla_method": config.get("tesla_method", ""),
         "tesla_fleet_enabled": bool(TESLA_CLIENT_ID),
+        "spotify_configured": _spotify_configured(config),
+        "spotify_client_enabled": bool(SPOTIFY_CLIENT_ID),
+        "apple_music_configured": _apple_music_configured(config),
+        "apple_music_server_enabled": _apple_music_server_configured(),
         "role": state.get("role", "user"),
     }
 
@@ -1561,7 +2943,19 @@ async def api_transcribe(request: Request, audio: UploadFile = File(...)):
 
         async with _whisper_lock:
             text = await asyncio.to_thread(_run)
-        return {"text": text}
+
+        speaker_id, speaker_name, speaker_kid_safe = None, None, False
+        if _VOICE_ID_OK and _voice_cache:
+            embedding = await asyncio.to_thread(_extract_voice_embedding, tmp)
+            if embedding:
+                speaker_id, speaker_name, speaker_kid_safe = _identify_speaker_from_embedding(embedding)
+
+        return {
+            "text": text,
+            "speaker_id": speaker_id,
+            "speaker_name": speaker_name,
+            "speaker_kid_safe": speaker_kid_safe,
+        }
     except Exception as e:
         print(f"[STT] {e}", flush=True)
         return {"text": ""}
@@ -1889,6 +3283,127 @@ async def api_doorbell_event(request: Request):
     return {"ok": True}
 
 
+@fast_app.post("/api/wake")
+async def api_wake(request: Request):
+    auth = request.headers.get("Authorization", "")
+    if not auth.startswith("Bearer "):
+        raise HTTPException(401)
+    token = auth[7:].strip()
+    user_id = await _db_find_user_by_token(token)
+    if not user_id:
+        raise HTTPException(401)
+
+    data = await request.json()
+    device_id = (data.get("device_id") or "unknown").strip()[:100]
+
+    now = __import__("time").time()
+    if now - _last_wake_time.get(user_id, 0) < _WAKE_DEDUP_WINDOW:
+        return {"status": "ignored"}
+    _last_wake_time[user_id] = now
+
+    for sid in _sids_for_user(user_id):
+        await sio.emit("wake_trigger", {"device_id": device_id}, to=sid)
+
+    return {"status": "ok"}
+
+
+@fast_app.post("/api/voice/enroll-sample")
+async def api_voice_enroll_sample(request: Request, audio: UploadFile = File(...)):
+    """Extract a voice embedding from an uploaded audio sample. Returns embedding (not saved)."""
+    if not _get_current_user(request):
+        raise HTTPException(401)
+    if not _VOICE_ID_OK:
+        return {"ok": False, "error": "Voice ID unavailable — install librosa on the server."}
+    data = await audio.read()
+    tmp = None
+    try:
+        with tempfile.NamedTemporaryFile(suffix=".webm", delete=False) as f:
+            f.write(data)
+            tmp = f.name
+        embedding = await asyncio.to_thread(_extract_voice_embedding, tmp)
+        if embedding is None:
+            return {"ok": False, "error": "Could not extract embedding."}
+        return {"ok": True, "embedding": embedding}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+    finally:
+        if tmp:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+
+
+@fast_app.post("/api/voice/enroll-finish")
+async def api_voice_enroll_finish(request: Request):
+    """Average provided embeddings and save as the user's voiceprint."""
+    user_id = _get_current_user(request)
+    if not user_id:
+        raise HTTPException(401)
+    if not _VOICE_ID_OK:
+        raise HTTPException(400, "Voice ID unavailable.")
+    data = await request.json()
+    embeddings = data.get("embeddings", [])
+    if not embeddings or len(embeddings) < 2:
+        raise HTTPException(400, "At least 2 samples required.")
+    import numpy as _np2
+
+    avg = _np2.mean([_np2.array(e) for e in embeddings], axis=0).tolist()
+    await _db_save_voice_embedding(user_id, avg)
+    await _refresh_voice_cache()
+    return {"ok": True}
+
+
+@fast_app.delete("/api/voice/enrollment")
+async def api_voice_enrollment_delete(request: Request):
+    user_id = _get_current_user(request)
+    if not user_id:
+        raise HTTPException(401)
+    await _db_clear_voice_embedding(user_id)
+    await _refresh_voice_cache()
+    return {"ok": True}
+
+
+@fast_app.patch("/api/user/profile")
+async def api_user_profile(request: Request):
+    user_id = _get_current_user(request)
+    if not user_id:
+        raise HTTPException(401)
+    data = await request.json()
+    if "display_name" in data:
+        name = str(data["display_name"]).strip()[:100]
+        await _db_set_display_name(user_id, name)
+        if user_id in _user_states:
+            _user_states[user_id]["config"]["display_name"] = name
+        await _refresh_voice_cache()
+    if "is_kid_safe" in data:
+        value = bool(data["is_kid_safe"])
+        await _db_set_kid_safe(user_id, value)
+        if user_id in _user_states:
+            _user_states[user_id]["config"]["is_kid_safe"] = value
+        await _refresh_voice_cache()
+    return {"ok": True}
+
+
+@fast_app.get("/api/household/members")
+async def api_household_members(request: Request):
+    user_id = _get_current_user(request)
+    if not user_id:
+        raise HTTPException(401)
+    state = await _get_user_state(user_id)
+    if state.get("role") != "admin":
+        raise HTTPException(403)
+    members = await _db_get_household_members()
+    return {"members": members}
+
+
+@fast_app.get("/api/shared-lists")
+async def api_shared_lists(request: Request):
+    if not _get_current_user(request):
+        raise HTTPException(401)
+    return {"lists": await _db_get_all_shared_lists()}
+
+
 @fast_app.get("/api/doorbell/token")
 async def api_doorbell_token(request: Request):
     user_id = _get_current_user(request)
@@ -2102,6 +3617,147 @@ async def api_tesla_disconnect(request: Request):
     return {"ok": True, "tesla_configured": _tesla_configured(config), "tesla_method": config.get("tesla_method", "")}
 
 
+# ─── SPOTIFY OAUTH ────────────────────────────────────────────────────────────
+@fast_app.get("/api/spotify/auth")
+async def api_spotify_auth(request: Request):
+    user_id = _get_current_user(request)
+    if not user_id:
+        raise HTTPException(401)
+    if not SPOTIFY_CLIENT_ID:
+        raise HTTPException(503, "Spotify not configured — set SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET in .env")
+
+    state_token = secrets.token_urlsafe(32)
+    _spotify_auth_pending[state_token] = user_id
+    if len(_spotify_auth_pending) > 200:
+        for k in list(_spotify_auth_pending.keys())[:100]:
+            _spotify_auth_pending.pop(k, None)
+
+    params = urllib.parse.urlencode(
+        {
+            "client_id": SPOTIFY_CLIENT_ID,
+            "response_type": "code",
+            "redirect_uri": f"{APP_URL}/auth/spotify/callback",
+            "scope": _SPOTIFY_SCOPES,
+            "state": state_token,
+        }
+    )
+    return RedirectResponse(f"{_SPOTIFY_AUTH_BASE}/authorize?{params}")
+
+
+@fast_app.get("/auth/spotify/callback")
+async def auth_spotify_callback(request: Request):
+    code = request.query_params.get("code")
+    state_token = request.query_params.get("state")
+    user_id = _spotify_auth_pending.pop(state_token, None) if state_token else None
+    if not user_id or not code:
+        raise HTTPException(400, "Invalid Spotify OAuth callback — state mismatch or missing code")
+
+    try:
+        async with httpx.AsyncClient(timeout=15) as c:
+            r = await c.post(
+                f"{_SPOTIFY_AUTH_BASE}/api/token",
+                data={
+                    "grant_type": "authorization_code",
+                    "code": code,
+                    "redirect_uri": f"{APP_URL}/auth/spotify/callback",
+                    "client_id": SPOTIFY_CLIENT_ID,
+                    "client_secret": SPOTIFY_CLIENT_SECRET,
+                },
+            )
+            r.raise_for_status()
+            tokens = r.json()
+    except Exception as e:
+        raise HTTPException(502, f"Spotify token exchange failed: {e}") from e
+
+    access = tokens.get("access_token", "")
+    refresh = tokens.get("refresh_token", "")
+    expiry = datetime.datetime.now().timestamp() + tokens.get("expires_in", 3600)
+
+    state = await _get_user_state(user_id)
+    config = state["config"]
+    async with _get_user_lock(user_id):
+        config["spotify_access_token"] = access
+        config["spotify_refresh_token"] = refresh
+        config["spotify_token_expiry"] = expiry
+        await _db_save_spotify_tokens(user_id, access, refresh, expiry)
+    _spotify_tokens[user_id] = {"access": access, "expiry": expiry}
+
+    return RedirectResponse("/?spotify_connected=1", status_code=303)
+
+
+@fast_app.post("/api/spotify/disconnect")
+async def api_spotify_disconnect(request: Request):
+    user_id = _get_current_user(request)
+    if not user_id:
+        raise HTTPException(401)
+    state = await _get_user_state(user_id)
+    config = state["config"]
+    async with _get_user_lock(user_id):
+        config["spotify_access_token"] = ""
+        config["spotify_refresh_token"] = ""
+        config["spotify_token_expiry"] = 0.0
+        await _db_save_spotify_tokens(user_id, "", "", 0.0)
+    _spotify_tokens.pop(user_id, None)
+    return {"ok": True}
+
+
+# ─── APPLE MUSIC API ──────────────────────────────────────────────────────────
+@fast_app.get("/api/apple_music/token")
+async def api_apple_music_token(request: Request):
+    user_id = _get_current_user(request)
+    if not user_id:
+        raise HTTPException(401)
+    if not _apple_music_server_configured():
+        return {"token": None, "enabled": False}
+    return {"token": _apple_music_dev_token(), "enabled": True}
+
+
+@fast_app.post("/api/apple_music/user_token")
+async def api_apple_music_user_token(request: Request):
+    user_id = _get_current_user(request)
+    if not user_id:
+        raise HTTPException(401)
+    body = await request.json()
+    token = (body.get("token") or "").strip()
+    storefront = (body.get("storefront") or "us").strip().lower()
+    state = await _get_user_state(user_id)
+    config = state["config"]
+    async with _get_user_lock(user_id):
+        config["apple_music_user_token"] = token
+        config["apple_music_storefront"] = storefront
+        async with _pool().acquire() as conn:
+            await conn.execute(
+                "UPDATE user_configs SET apple_music_user_token=$2, apple_music_storefront=$3 WHERE user_id=$1",
+                user_id,
+                token,
+                storefront,
+            )
+    return {"ok": True}
+
+
+@fast_app.post("/api/apple_music/disconnect")
+async def api_apple_music_disconnect(request: Request):
+    user_id = _get_current_user(request)
+    if not user_id:
+        raise HTTPException(401)
+    state = await _get_user_state(user_id)
+    config = state["config"]
+    async with _get_user_lock(user_id):
+        config["apple_music_user_token"] = ""
+        async with _pool().acquire() as conn:
+            await conn.execute("UPDATE user_configs SET apple_music_user_token='' WHERE user_id=$1", user_id)
+    return {"ok": True}
+
+
+@sio.on("apple_music_callback")
+async def on_apple_music_callback(sid, data):
+    cb_id = (data or {}).get("cb")
+    result = (data or {}).get("result", "")
+    fut = _am_callbacks.get(cb_id)
+    if fut and not fut.done():
+        fut.set_result(result)
+
+
 @fast_app.get("/api/messages")
 async def api_messages(request: Request):
     user_id = _get_current_user(request)
@@ -2126,8 +3782,24 @@ async def api_messages(request: Request):
 
 
 # ─── LLM STREAMING ───────────────────────────────────────────────────────────
-def _build_system_prompt(config: dict) -> str:
+def _build_system_prompt(config: dict, speaker_name: str | None = None, is_kid_safe: bool = False) -> str:
     system = JARVIS_SYSTEM
+    now = datetime.datetime.now()
+    system += f"\n\nCURRENT DATE AND TIME: {now.strftime('%A, %B %d, %Y, %I:%M %p')}."
+    system += (
+        "\n\nTIMERS & REMINDERS — use manage_timer to set/list/cancel timers by duration. "
+        "Use manage_reminder to set/list/cancel reminders at a specific datetime (ISO 8601). "
+        "Calculate fire_at from the current date/time above."
+    )
+    system += "\n\nNEWS — use get_news_headlines to fetch the latest headlines by category (general, technology, science, health, business, sports)."
+    if speaker_name and speaker_name != "guest":
+        system += f"\n\nYou are currently speaking with {speaker_name}. Address them by name when it feels natural."
+    if is_kid_safe:
+        system += (
+            "\n\nKID-SAFE MODE — You are speaking with a child. Keep all responses age-appropriate, "
+            "use simple and encouraging language, and avoid adult topics, violence, or anything "
+            "inappropriate for children under 13."
+        )
     ctx = _location_context
     if ctx:
         parts = []
@@ -2164,6 +3836,37 @@ def _build_system_prompt(config: dict) -> str:
             "Use lock_vehicle, unlock_vehicle, set_climate, start_charging, stop_charging, "
             "honk_horn, flash_lights, and actuate_trunk to control the vehicle. "
             "Commands auto-wake the car, which may take up to 30 seconds — mention this if relevant."
+        )
+    if _spotify_configured(config):
+        system += (
+            "\n\nSPOTIFY — you are connected to the user's Spotify account. "
+            "Use spotify_now_playing to check what's playing, spotify_play/spotify_pause to control playback, "
+            "spotify_next/spotify_previous to skip tracks, spotify_volume to adjust volume (0–100), "
+            "and spotify_search_and_play to find and play a specific song, artist, album, or playlist."
+        )
+    if _apple_music_configured(config):
+        system += (
+            "\n\nAPPLE MUSIC — you are connected to the user's Apple Music account. "
+            "Use apple_music_now_playing to check what's playing, apple_music_play/apple_music_pause to control playback, "
+            "apple_music_next/apple_music_previous to skip tracks, apple_music_volume to adjust volume (0–100), "
+            "and apple_music_search_and_play to find and play a specific song, artist, album, or playlist."
+        )
+    system += (
+        "\n\nSHARED HOUSEHOLD LISTS — use manage_shared_list to add, remove, read, or clear items on "
+        "shared lists (shopping, todo, or any custom name). All household members share the same lists."
+    )
+    if _ha_configured(config):
+        system += (
+            "\n\nROUTINES — use manage_routine to create, list, delete, or run named automations. "
+            "A routine is a sequence of steps: ha_service (call HA), speak (say something), or delay (wait N seconds). "
+            "Trigger phrases let users run routines by voice. "
+            "\n\nDEVICE ALERTS — use manage_device_alert to create proactive alerts. "
+            "When an HA entity's state matches a condition, Jarvis speaks the alert message. "
+            "Useful for: garage left open, temperature thresholds, door/window sensors."
+        )
+    if MQTT_BROKER:
+        system += (
+            '\n\nZIGBEE — use zigbee_control to send commands directly to Zigbee devices via MQTT. Payload examples: {"state": "ON"}, {"brightness": 128}, {"color_temp": 300}.'
         )
     return system
 
@@ -2209,8 +3912,21 @@ async def _stream_reply(state: dict, on_text):
     config = state["config"]
     client = state["client"]
     model = config.get("model") or DEFAULT_MODELS.get(provider, "")
-    system = _build_system_prompt(config)
-    ha_tools = _get_ha_tools(config, provider) + _get_myq_tools(config, provider) + _get_tesla_tools(config, provider)
+    system = _build_system_prompt(
+        config,
+        speaker_name=state.get("_speaker_name"),
+        is_kid_safe=state.get("_speaker_kid_safe", False),
+    )
+    ha_tools = (
+        _get_ha_tools(config, provider)
+        + _get_myq_tools(config, provider)
+        + _get_tesla_tools(config, provider)
+        + _get_spotify_tools(config, provider)
+        + _get_apple_music_tools(config, provider)
+        + _get_shared_list_tools(provider)
+        + _get_parity_tools(provider)
+        + _get_phase5_tools(config, provider)
+    )
     local_msgs = list(state["conversation"])
 
     for _ in range(4):
@@ -2240,7 +3956,23 @@ async def _stream_reply(state: dict, on_text):
             results = []
             for block in final.content:
                 if block.type == "tool_use":
-                    result = await _execute_ha_tool(config, block.name, dict(block.input), state.get("user_id", ""))
+                    uid = state.get("user_id", "")
+                    if block.name == "manage_shared_list":
+                        result = await _execute_shared_list_tool(dict(block.input))
+                    elif block.name == "manage_timer":
+                        result = await _execute_timer_tool(uid, dict(block.input))
+                    elif block.name == "manage_reminder":
+                        result = await _execute_reminder_tool(uid, dict(block.input))
+                    elif block.name == "get_news_headlines":
+                        result = await _execute_news_tool(dict(block.input))
+                    elif block.name == "manage_routine":
+                        result = await _execute_routine_tool(uid, dict(block.input), config)
+                    elif block.name == "manage_device_alert":
+                        result = await _execute_device_alert_tool(uid, dict(block.input))
+                    elif block.name == "zigbee_control":
+                        result = await _execute_zigbee_tool(dict(block.input))
+                    else:
+                        result = await _execute_ha_tool(config, block.name, dict(block.input), uid)
                     results.append(
                         {
                             "type": "tool_result",
@@ -2290,7 +4022,23 @@ async def _stream_reply(state: dict, on_text):
             tool_msgs = []
             for acc in tool_calls_acc.values():
                 args = json.loads(acc["args"] or "{}")
-                result = await _execute_ha_tool(config, acc["name"], args, state.get("user_id", ""))
+                uid = state.get("user_id", "")
+                if acc["name"] == "manage_shared_list":
+                    result = await _execute_shared_list_tool(args)
+                elif acc["name"] == "manage_timer":
+                    result = await _execute_timer_tool(uid, args)
+                elif acc["name"] == "manage_reminder":
+                    result = await _execute_reminder_tool(uid, args)
+                elif acc["name"] == "get_news_headlines":
+                    result = await _execute_news_tool(args)
+                elif acc["name"] == "manage_routine":
+                    result = await _execute_routine_tool(uid, args, config)
+                elif acc["name"] == "manage_device_alert":
+                    result = await _execute_device_alert_tool(uid, args)
+                elif acc["name"] == "zigbee_control":
+                    result = await _execute_zigbee_tool(args)
+                else:
+                    result = await _execute_ha_tool(config, acc["name"], args, uid)
                 tc_list.append(
                     {
                         "id": acc["id"],
@@ -2305,12 +4053,14 @@ async def _stream_reply(state: dict, on_text):
     return full
 
 
-async def _process_message(sid: str, text: str):
+async def _process_message(sid: str, text: str, speaker_name: str | None = None, speaker_kid_safe: bool = False):
     user_id = _sid_to_user.get(sid)
     if not user_id:
         return
 
     state = await _get_user_state(user_id)
+    state["_speaker_name"] = speaker_name
+    state["_speaker_kid_safe"] = speaker_kid_safe
 
     if not _user_configured(state):
         await sio.emit("need_setup", {}, to=sid)
@@ -2397,8 +4147,44 @@ async def on_disconnect(sid):
 @sio.on("user_message")
 async def on_user_message(sid, data):
     text = ((data or {}).get("text") or "").strip()
-    if text:
-        asyncio.create_task(_process_message(sid, text))
+    if not text:
+        return
+    lower = text.lower()
+    party_on = any(p in lower for p in ("party mode", "let's party", "party time", "activate party", "start the party"))
+    party_off = any(p in lower for p in ("end party", "stop party", "deactivate party", "turn off party", "party off"))
+    if party_on or party_off:
+        active = party_on
+        user_id = _sid_to_user.get(sid)
+        state = await _get_user_state(user_id) if user_id else {}
+        config = state.get("config", {})
+        music_line = ""
+        if active and user_id:
+            if _spotify_configured(config):
+                await _spotify_start_party(user_id, config)
+                music_line = " Music is on."
+            elif _apple_music_configured(config):
+                await _apple_music_start_party(user_id)
+                music_line = " Music is on."
+        token = _create_party_token(user_id) if active and user_id else None
+        if not active and user_id:
+            _clear_party_tokens(user_id)
+        msg = f"Activating party protocols. Excellent taste, sir.{music_line}" if active else "Returning to standard operations. It was fun while it lasted, sir."
+        await sio.emit("status", {"state": "speaking"}, to=sid)
+        await sio.emit("party_mode", {"active": active, "token": token}, to=sid)
+        await sio.emit("speak_sentence", {"text": msg, "seq": 0}, to=sid)
+        await sio.emit("response_done", {"text": msg}, to=sid)
+        await sio.emit("status", {"state": "idle"}, to=sid)
+        return
+    speaker_name: str | None = None
+    speaker_kid_safe = False
+    speaker_id = (data or {}).get("speaker_id", "")
+    if speaker_id and speaker_id != "guest" and _voice_cache:
+        entry = _voice_cache.get(speaker_id)
+        if entry:
+            _, speaker_name, speaker_kid_safe = entry
+    elif speaker_id == "guest":
+        speaker_name = "guest"
+    asyncio.create_task(_process_message(sid, text, speaker_name=speaker_name, speaker_kid_safe=speaker_kid_safe))
 
 
 @sio.on("start_meeting")
@@ -2518,6 +4304,145 @@ async def on_reset_chat(sid, data=None):
     await _db_clear_conversation(user_id)
 
 
+@sio.on("start_party_music")
+async def on_start_party_music(sid, data=None):
+    user_id = _sid_to_user.get(sid)
+    if not user_id:
+        return
+    state = await _get_user_state(user_id)
+    config = state.get("config", {})
+    if _spotify_configured(config):
+        await _spotify_start_party(user_id, config)
+    elif _apple_music_configured(config):
+        await _apple_music_start_party(user_id)
+    token = _create_party_token(user_id)
+    await sio.emit("party_token", {"token": token}, to=sid)
+
+
+@sio.on("stop_party_music")
+async def on_stop_party_music(sid, data=None):
+    user_id = _sid_to_user.get(sid)
+    if user_id:
+        _clear_party_tokens(user_id)
+
+
+# ─── PARTY GUEST QUEUE ───────────────────────────────────────────────────────
+def _get_party_base_url() -> str:
+    base = os.getenv("JARVIS_PUBLIC_URL", "").rstrip("/")
+    if base:
+        return base
+    ip = os.getenv("HOST_IP", "localhost")
+    return f"http://{ip}:5000"
+
+
+@fast_app.get("/api/party-token")
+async def get_party_token(request: Request):
+    user_id = _get_current_user(request)
+    if not user_id:
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
+    token = _create_party_token(user_id)
+    url = f"{_get_party_base_url()}/party/{token}"
+    return JSONResponse({"token": token, "url": url})
+
+
+@fast_app.get("/party/{token}", response_class=HTMLResponse)
+async def party_guest_page(token: str, request: Request):
+    if token not in _party_tokens:
+        return HTMLResponse("<html><body style='background:#08111e;color:#7fe9ff;font-family:monospace;padding:40px'><h2>Party has ended.</h2></body></html>", status_code=404)
+    return templates.TemplateResponse(request, "party.html")
+
+
+@fast_app.get("/party/{token}/now_playing")
+async def party_now_playing(token: str):
+    user_id = _party_tokens.get(token)
+    if not user_id:
+        raise HTTPException(404)
+    state = await _get_user_state(user_id)
+    config = state.get("config", {})
+    if _spotify_configured(config):
+        try:
+            r = await _spotify_req("get", "/me/player/currently-playing", user_id, config)
+            if r.status_code == 204 or not r.text:
+                return {"title": None, "artist": None}
+            d = r.json()
+            item = d.get("item") or {}
+            return {"title": item.get("name"), "artist": ", ".join(a["name"] for a in item.get("artists", []))}
+        except Exception:
+            return {"title": None, "artist": None}
+    if _apple_music_configured(config):
+        sids = [sid for sid, uid in _sid_to_user.items() if uid == user_id]
+        if sids:
+            try:
+                raw = await _am_request_callback(sids[0], "now_playing_data", timeout=4.0)
+                return json.loads(raw)
+            except Exception:
+                pass
+    return {"title": None, "artist": None}
+
+
+@fast_app.get("/party/{token}/search")
+async def party_search(token: str, q: str = ""):
+    user_id = _party_tokens.get(token)
+    if not user_id:
+        raise HTTPException(404)
+    if not q.strip():
+        return {"results": []}
+    state = await _get_user_state(user_id)
+    config = state.get("config", {})
+    if _spotify_configured(config):
+        try:
+            r = await _spotify_req("get", "/search", user_id, config, params={"q": q, "type": "track", "limit": 5})
+            r.raise_for_status()
+            items = r.json().get("tracks", {}).get("items", [])
+            return {"results": [{"id": t["uri"], "title": t["name"], "artist": ", ".join(a["name"] for a in t.get("artists", []))} for t in items]}
+        except Exception:
+            return {"results": []}
+    if _apple_music_configured(config):
+        try:
+            storefront = config.get("apple_music_storefront") or "us"
+            async with httpx.AsyncClient(timeout=10) as c:
+                r = await c.get(
+                    f"https://api.music.apple.com/v1/catalog/{storefront}/search",
+                    headers={"Authorization": f"Bearer {_apple_music_dev_token()}"},
+                    params={"term": q, "types": "songs", "limit": 5},
+                )
+                r.raise_for_status()
+            songs = r.json().get("results", {}).get("songs", {}).get("data", [])
+            return {"results": [{"id": s["id"], "title": s["attributes"].get("name", ""), "artist": s["attributes"].get("artistName", "")} for s in songs]}
+        except Exception:
+            return {"results": []}
+    return {"results": []}
+
+
+@fast_app.post("/party/{token}/add")
+async def party_add_to_queue(token: str, request: Request):
+    user_id = _party_tokens.get(token)
+    if not user_id:
+        raise HTTPException(404)
+    body = await request.json()
+    song_id = (body.get("id") or "").strip()
+    if not song_id:
+        return {"ok": False, "error": "No song ID provided."}
+    state = await _get_user_state(user_id)
+    config = state.get("config", {})
+    if _spotify_configured(config):
+        try:
+            r = await _spotify_req("post", "/me/player/queue", user_id, config, params={"uri": song_id})
+            return {"ok": r.status_code in (200, 204)}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+    if _apple_music_configured(config):
+        sids = [sid for sid, uid in _sid_to_user.items() if uid == user_id]
+        if not sids:
+            return {"ok": False, "error": "Host is not connected."}
+        try:
+            await _am_request_callback(sids[0], "queue_add", {"id": song_id}, timeout=8.0)
+            return {"ok": True}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+    return {"ok": False, "error": "No music service connected."}
+
+
 # ─── BACKGROUND TASKS ────────────────────────────────────────────────────────
 async def _telemetry_loop():
     try:
@@ -2604,6 +4529,27 @@ async def _weather_loop():
         except Exception:
             pass
         await asyncio.sleep(600)
+
+
+async def _timer_reminder_loop():
+    while True:
+        await asyncio.sleep(30)
+        if not _db_pool:
+            continue
+        try:
+            fired_timers = await _db_fire_due_timers()
+            for t in fired_timers:
+                speak = f"Your {t['label']} timer is done, sir."
+                for sid in _sids_for_user(t["user_id"]):
+                    await sio.emit("timer_fired", {"label": t["label"], "speak": speak}, to=sid)
+
+            fired_reminders = await _db_fire_due_reminders()
+            for r in fired_reminders:
+                speak = f"Reminder, sir: {r['text']}."
+                for sid in _sids_for_user(r["user_id"]):
+                    await sio.emit("reminder_fired", {"text": r["text"], "speak": speak}, to=sid)
+        except Exception as e:
+            print(f"[TIMER] {e}", flush=True)
 
 
 async def _meeting_cleanup_loop():
