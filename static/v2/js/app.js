@@ -257,15 +257,18 @@
     tick();
   }
 
+  let _lastSpeakerId = null;
+
   async function _transcribe(blob) {
     const fd = new FormData();
     fd.append("audio", blob, "speech.webm");
     try {
       const r = await fetch("/api/transcribe", { method: "POST", body: fd });
-      const { text } = await r.json();
+      const { text, speaker_id, speaker_name } = await r.json();
+      if (speaker_id) _lastSpeakerId = speaker_id;
       const t = (text || "").trim();
       if (t && t.split(/\s+/).length >= 2) {
-        console.log("[STT]", t);
+        console.log("[STT]", t, speaker_name ? `(${speaker_name})` : "");
         handleHeard(t);
       } else if (t) {
         console.log("[STT] ignored (too short):", t);
@@ -323,7 +326,7 @@
     }
     if (window.__chat) window.__chat.addMsg(text, "out"); // show the heard/typed command
     window.__justTyped = { text, t: Date.now() };
-    socket.emit("user_message", { text });
+    socket.emit("user_message", { text, speaker_id: _lastSpeakerId });
   }
   // chat.js hands typed text here (it already renders the 'out' bubble itself)
   window.__sendMessage = (text) => {
@@ -332,7 +335,7 @@
       return;
     }
     if (_standby) wake();
-    socket.emit("user_message", { text });
+    socket.emit("user_message", { text, speaker_id: _lastSpeakerId });
   };
 
   // ===================================================================
@@ -937,6 +940,46 @@
     document.body.appendChild(toast);
     setTimeout(() => toast && toast.remove(), 10000);
   }
+
+  socket.on("timer_fired", ({ label, speak: speakText }) => {
+    const msg = speakText || `Your ${label} timer is done.`;
+    if (window.__chat) window.__chat.addMsg(msg, "in");
+    if (_standby) wake();
+    speak(msg);
+  });
+
+  socket.on("reminder_fired", ({ text, speak: speakText }) => {
+    const msg = speakText || `Reminder: ${text}.`;
+    if (window.__chat) window.__chat.addMsg(msg, "in");
+    if (_standby) wake();
+    speak(msg);
+  });
+
+  socket.on("device_alert", ({ name, message, speak: speakText }) => {
+    const msg = speakText || message || "Device alert.";
+    if (window.__chat) window.__chat.addMsg(msg, "in");
+    if (_standby) wake();
+    speak(msg);
+  });
+
+  socket.on("wake_trigger", ({ device_id }) => {
+    if (_standby) {
+      wake();
+      const acks = [
+        "Yes, sir?",
+        "Sir?",
+        "Go ahead.",
+        "At your service.",
+        "Right here, sir.",
+        "You rang, sir?",
+      ];
+      const a = acks[Math.floor(Math.random() * acks.length)];
+      if (window.__chat) window.__chat.addMsg(a, "in");
+      _vizState = "speaking";
+      window.__recognition = "RESPONDING";
+      speak(a);
+    }
+  });
 
   socket.on("doorbell_alert", ({ event_type, speak: speakText }) => {
     const msg = speakText || "Doorbell alert.";
@@ -1796,23 +1839,23 @@
     }
   }
 
-  function showPartyQR(token) {
-    if (!token || !partyQrModal || typeof QRCode === "undefined") return;
-    _partyToken = token;
-    const url = window.location.origin + "/party/" + token;
+  function showPartyQR(token, url) {
+    if (token) _partyToken = token;
+    if (!_partyToken || !partyQrModal || typeof QRCode === "undefined") return;
+    const partyUrl = url || window.location.origin + "/party/" + _partyToken;
     const qrEl = $("party-qr-code");
     const urlEl = $("party-qr-url");
     if (qrEl) {
       qrEl.innerHTML = "";
       _partyQrInstance = new QRCode(qrEl, {
-        text: url,
+        text: partyUrl,
         width: 200,
         height: 200,
         colorDark: "#7fe9ff",
         colorLight: "#08111e",
       });
     }
-    if (urlEl) urlEl.textContent = url;
+    if (urlEl) urlEl.textContent = partyUrl;
     partyQrModal.classList.remove("setup-hidden");
   }
 
@@ -1821,7 +1864,17 @@
   }
 
   if (partyQrBtn)
-    partyQrBtn.addEventListener("click", () => showPartyQR(_partyToken));
+    partyQrBtn.addEventListener("click", () => {
+      if (_partyToken) {
+        showPartyQR(_partyToken);
+      } else {
+        fetch("/api/party-token")
+          .then((r) => r.json())
+          .then((d) => {
+            if (d.token) showPartyQR(d.token, d.url);
+          });
+      }
+    });
   if (partyQrClose) partyQrClose.addEventListener("click", hidePartyQR);
   partyQrModal &&
     partyQrModal.addEventListener("click", (e) => {
