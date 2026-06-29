@@ -14,9 +14,13 @@ import app as jarvis
 from app import (
     _build_client,
     _build_system_prompt,
+    _calendar_configured,
     _c_to_f,
+    _contacts_configured,
     _duration_str,
     _evaluate_alert_condition,
+    _execute_calendar_tool,
+    _execute_contact_lookup_tool,
     _execute_device_alert_tool,
     _execute_news_tool,
     _execute_reminder_tool,
@@ -24,6 +28,7 @@ from app import (
     _execute_shared_list_tool,
     _execute_spotify_tool,
     _execute_timer_tool,
+    _get_phase1_tools,
     _get_myq_tools,
     _get_phase5_tools,
     _get_spotify_tools,
@@ -34,6 +39,9 @@ from app import (
     _myq_configured,
     _myq_get_status,
     _myq_set_door,
+    _parse_ical_events,
+    _parse_vcards,
+    _pick_best_dav_collection,
     _sids_for_user,
     _split_sentences,
     _spotify_configured,
@@ -96,6 +104,18 @@ class TestHaConfigured:
 
     def test_none_values(self):
         assert _ha_configured({"ha_url": None, "ha_token": None}) is False
+
+
+class TestCalendarConfigured:
+    def test_all_fields_required(self):
+        assert _calendar_configured({"calendar_url": "https://dav.example.com", "calendar_username": "me", "calendar_password": "secret"}) is True
+        assert _calendar_configured({"calendar_url": "https://dav.example.com", "calendar_username": "me", "calendar_password": ""}) is False
+
+
+class TestContactsConfigured:
+    def test_all_fields_required(self):
+        assert _contacts_configured({"contacts_url": "https://dav.example.com", "contacts_username": "me", "contacts_password": "secret"}) is True
+        assert _contacts_configured({"contacts_url": "", "contacts_username": "me", "contacts_password": "secret"}) is False
 
 
 class TestUserConfigured:
@@ -245,6 +265,14 @@ class TestBuildSystemPrompt:
         prompt = _build_system_prompt({"ha_url": "", "ha_token": "", "myq_email": "", "myq_password": ""})
         assert "GARAGE DOOR" not in prompt
 
+    def test_calendar_section_added_when_configured(self):
+        prompt = _build_system_prompt({"calendar_url": "https://dav.example.com/cal/", "calendar_username": "me", "calendar_password": "secret"})
+        assert "CALENDAR" in prompt
+
+    def test_contacts_section_added_when_configured(self):
+        prompt = _build_system_prompt({"contacts_url": "https://dav.example.com/ab/", "contacts_username": "me", "contacts_password": "secret"})
+        assert "CONTACTS" in prompt
+
     def test_tesla_section_added_when_configured(self):
         cfg = {"ha_url": "", "ha_token": "", "tesla_method": "unofficial", "tesla_refresh_token": "tok", "tesla_fleet_refresh_token": ""}
         assert "TESLA" in _build_system_prompt(cfg)
@@ -289,12 +317,20 @@ class TestBuildSystemPrompt:
             "tesla_refresh_token": "rtok",
             "tesla_fleet_refresh_token": "",
             "spotify_refresh_token": "sprtok",
+            "calendar_url": "https://dav.example.com/cal/",
+            "calendar_username": "me",
+            "calendar_password": "secret",
+            "contacts_url": "https://dav.example.com/ab/",
+            "contacts_username": "me",
+            "contacts_password": "secret",
         }
         prompt = _build_system_prompt(cfg)
         assert "HOME AUTOMATION" in prompt
         assert "GARAGE DOOR" in prompt
         assert "TESLA" in prompt
         assert "SPOTIFY" in prompt
+        assert "CALENDAR" in prompt
+        assert "CONTACTS" in prompt
 
 
 class TestTeslaConfigured:
@@ -332,6 +368,27 @@ class TestSpotifyConfigured:
 
     def test_configured_when_token_present(self):
         assert _spotify_configured({"spotify_refresh_token": "rtok"}) is True
+
+
+class TestGetPhase1Tools:
+    def test_base_tools_present_without_dav(self):
+        names = {tool["name"] for tool in _get_phase1_tools({}, "anthropic")}
+        assert {"manage_timer", "manage_reminder", "get_news_headlines"} <= names
+        assert "manage_calendar" not in names
+        assert "lookup_contact" not in names
+
+    def test_dav_tools_added_when_configured(self):
+        cfg = {
+            "calendar_url": "https://dav.example.com/cal/",
+            "calendar_username": "me",
+            "calendar_password": "secret",
+            "contacts_url": "https://dav.example.com/ab/",
+            "contacts_username": "me",
+            "contacts_password": "secret",
+        }
+        names = {tool["function"]["name"] for tool in _get_phase1_tools(cfg, "openai")}
+        assert "manage_calendar" in names
+        assert "lookup_contact" in names
 
 
 class TestGetSpotifyTools:
@@ -453,6 +510,146 @@ class TestCToF:
 
     def test_negative(self):
         assert _c_to_f(-10) == 14.0
+
+
+class TestPickBestDavCollection:
+    def test_prefers_events_collection_over_inbox(self):
+        collections = [
+            {"url": "https://dav.example.com/cal/inbox/", "display_name": "Inbox"},
+            {"url": "https://dav.example.com/cal/events/", "display_name": "Primary"},
+        ]
+        assert _pick_best_dav_collection(collections, "calendar")["url"].endswith("/events/")
+
+    def test_prefers_named_contacts_collection(self):
+        collections = [
+            {"url": "https://dav.example.com/addressbooks/1/", "display_name": "Archive"},
+            {"url": "https://dav.example.com/addressbooks/2/", "display_name": "Contacts"},
+        ]
+        assert _pick_best_dav_collection(collections, "addressbook")["display_name"] == "Contacts"
+
+
+class TestParseIcalEvents:
+    def test_parses_timed_event(self):
+        blob = """BEGIN:VCALENDAR
+BEGIN:VEVENT
+SUMMARY:Dentist
+DTSTART:20260701T150000Z
+DTEND:20260701T160000Z
+LOCATION:Main Street
+END:VEVENT
+END:VCALENDAR
+"""
+        events = _parse_ical_events(blob)
+        assert events[0]["title"] == "Dentist"
+        assert events[0]["location"] == "Main Street"
+        assert events[0]["all_day"] is False
+
+    def test_parses_all_day_event(self):
+        blob = """BEGIN:VCALENDAR
+BEGIN:VEVENT
+SUMMARY:Holiday
+DTSTART;VALUE=DATE:20260704
+DTEND;VALUE=DATE:20260705
+END:VEVENT
+END:VCALENDAR
+"""
+        events = _parse_ical_events(blob)
+        assert events[0]["title"] == "Holiday"
+        assert events[0]["all_day"] is True
+
+
+class TestParseVcards:
+    def test_parses_name_phone_and_email(self):
+        blob = """BEGIN:VCARD
+VERSION:3.0
+FN:Mom
+TEL;TYPE=CELL:tel:+15551234567
+EMAIL:mailto:mom@example.com
+END:VCARD
+"""
+        cards = _parse_vcards(blob)
+        assert cards[0]["name"] == "Mom"
+        assert cards[0]["phones"] == ["+15551234567"]
+        assert cards[0]["emails"] == ["mom@example.com"]
+
+
+class TestExecuteCalendarTool:
+    _cfg = {
+        "calendar_url": "https://dav.example.com/cal/",
+        "calendar_username": "me",
+        "calendar_password": "secret",
+    }
+
+    def _mock_resp(self, status=207, text=""):
+        resp = MagicMock()
+        resp.status_code = status
+        resp.text = text
+        return resp
+
+    def test_list_formats_events(self):
+        event = {
+            "title": "Dentist",
+            "start": datetime.datetime(2026, 7, 1, 15, 0, tzinfo=datetime.timezone.utc),
+            "end": datetime.datetime(2026, 7, 1, 16, 0, tzinfo=datetime.timezone.utc),
+            "location": "Main Street",
+            "all_day": False,
+        }
+        with patch("app._calendar_events_between", new=AsyncMock(return_value=[event])):
+            result = asyncio.run(_execute_calendar_tool(self._cfg, {"action": "list"}))
+        assert "Dentist" in result
+        assert "Main Street" in result
+
+    def test_create_puts_event(self):
+        mock_req = AsyncMock(return_value=self._mock_resp(status=201))
+        with patch("app._dav_request", new=mock_req):
+            result = asyncio.run(
+                _execute_calendar_tool(
+                    self._cfg,
+                    {
+                        "action": "create",
+                        "title": "Dinner",
+                        "start": "2026-07-01T18:00:00+00:00",
+                        "end": "2026-07-01T19:30:00+00:00",
+                        "location": "Kitchen",
+                    },
+                )
+            )
+        assert "Created calendar event" in result
+        assert mock_req.await_args.args[0] == "PUT"
+
+    def test_create_rejects_backwards_time(self):
+        result = asyncio.run(
+            _execute_calendar_tool(
+                self._cfg,
+                {
+                    "action": "create",
+                    "title": "Impossible",
+                    "start": "2026-07-01T19:30:00+00:00",
+                    "end": "2026-07-01T18:00:00+00:00",
+                },
+            )
+        )
+        assert "after the start time" in result
+
+
+class TestExecuteContactLookupTool:
+    _cfg = {
+        "contacts_url": "https://dav.example.com/ab/",
+        "contacts_username": "me",
+        "contacts_password": "secret",
+    }
+
+    def test_formats_contact_matches(self):
+        match = {"name": "Mom", "phones": ["+15551234567"], "emails": ["mom@example.com"], "nicknames": []}
+        with patch("app._lookup_contacts", new=AsyncMock(return_value=[match])):
+            result = asyncio.run(_execute_contact_lookup_tool(self._cfg, {"query": "Mom", "preferred_channel": "phone"}))
+        assert "Mom" in result
+        assert "+15551234567" in result
+
+    def test_returns_not_found_message(self):
+        with patch("app._lookup_contacts", new=AsyncMock(return_value=[])):
+            result = asyncio.run(_execute_contact_lookup_tool(self._cfg, {"query": "Nobody"}))
+        assert "No contacts matched" in result
 
 
 class TestGetTeslaTools:
