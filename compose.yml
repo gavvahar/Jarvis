@@ -6,6 +6,8 @@ services:
       - "5000:5000"
     env_file:
       - .env
+    environment:
+      HOST_IP: ${HOST_IP:-}
     volumes:
       - ./static:/app/static
       - ./templates:/app/templates
