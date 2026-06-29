@@ -1,4 +1,41 @@
 # =============================================================================
+# GIT-CLIFF — PR description generator
+# =============================================================================
+
+[tool.git-cliff.changelog]
+header = ""
+body = """
+## Summary
+{% for group, commits in commits | group_by(attribute="group") %}
+### {{ group }}
+{% for commit in commits %}
+- {{ commit.message | upper_first }}
+{%- endfor %}
+{% endfor %}
+
+## Test plan
+
+- [ ] Review the changes above
+- [ ] Existing tests pass
+"""
+trim = true
+
+[tool.git-cliff.git]
+conventional_commits = true
+filter_unconventional = false
+commit_parsers = [
+  { message = "^feat", group = "✨ Features" },
+  { message = "^fix", group = "🐛 Bug Fixes" },
+  { message = "^docs", group = "📚 Documentation" },
+  { message = "^refactor", group = "♻️ Refactoring" },
+  { message = "^test", group = "🧪 Tests" },
+  { message = "^perf", group = "⚡ Performance" },
+  { message = "^chore", group = "🔧 Chores" },
+  { message = "^lint", group = "🔧 Chores" },
+  { message = ".*", group = "📝 Changes" },
+]
+
+# =============================================================================
 # RUFF — Python linter & formatter
 # =============================================================================
 
@@ -34,7 +71,7 @@ testpaths = ["tests"]
 
 # Default envs run when you type `tox` with no arguments
 [tool.tox]
-env_list = ["lint", "txt-lint", "format", "prettier"]
+env_list = ["lint", "txt-lint", "format", "prettier", "toml-lint"]
 work_dir = "/tmp/.tox"
 
 # Shared base config inherited by all envs
@@ -48,17 +85,29 @@ set_env = { VIRTUALENV_OVERRIDE_APP_DATA = "{work_dir}/.virtualenv" }
 skip_install = true
 base_python = "python3"
 deps = ["ruff", "ty"]
-commands = [
-    ["ruff", "check", "--no-cache", "."],
-    ["ty", "check", "app.py"],
-]
+commands = [["ruff", "check", "--no-cache", "."], ["ty", "check", "app.py"]]
 
 [tool.tox.env."txt-lint"]
 skip_install = true
 allowlist_externals = ["npx", "npm"]
 commands = [
-    ["npm", "install", "--save-dev", "textlint", "textlint-rule-common-misspellings", "textlint-rule-write-good"],
-    ["npx", "textlint", "--rule", "common-misspellings", "--rule", "write-good", "**/*.txt"],
+  [
+    "npm",
+    "install",
+    "--save-dev",
+    "textlint",
+    "textlint-rule-common-misspellings",
+    "textlint-rule-write-good",
+  ],
+  [
+    "npx",
+    "textlint",
+    "--rule",
+    "common-misspellings",
+    "--rule",
+    "write-good",
+    "**/*.txt",
+  ],
 ]
 
 [tool.tox.env."no-classes-check"]
@@ -73,22 +122,82 @@ skip_install = true
 deps = ["ruff", "ty"]
 allowlist_externals = ["npx"]
 commands = [
-    ["ruff", "format", "--no-cache", "."],
-    ["ruff", "check", "--no-cache", "--fix", "."],
-    ["npx", "prettier", "--write", "**/*.{css,js,html,json,yml,yaml,md}"],
+  [
+    "ruff",
+    "format",
+    "--no-cache",
+    ".",
+  ],
+  [
+    "ruff",
+    "check",
+    "--no-cache",
+    "--fix",
+    ".",
+  ],
+  [
+    "npx",
+    "prettier",
+    "--write",
+    "**/*.{css,js,html,json,yml,yaml,md}",
+  ],
+  [
+    "npx",
+    "@taplo/cli",
+    "fmt",
+    "--no-auto-config",
+    "**/*.toml",
+  ],
 ]
 
 [tool.tox.env.prettier]
 skip_install = true
 allowlist_externals = ["npx"]
-commands = [["npx", "prettier", "--check", "**/*.{css,js,html,json,yml,yaml,md}"]]
+commands = [
+  [
+    "npx",
+    "prettier",
+    "--check",
+    "**/*.{css,js,html,json,yml,yaml,md}",
+  ],
+]
+
+[tool.tox.env."toml-lint"]
+skip_install = true
+allowlist_externals = ["npx"]
+commands = [
+  [
+    "npx",
+    "@taplo/cli",
+    "fmt",
+    "--check",
+    "--no-auto-config",
+    "**/*.toml",
+  ],
+  [
+    "npx",
+    "@taplo/cli",
+    "lint",
+    "--no-auto-config",
+    "**/*.toml",
+  ],
+]
 
 # --- Testing ----------------------------------------------------------------
 
 [tool.tox.env.tests]
 skip_install = true
 deps = ["-r requirements.txt", "pytest", "pytest-cov", "httpx"]
-commands = [["pytest", "tests/", "-v", "--cov=app", "--cov-report=term-missing", "--cov-fail-under=25"]]
+commands = [
+  [
+    "pytest",
+    "tests/",
+    "-v",
+    "--cov=app",
+    "--cov-report=term-missing",
+    "--cov-fail-under=25",
+  ],
+]
 
 # --- Aggregate (CI) ---------------------------------------------------------
 
@@ -98,11 +207,36 @@ skip_install = true
 deps = []
 allowlist_externals = ["tox"]
 commands = [
-    ["tox", "-e", "no-classes-check"],
-    ["tox", "-e", "lint"],
-    ["tox", "-e", "txt-lint"],
-    ["tox", "-e", "prettier"],
-    ["tox", "-e", "tests"],
+  [
+    "tox",
+    "-e",
+    "no-classes-check",
+  ],
+  [
+    "tox",
+    "-e",
+    "lint",
+  ],
+  [
+    "tox",
+    "-e",
+    "txt-lint",
+  ],
+  [
+    "tox",
+    "-e",
+    "prettier",
+  ],
+  [
+    "tox",
+    "-e",
+    "toml-lint",
+  ],
+  [
+    "tox",
+    "-e",
+    "tests",
+  ],
 ]
 
 # Runs format then the full github chain

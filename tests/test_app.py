@@ -7,6 +7,7 @@ stubs out the database so no running PostgreSQL is required.
 """
 
 import asyncio
+import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import app as jarvis
@@ -14,7 +15,18 @@ from app import (
     _build_client,
     _build_system_prompt,
     _c_to_f,
+    _duration_str,
+    _evaluate_alert_condition,
+    _execute_device_alert_tool,
+    _execute_news_tool,
+    _execute_reminder_tool,
+    _execute_routine_tool,
+    _execute_shared_list_tool,
+    _execute_spotify_tool,
+    _execute_timer_tool,
     _get_myq_tools,
+    _get_phase5_tools,
+    _get_spotify_tools,
     _get_tesla_tools,
     _get_user_lock,
     _ha_configured,
@@ -24,6 +36,7 @@ from app import (
     _myq_set_door,
     _sids_for_user,
     _split_sentences,
+    _spotify_configured,
     _tesla_configured,
     _user_configured,
 )
@@ -258,6 +271,14 @@ class TestBuildSystemPrompt:
         finally:
             jarvis._location_context.clear()
 
+    def test_spotify_section_added_when_configured(self):
+        cfg = {"ha_url": "", "ha_token": "", "spotify_refresh_token": "rtok"}
+        assert "SPOTIFY" in _build_system_prompt(cfg)
+
+    def test_spotify_section_absent_when_not_configured(self):
+        cfg = {"ha_url": "", "ha_token": "", "spotify_refresh_token": ""}
+        assert "SPOTIFY" not in _build_system_prompt(cfg)
+
     def test_all_integrations_configured(self):
         cfg = {
             "ha_url": "http://ha.local",
@@ -267,11 +288,13 @@ class TestBuildSystemPrompt:
             "tesla_method": "unofficial",
             "tesla_refresh_token": "rtok",
             "tesla_fleet_refresh_token": "",
+            "spotify_refresh_token": "sprtok",
         }
         prompt = _build_system_prompt(cfg)
         assert "HOME AUTOMATION" in prompt
         assert "GARAGE DOOR" in prompt
         assert "TESLA" in prompt
+        assert "SPOTIFY" in prompt
 
 
 class TestTeslaConfigured:
@@ -298,6 +321,121 @@ class TestTeslaConfigured:
 
     def test_both_fails_if_fleet_token_missing(self):
         assert _tesla_configured({"tesla_method": "both", "tesla_refresh_token": "tok", "tesla_fleet_refresh_token": ""}) is False
+
+
+class TestSpotifyConfigured:
+    def test_not_configured_when_token_empty(self):
+        assert _spotify_configured({"spotify_refresh_token": ""}) is False
+
+    def test_not_configured_when_key_missing(self):
+        assert _spotify_configured({}) is False
+
+    def test_configured_when_token_present(self):
+        assert _spotify_configured({"spotify_refresh_token": "rtok"}) is True
+
+
+class TestGetSpotifyTools:
+    def test_empty_when_not_configured(self):
+        assert _get_spotify_tools({"spotify_refresh_token": ""}, "anthropic") == []
+
+    def test_anthropic_tools_when_configured(self):
+        tools = _get_spotify_tools({"spotify_refresh_token": "rtok"}, "anthropic")
+        assert len(tools) > 0
+        assert all("name" in t for t in tools)
+
+    def test_openai_tools_when_configured(self):
+        tools = _get_spotify_tools({"spotify_refresh_token": "rtok"}, "openai")
+        assert len(tools) > 0
+        assert all(t["type"] == "function" for t in tools)
+
+    def test_returns_seven_tools(self):
+        tools = _get_spotify_tools({"spotify_refresh_token": "rtok"}, "anthropic")
+        assert len(tools) == 7
+
+    def test_tool_names_include_search_and_play(self):
+        names = {t["name"] for t in _get_spotify_tools({"spotify_refresh_token": "rtok"}, "anthropic")}
+        assert "spotify_search_and_play" in names
+        assert "spotify_now_playing" in names
+
+
+class TestExecuteSpotifyTool:
+    _cfg = {"spotify_refresh_token": "rtok"}
+
+    def _mock_resp(self, status=204, text="", json_data=None):
+        r = MagicMock()
+        r.status_code = status
+        r.text = text
+        if json_data is not None:
+            r.json = MagicMock(return_value=json_data)
+        return r
+
+    def test_now_playing_nothing(self):
+        with patch("app._spotify_req", new=AsyncMock(return_value=self._mock_resp(204, ""))):
+            result = asyncio.run(_execute_spotify_tool("spotify_now_playing", {}, "u1", self._cfg))
+        assert "Nothing" in result
+
+    def test_now_playing_track(self):
+        data = {"is_playing": True, "item": {"name": "Get Lucky", "artists": [{"name": "Daft Punk"}]}}
+        with patch("app._spotify_req", new=AsyncMock(return_value=self._mock_resp(200, "x", data))):
+            result = asyncio.run(_execute_spotify_tool("spotify_now_playing", {}, "u1", self._cfg))
+        assert "Get Lucky" in result
+        assert "Daft Punk" in result
+
+    def test_play_success(self):
+        with patch("app._spotify_req", new=AsyncMock(return_value=self._mock_resp(204))):
+            result = asyncio.run(_execute_spotify_tool("spotify_play", {}, "u1", self._cfg))
+        assert "playback" in result.lower()
+
+    def test_pause_success(self):
+        with patch("app._spotify_req", new=AsyncMock(return_value=self._mock_resp(204))):
+            result = asyncio.run(_execute_spotify_tool("spotify_pause", {}, "u1", self._cfg))
+        assert "paused" in result.lower()
+
+    def test_next_success(self):
+        with patch("app._spotify_req", new=AsyncMock(return_value=self._mock_resp(204))):
+            result = asyncio.run(_execute_spotify_tool("spotify_next", {}, "u1", self._cfg))
+        assert "next" in result.lower() or "skipped" in result.lower()
+
+    def test_previous_success(self):
+        with patch("app._spotify_req", new=AsyncMock(return_value=self._mock_resp(204))):
+            result = asyncio.run(_execute_spotify_tool("spotify_previous", {}, "u1", self._cfg))
+        assert "previous" in result.lower() or "back" in result.lower()
+
+    def test_volume_clamped_and_set(self):
+        with patch("app._spotify_req", new=AsyncMock(return_value=self._mock_resp(204))):
+            result = asyncio.run(_execute_spotify_tool("spotify_volume", {"volume_percent": 70}, "u1", self._cfg))
+        assert "70" in result
+
+    def test_volume_clamped_above_100(self):
+        with patch("app._spotify_req", new=AsyncMock(return_value=self._mock_resp(204))):
+            result = asyncio.run(_execute_spotify_tool("spotify_volume", {"volume_percent": 150}, "u1", self._cfg))
+        assert "100" in result
+
+    def test_search_and_play_track_found(self):
+        search_data = {"tracks": {"items": [{"uri": "spotify:track:abc", "name": "Around the World", "artists": [{"name": "Daft Punk"}]}]}}
+        play_resp = self._mock_resp(204)
+        call_count = 0
+
+        async def mock_req(method, _endpoint, *_a, **_kw):
+            nonlocal call_count
+            call_count += 1
+            if method == "get":
+                return self._mock_resp(200, "x", search_data)
+            return play_resp
+
+        with patch("app._spotify_req", new=mock_req):
+            result = asyncio.run(_execute_spotify_tool("spotify_search_and_play", {"query": "Around the World", "type": "track"}, "u1", self._cfg))
+        assert "Around the World" in result
+
+    def test_search_and_play_not_found(self):
+        search_data = {"tracks": {"items": []}}
+        with patch("app._spotify_req", new=AsyncMock(return_value=self._mock_resp(200, "x", search_data))):
+            result = asyncio.run(_execute_spotify_tool("spotify_search_and_play", {"query": "xyzzy", "type": "track"}, "u1", self._cfg))
+        assert "Could not find" in result
+
+    def test_unknown_tool_returns_error(self):
+        result = asyncio.run(_execute_spotify_tool("spotify_nonexistent", {}, "u1", self._cfg))
+        assert "Unknown" in result
 
 
 class TestCToF:
@@ -434,3 +572,306 @@ class TestMessagesIngest:
             )
         assert resp.status_code == 200
         assert resp.json() == {"ok": True}
+
+
+# ── Phase 5 pure-function tests ───────────────────────────────────────────────
+
+
+class TestEvaluateAlertCondition:
+    def test_equals_match(self):
+        assert _evaluate_alert_condition("on", "equals", "on") is True
+
+    def test_equals_case_insensitive(self):
+        assert _evaluate_alert_condition("ON", "equals", "on") is True
+
+    def test_equals_no_match(self):
+        assert _evaluate_alert_condition("off", "equals", "on") is False
+
+    def test_not_equals_match(self):
+        assert _evaluate_alert_condition("off", "not_equals", "on") is True
+
+    def test_not_equals_no_match(self):
+        assert _evaluate_alert_condition("on", "not_equals", "on") is False
+
+    def test_greater_than_true(self):
+        assert _evaluate_alert_condition("30", "greater_than", "25") is True
+
+    def test_greater_than_false(self):
+        assert _evaluate_alert_condition("20", "greater_than", "25") is False
+
+    def test_less_than_true(self):
+        assert _evaluate_alert_condition("10", "less_than", "20") is True
+
+    def test_less_than_false(self):
+        assert _evaluate_alert_condition("30", "less_than", "20") is False
+
+    def test_numeric_condition_non_numeric_state_returns_false(self):
+        assert _evaluate_alert_condition("unavailable", "greater_than", "25") is False
+
+    def test_unknown_condition_returns_false(self):
+        assert _evaluate_alert_condition("on", "contains", "on") is False
+
+
+class TestDurationStr:
+    def test_seconds_only(self):
+        assert _duration_str(45) == "45s"
+
+    def test_minutes_only(self):
+        assert _duration_str(120) == "2m"
+
+    def test_hours_only(self):
+        assert _duration_str(3600) == "1h"
+
+    def test_hours_and_minutes(self):
+        assert _duration_str(3660) == "1h 1m"
+
+    def test_hours_minutes_seconds(self):
+        assert _duration_str(3661) == "1h 1m 1s"
+
+    def test_zero(self):
+        assert _duration_str(0) == "0s"
+
+    def test_one_minute_thirty(self):
+        assert _duration_str(90) == "1m 30s"
+
+
+class TestGetPhase5Tools:
+    _ha_cfg = {"ha_url": "http://ha.local", "ha_token": "tok"}
+    _no_ha = {"ha_url": "", "ha_token": ""}
+
+    def test_empty_when_no_ha_and_no_mqtt(self):
+        with patch.object(jarvis, "MQTT_BROKER", ""):
+            tools = _get_phase5_tools(self._no_ha, "anthropic")
+        assert tools == []
+
+    def test_ha_tools_included_when_configured(self):
+        with patch.object(jarvis, "MQTT_BROKER", ""):
+            tools = _get_phase5_tools(self._ha_cfg, "anthropic")
+        names = {t["name"] for t in tools}
+        assert "manage_routine" in names
+        assert "manage_device_alert" in names
+
+    def test_openai_format_when_provider_openai(self):
+        with patch.object(jarvis, "MQTT_BROKER", ""):
+            tools = _get_phase5_tools(self._ha_cfg, "openai")
+        assert all(t["type"] == "function" for t in tools)
+
+    def test_zigbee_tool_added_when_mqtt_configured(self):
+        with patch.object(jarvis, "MQTT_BROKER", "mqtt.local"):
+            tools = _get_phase5_tools(self._no_ha, "anthropic")
+        names = {t["name"] for t in tools}
+        assert "zigbee_control" in names
+
+
+class TestExecuteNewsToolMocked:
+    def _make_rss(self, titles):
+        items = "".join(f"<item><title>{t}</title></item>" for t in titles)
+        return f'<?xml version="1.0"?><rss><channel>{items}</channel></rss>'
+
+    def test_returns_headlines(self):
+        rss = self._make_rss(["Story One", "Story Two", "Story Three"])
+        mock_resp = MagicMock()
+        mock_resp.text = rss
+        mock_resp.raise_for_status = MagicMock()
+
+        async def mock_get(*a, **kw):
+            return mock_resp
+
+        mock_client = MagicMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.get = mock_get
+
+        with patch("httpx.AsyncClient", return_value=mock_client):
+            result = asyncio.run(_execute_news_tool({"category": "general", "count": 2}))
+        assert "Story One" in result
+        assert "Story Two" in result
+
+    def test_handles_fetch_error(self):
+        mock_client = MagicMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.get = AsyncMock(side_effect=Exception("timeout"))
+
+        with patch("httpx.AsyncClient", return_value=mock_client):
+            result = asyncio.run(_execute_news_tool({}))
+        assert "Could not fetch" in result
+
+
+class TestExecuteTimerToolMocked:
+    def test_set_timer(self):
+        with patch.object(jarvis, "_db_set_timer", new=AsyncMock(return_value=42)):
+            result = asyncio.run(_execute_timer_tool("u1", {"action": "set", "label": "Pasta", "duration_seconds": 300}))
+        assert "Pasta" in result
+        assert "42" in result
+
+    def test_set_timer_zero_duration(self):
+        result = asyncio.run(_execute_timer_tool("u1", {"action": "set", "duration_seconds": 0}))
+        assert "greater than zero" in result
+
+    def test_list_no_timers(self):
+        with patch.object(jarvis, "_db_list_timers", new=AsyncMock(return_value=[])):
+            result = asyncio.run(_execute_timer_tool("u1", {"action": "list"}))
+        assert "No active timers" in result
+
+    def test_list_with_timers(self):
+        fire_at = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None) + datetime.timedelta(minutes=5)
+        timers = [{"id": 1, "label": "Laundry", "fire_at": fire_at}]
+        with patch.object(jarvis, "_db_list_timers", new=AsyncMock(return_value=timers)):
+            result = asyncio.run(_execute_timer_tool("u1", {"action": "list"}))
+        assert "Laundry" in result
+
+    def test_cancel_timer(self):
+        with patch.object(jarvis, "_db_cancel_timer", new=AsyncMock(return_value=True)):
+            result = asyncio.run(_execute_timer_tool("u1", {"action": "cancel", "timer_id": 1}))
+        assert "cancelled" in result.lower()
+
+    def test_cancel_no_id(self):
+        result = asyncio.run(_execute_timer_tool("u1", {"action": "cancel"}))
+        assert "Specify" in result
+
+    def test_unknown_action(self):
+        result = asyncio.run(_execute_timer_tool("u1", {"action": "explode"}))
+        assert "Unknown" in result
+
+
+class TestExecuteReminderToolMocked:
+    def test_set_reminder(self):
+        with patch.object(jarvis, "_db_set_reminder", new=AsyncMock(return_value=7)):
+            result = asyncio.run(_execute_reminder_tool("u1", {"action": "set", "text": "Call Mom", "fire_at": "2030-01-01T09:00:00"}))
+        assert "Call Mom" in result
+
+    def test_set_reminder_invalid_datetime(self):
+        result = asyncio.run(_execute_reminder_tool("u1", {"action": "set", "text": "x", "fire_at": "not-a-date"}))
+        assert "Invalid" in result
+
+    def test_set_reminder_missing_fields(self):
+        result = asyncio.run(_execute_reminder_tool("u1", {"action": "set"}))
+        assert "Specify" in result
+
+    def test_list_no_reminders(self):
+        with patch.object(jarvis, "_db_list_reminders", new=AsyncMock(return_value=[])):
+            result = asyncio.run(_execute_reminder_tool("u1", {"action": "list"}))
+        assert "No upcoming" in result
+
+    def test_cancel_reminder(self):
+        with patch.object(jarvis, "_db_cancel_reminder", new=AsyncMock(return_value=True)):
+            result = asyncio.run(_execute_reminder_tool("u1", {"action": "cancel", "reminder_id": 3}))
+        assert "cancelled" in result.lower()
+
+
+class TestExecuteSharedListToolMocked:
+    def test_read_empty(self):
+        with patch.object(jarvis, "_db_get_shared_list", new=AsyncMock(return_value=[])):
+            result = asyncio.run(_execute_shared_list_tool({"action": "read", "list_name": "shopping"}))
+        assert "empty" in result.lower()
+
+    def test_add_item(self):
+        with (
+            patch.object(jarvis, "_db_get_shared_list", new=AsyncMock(return_value=[])),
+            patch.object(jarvis, "_db_update_shared_list", new=AsyncMock()),
+        ):
+            result = asyncio.run(_execute_shared_list_tool({"action": "add", "list_name": "shopping", "item": "Milk"}))
+        assert "Milk" in result
+
+    def test_remove_item(self):
+        with (
+            patch.object(jarvis, "_db_get_shared_list", new=AsyncMock(return_value=["Milk", "Eggs"])),
+            patch.object(jarvis, "_db_update_shared_list", new=AsyncMock()),
+        ):
+            result = asyncio.run(_execute_shared_list_tool({"action": "remove", "list_name": "shopping", "item": "Milk"}))
+        assert "Removed" in result
+
+    def test_remove_not_found(self):
+        with patch.object(jarvis, "_db_get_shared_list", new=AsyncMock(return_value=["Eggs"])):
+            result = asyncio.run(_execute_shared_list_tool({"action": "remove", "list_name": "shopping", "item": "Milk"}))
+        assert "not found" in result.lower()
+
+    def test_clear_list(self):
+        with (
+            patch.object(jarvis, "_db_get_shared_list", new=AsyncMock(return_value=["Milk"])),
+            patch.object(jarvis, "_db_update_shared_list", new=AsyncMock()),
+        ):
+            result = asyncio.run(_execute_shared_list_tool({"action": "clear", "list_name": "shopping"}))
+        assert "cleared" in result.lower()
+
+
+class TestExecuteRoutineToolMocked:
+    _cfg = {"ha_url": "http://ha.local", "ha_token": "tok"}
+
+    def test_create_routine(self):
+        with patch.object(jarvis, "_db_create_routine", new=AsyncMock(return_value=5)):
+            result = asyncio.run(
+                _execute_routine_tool(
+                    "u1",
+                    {"action": "create", "name": "Good Morning", "steps": [{"type": "speak", "text": "Good morning!"}]},
+                    self._cfg,
+                )
+            )
+        assert "Good Morning" in result
+        assert "5" in result
+
+    def test_create_routine_no_name(self):
+        result = asyncio.run(_execute_routine_tool("u1", {"action": "create"}, self._cfg))
+        assert "name" in result.lower()
+
+    def test_create_routine_no_steps(self):
+        result = asyncio.run(_execute_routine_tool("u1", {"action": "create", "name": "Empty"}, self._cfg))
+        assert "step" in result.lower()
+
+    def test_list_no_routines(self):
+        with patch.object(jarvis, "_db_list_routines", new=AsyncMock(return_value=[])):
+            result = asyncio.run(_execute_routine_tool("u1", {"action": "list"}, self._cfg))
+        assert "No routines" in result
+
+    def test_delete_routine(self):
+        with patch.object(jarvis, "_db_delete_routine", new=AsyncMock(return_value=True)):
+            result = asyncio.run(_execute_routine_tool("u1", {"action": "delete", "routine_id": 1}, self._cfg))
+        assert "deleted" in result.lower()
+
+    def test_run_routine_not_found(self):
+        with patch.object(jarvis, "_db_list_routines", new=AsyncMock(return_value=[])):
+            result = asyncio.run(_execute_routine_tool("u1", {"action": "run", "name": "Nonexistent"}, self._cfg))
+        assert "No routine" in result
+
+
+class TestExecuteDeviceAlertToolMocked:
+    def test_create_alert(self):
+        with patch.object(jarvis, "_db_create_device_alert", new=AsyncMock(return_value=3)):
+            result = asyncio.run(
+                _execute_device_alert_tool(
+                    "u1",
+                    {
+                        "action": "create",
+                        "name": "Garage open",
+                        "entity_id": "cover.garage",
+                        "condition": "equals",
+                        "value": "open",
+                        "message": "The garage door is open!",
+                    },
+                )
+            )
+        assert "Garage open" in result
+        assert "3" in result
+
+    def test_create_alert_missing_fields(self):
+        result = asyncio.run(_execute_device_alert_tool("u1", {"action": "create", "name": "x"}))
+        assert "Specify" in result
+
+    def test_list_no_alerts(self):
+        with patch.object(jarvis, "_db_list_device_alerts", new=AsyncMock(return_value=[])):
+            result = asyncio.run(_execute_device_alert_tool("u1", {"action": "list"}))
+        assert "No alert" in result
+
+    def test_delete_alert(self):
+        with patch.object(jarvis, "_db_delete_device_alert", new=AsyncMock(return_value=True)):
+            result = asyncio.run(_execute_device_alert_tool("u1", {"action": "delete", "alert_id": 2}))
+        assert "deleted" in result.lower()
+
+    def test_delete_no_id(self):
+        result = asyncio.run(_execute_device_alert_tool("u1", {"action": "delete"}))
+        assert "Specify" in result
+
+    def test_unknown_action(self):
+        result = asyncio.run(_execute_device_alert_tool("u1", {"action": "whatever"}))
+        assert "Unknown" in result
