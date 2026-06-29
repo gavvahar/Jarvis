@@ -2453,27 +2453,35 @@ def _friendly_when(dt: datetime.datetime, *, include_date: bool = True) -> str:
     return stamp
 
 
-def _format_calendar_event(event: dict) -> str:
-    title = event.get("title") or "Untitled event"
-    start = event.get("start")
-    end = event.get("end") or start
+type _CalendarEvent = dict[str, datetime.datetime | str | bool]
+type _ContactCard = dict[str, str | list[str]]
+
+
+def _format_calendar_event(event: _CalendarEvent) -> str:
+    title_value = event.get("title")
+    title = title_value if isinstance(title_value, str) and title_value else "Untitled event"
+    start_value = event.get("start")
+    end_value = event.get("end")
+    start = start_value if isinstance(start_value, datetime.datetime) else None
+    end = end_value if isinstance(end_value, datetime.datetime) else start
     if not start:
         return title
-    if event.get("all_day"):
+    if bool(event.get("all_day")):
         when = f"{start.strftime('%a %b %d').replace(' 0', ' ')} (all day)"
     elif end and start.date() == end.date():
         when = f"{_friendly_when(start)}–{_friendly_when(end, include_date=False)}"
     else:
         when = f"{_friendly_when(start)} to {_friendly_when(end)}"
     bits = [f"{title} — {when}"]
-    if event.get("location"):
-        bits.append(f"@ {event['location']}")
+    location_value = event.get("location")
+    if isinstance(location_value, str) and location_value:
+        bits.append(f"@ {location_value}")
     return " ".join(bits)
 
 
-def _parse_ical_events(calendar_blob: str) -> list[dict]:
-    events = []
-    current = None
+def _parse_ical_events(calendar_blob: str) -> list[_CalendarEvent]:
+    events: list[_CalendarEvent] = []
+    current: _CalendarEvent | None = None
     for line in _unfold_ical_lines(calendar_blob):
         upper = line.upper()
         if upper == "BEGIN:VEVENT":
@@ -2481,7 +2489,8 @@ def _parse_ical_events(calendar_blob: str) -> list[dict]:
             continue
         if upper == "END:VEVENT":
             if current and current.get("start"):
-                current.setdefault("end", current["start"])
+                if "end" not in current:
+                    current["end"] = current["start"]
                 events.append(current)
             current = None
             continue
@@ -2548,7 +2557,7 @@ def _build_calendar_event_ics(title: str, start, end, *, description: str = "", 
     return "\r\n".join(lines)
 
 
-async def _calendar_events_between(config: dict, start: datetime.datetime, end: datetime.datetime, *, limit: int = 10) -> list[dict]:
+async def _calendar_events_between(config: dict, start: datetime.datetime, end: datetime.datetime, *, limit: int = 10) -> list[_CalendarEvent]:
     start_utc = start.astimezone(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     end_utc = end.astimezone(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     body = f"""<?xml version="1.0" encoding="utf-8"?>
@@ -2574,7 +2583,7 @@ async def _calendar_events_between(config: dict, start: datetime.datetime, end: 
         depth="1",
     )
     _dav_raise_for_status(response, "Calendar lookup")
-    events = []
+    events: list[_CalendarEvent] = []
     for dav_response in _dav_multistatus_responses(response.text):
         prop = _dav_response_prop(dav_response)
         if prop is None:
@@ -2583,17 +2592,25 @@ async def _calendar_events_between(config: dict, start: datetime.datetime, end: 
         if not calendar_data:
             continue
         for event in _parse_ical_events(calendar_data):
-            event_end = event.get("end") or event.get("start")
-            event_start = event.get("start")
+            event_end_value = event.get("end") or event.get("start")
+            event_start_value = event.get("start")
+            event_start = event_start_value if isinstance(event_start_value, datetime.datetime) else None
+            event_end = event_end_value if isinstance(event_end_value, datetime.datetime) else None
             if not event_start or not event_end:
                 continue
             if event_start < end and event_end >= start:
                 events.append(event)
-    events.sort(key=lambda event: event.get("start") or datetime.datetime.max.replace(tzinfo=datetime.timezone.utc))
+    events.sort(
+        key=lambda event: (
+            event["start"]
+            if isinstance(event.get("start"), datetime.datetime)
+            else datetime.datetime.max.replace(tzinfo=datetime.timezone.utc)
+        )
+    )
     return events[:limit]
 
 
-async def _lookup_contacts(config: dict, query: str, *, preferred_channel: str = "any", limit: int = 5) -> list[dict]:
+async def _lookup_contacts(config: dict, query: str, *, preferred_channel: str = "any", limit: int = 5) -> list[_ContactCard]:
     body = """<?xml version="1.0" encoding="utf-8"?>
 <A:addressbook-query xmlns:D="DAV:" xmlns:A="urn:ietf:params:xml:ns:carddav">
   <D:prop>
@@ -2612,7 +2629,7 @@ async def _lookup_contacts(config: dict, query: str, *, preferred_channel: str =
     _dav_raise_for_status(response, "Contacts lookup")
     query_lc = query.lower().strip()
     digits = re.sub(r"\D", "", query)
-    matches = []
+    matches: list[tuple[int, _ContactCard]] = []
     for dav_response in _dav_multistatus_responses(response.text):
         prop = _dav_response_prop(dav_response)
         if prop is None:
@@ -2645,19 +2662,26 @@ def _dedupe_preserve_order(values: list[str]) -> list[str]:
     return out
 
 
-def _parse_vcards(vcard_blob: str) -> list[dict]:
-    cards = []
-    current = None
+def _parse_vcards(vcard_blob: str) -> list[_ContactCard]:
+    cards: list[_ContactCard] = []
+    current: _ContactCard | None = None
     for line in _unfold_ical_lines(vcard_blob):
         upper = line.upper()
         if upper == "BEGIN:VCARD":
             current = {"name": "", "nicknames": [], "phones": [], "emails": []}
             continue
         if upper == "END:VCARD":
-            if current and (current["name"] or current["phones"] or current["emails"]):
-                current["phones"] = _dedupe_preserve_order(current["phones"])
-                current["emails"] = _dedupe_preserve_order(current["emails"])
-                current["nicknames"] = _dedupe_preserve_order(current["nicknames"])
+            name_value = current.get("name") if current else ""
+            phones_value = current.get("phones") if current else []
+            emails_value = current.get("emails") if current else []
+            nicknames_value = current.get("nicknames") if current else []
+            if current and (name_value or phones_value or emails_value):
+                if isinstance(phones_value, list):
+                    current["phones"] = _dedupe_preserve_order(phones_value)
+                if isinstance(emails_value, list):
+                    current["emails"] = _dedupe_preserve_order(emails_value)
+                if isinstance(nicknames_value, list):
+                    current["nicknames"] = _dedupe_preserve_order(nicknames_value)
                 cards.append(current)
             current = None
             continue
@@ -2668,21 +2692,31 @@ def _parse_vcards(vcard_blob: str) -> list[dict]:
         if name == "FN":
             current["name"] = clean
         elif name == "NICKNAME":
-            current["nicknames"].extend([part.strip() for part in clean.split(",") if part.strip()])
+            nicknames = current.get("nicknames")
+            if isinstance(nicknames, list):
+                nicknames.extend([part.strip() for part in clean.split(",") if part.strip()])
         elif name == "TEL":
-            current["phones"].append(clean[4:] if clean.lower().startswith("tel:") else clean)
+            phones = current.get("phones")
+            if isinstance(phones, list):
+                phones.append(clean[4:] if clean.lower().startswith("tel:") else clean)
         elif name == "EMAIL":
-            current["emails"].append(clean[7:] if clean.lower().startswith("mailto:") else clean)
+            emails = current.get("emails")
+            if isinstance(emails, list):
+                emails.append(clean[7:] if clean.lower().startswith("mailto:") else clean)
     return cards
 
 
-def _score_contact_match(contact: dict, query_lc: str, digits: str) -> int:
+def _score_contact_match(contact: _ContactCard, query_lc: str, digits: str) -> int:
     if not query_lc and not digits:
         return 0
-    name = (contact.get("name") or "").lower()
-    nicknames = [nick.lower() for nick in contact.get("nicknames", [])]
-    emails = [email.lower() for email in contact.get("emails", [])]
-    phones = contact.get("phones", [])
+    name_value = contact.get("name")
+    nicknames_value = contact.get("nicknames", [])
+    emails_value = contact.get("emails", [])
+    phones_value = contact.get("phones", [])
+    name = name_value.lower() if isinstance(name_value, str) else ""
+    nicknames = [nick.lower() for nick in nicknames_value] if isinstance(nicknames_value, list) else []
+    emails = [email.lower() for email in emails_value] if isinstance(emails_value, list) else []
+    phones = phones_value if isinstance(phones_value, list) else []
     if query_lc and name == query_lc:
         return 100
     if query_lc and query_lc in nicknames:
@@ -2702,11 +2736,14 @@ def _score_contact_match(contact: dict, query_lc: str, digits: str) -> int:
     return 0
 
 
-def _format_contact(contact: dict, preferred_channel: str) -> str:
-    name = contact.get("name") or (contact.get("emails") or contact.get("phones") or ["Unnamed contact"])[0]
+def _format_contact(contact: _ContactCard, preferred_channel: str) -> str:
+    name_value = contact.get("name")
+    emails_value = contact.get("emails", [])
+    phones_value = contact.get("phones", [])
+    emails = emails_value if isinstance(emails_value, list) else []
+    phones = phones_value if isinstance(phones_value, list) else []
+    name = name_value if isinstance(name_value, str) and name_value else (emails or phones or ["Unnamed contact"])[0]
     details = []
-    phones = contact.get("phones") or []
-    emails = contact.get("emails") or []
     if preferred_channel in ("any", "phone") and phones:
         details.append("phone: " + ", ".join(phones[:2]))
     if preferred_channel in ("any", "email") and emails:
