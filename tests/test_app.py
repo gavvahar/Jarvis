@@ -738,9 +738,7 @@ class TestExecuteTimerToolMocked:
 class TestExecuteReminderToolMocked:
     def test_set_reminder(self):
         with patch.object(jarvis, "_db_set_reminder", new=AsyncMock(return_value=7)):
-            result = asyncio.run(
-                _execute_reminder_tool("u1", {"action": "set", "text": "Call Mom", "fire_at": "2030-01-01T09:00:00"})
-            )
+            result = asyncio.run(_execute_reminder_tool("u1", {"action": "set", "text": "Call Mom", "fire_at": "2030-01-01T09:00:00"}))
         assert "Call Mom" in result
 
     def test_set_reminder_invalid_datetime(self):
