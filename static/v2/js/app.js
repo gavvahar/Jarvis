@@ -941,6 +941,20 @@
     setTimeout(() => toast && toast.remove(), 10000);
   }
 
+  socket.on("timer_fired", ({ label, speak: speakText }) => {
+    const msg = speakText || `Your ${label} timer is done.`;
+    if (window.__chat) window.__chat.addMsg(msg, "in");
+    if (_standby) wake();
+    speak(msg);
+  });
+
+  socket.on("reminder_fired", ({ text, speak: speakText }) => {
+    const msg = speakText || `Reminder: ${text}.`;
+    if (window.__chat) window.__chat.addMsg(msg, "in");
+    if (_standby) wake();
+    speak(msg);
+  });
+
   socket.on("wake_trigger", ({ device_id }) => {
     if (_standby) {
       wake();
