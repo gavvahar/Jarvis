@@ -10,7 +10,7 @@ Three providers:
   • openai_compatible — any OpenAI-compatible endpoint (Ollama, OpenRouter, …)
 """
 
-import json, os, re, asyncio, secrets, tempfile, urllib.parse, asyncpg, httpx, datetime, hashlib, base64, pathlib, jwt, uuid
+import json, os, re, asyncio, secrets, tempfile, urllib.parse, asyncpg, httpx, datetime, hashlib, base64, pathlib, uuid
 import xml.etree.ElementTree as ET
 
 
@@ -24,6 +24,11 @@ import socketio
 from dotenv import load_dotenv
 
 from personality import JARVIS_SYSTEM
+
+try:
+    import jwt
+except ImportError:
+    jwt = None  # type: ignore[assignment]
 
 try:
     import librosa as _librosa
@@ -1986,6 +1991,8 @@ def _apple_music_configured(config: dict) -> bool:
 
 
 def _apple_music_dev_token() -> str:
+    if jwt is None:
+        raise RuntimeError("PyJWT is required for Apple Music support. Install dependencies from requirements.txt.")
     now = int(datetime.datetime.now().timestamp())
     return jwt.encode(
         {"iss": APPLE_MUSIC_TEAM_ID, "iat": now, "exp": now + 15777000},
