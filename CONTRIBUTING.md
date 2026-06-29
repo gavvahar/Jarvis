@@ -51,6 +51,6 @@ Coverage must stay above 25%. Add tests for any new routes or logic.
 
 ## Code style notes
 
-- No comments explaining *what* the code does — well-named functions do that. Only comment *why* when the reason is non-obvious.
+- No comments explaining _what_ the code does — well-named functions do that. Only comment _why_ when the reason is non-obvious.
 - Python line length is 180 (configured in `pyproject.toml`).
 - JS/CSS/HTML is formatted by Prettier — don't hand-format it.
