@@ -57,16 +57,16 @@ cp .env.example .env
 
 Required variables:
 
-| Variable             | What it is                                                            |
-| -------------------- | --------------------------------------------------------------------- |
-| `SECRET_KEY`         | Any long random string — signs session cookies                        |
-| `POSTGRES_PASSWORD`  | Password for the Postgres database                                    |
-| `DATABASE_URL`       | Full Postgres connection string (default matches compose.yml)         |
+| Variable             | What it is                                                           |
+| -------------------- | -------------------------------------------------------------------- |
+| `SECRET_KEY`         | Any long random string — signs session cookies                       |
+| `POSTGRES_PASSWORD`  | Password for the Postgres database                                   |
+| `DATABASE_URL`       | Full Postgres connection string (default matches compose.yml)        |
 | `AUTHENTIK_URL`      | Base URL of your Authentik instance, e.g. `https://auth.example.com` |
-| `OIDC_APP_SLUG`      | The slug of your Authentik application, e.g. `jarvis`                 |
-| `OIDC_CLIENT_ID`     | Client ID from your Authentik OAuth2 provider                         |
-| `OIDC_CLIENT_SECRET` | Client secret from your Authentik OAuth2 provider                     |
-| `APP_URL`            | Public URL of this app, e.g. `https://jarvis.example.com`             |
+| `OIDC_APP_SLUG`      | The slug of your Authentik application, e.g. `jarvis`                |
+| `OIDC_CLIENT_ID`     | Client ID from your Authentik OAuth2 provider                        |
+| `OIDC_CLIENT_SECRET` | Client secret from your Authentik OAuth2 provider                    |
+| `APP_URL`            | Public URL of this app, e.g. `https://jarvis.example.com`            |
 
 Optional:
 
@@ -244,11 +244,11 @@ A routine is a named sequence of steps that runs on demand or via a voice phrase
 
 Step types available in a routine:
 
-| Type         | What it does                                    |
-| ------------ | ----------------------------------------------- |
-| `ha_service` | Calls a Home Assistant service                  |
-| `speak`      | J.A.R.V.I.S. says something aloud               |
-| `delay`      | Waits N seconds before the next step (max 5 min)|
+| Type         | What it does                                     |
+| ------------ | ------------------------------------------------ |
+| `ha_service` | Calls a Home Assistant service                   |
+| `speak`      | J.A.R.V.I.S. says something aloud                |
+| `delay`      | Waits N seconds before the next step (max 5 min) |
 
 Routines are stored per-user in the database and survive restarts.
 
