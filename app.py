@@ -24,6 +24,14 @@ from dotenv import load_dotenv
 
 from personality import JARVIS_SYSTEM
 
+try:
+    import librosa as _librosa
+    import numpy as _np
+
+    _VOICE_ID_OK = True
+except ImportError:
+    _VOICE_ID_OK = False
+
 load_dotenv()
 
 # ─── CONSTANTS ────────────────────────────────────────────────────────────────
@@ -91,6 +99,72 @@ ALTER TABLE user_configs ADD COLUMN IF NOT EXISTS spotify_access_token TEXT NOT 
 ALTER TABLE user_configs ADD COLUMN IF NOT EXISTS spotify_token_expiry DOUBLE PRECISION NOT NULL DEFAULT 0;
 ALTER TABLE user_configs ADD COLUMN IF NOT EXISTS apple_music_user_token TEXT NOT NULL DEFAULT '';
 ALTER TABLE user_configs ADD COLUMN IF NOT EXISTS apple_music_storefront TEXT NOT NULL DEFAULT 'us';
+ALTER TABLE user_configs ADD COLUMN IF NOT EXISTS display_name TEXT NOT NULL DEFAULT '';
+ALTER TABLE user_configs ADD COLUMN IF NOT EXISTS voice_embedding JSONB;
+ALTER TABLE user_configs ADD COLUMN IF NOT EXISTS is_kid_safe BOOLEAN NOT NULL DEFAULT FALSE;
+
+CREATE TABLE IF NOT EXISTS shared_lists (
+    id          BIGSERIAL PRIMARY KEY,
+    name        TEXT NOT NULL,
+    items       JSONB NOT NULL DEFAULT '[]',
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_shared_lists_name ON shared_lists (name);
+
+INSERT INTO shared_lists (name, items) VALUES ('shopping', '[]'), ('todo', '[]') ON CONFLICT (name) DO NOTHING;
+
+CREATE TABLE IF NOT EXISTS timers (
+    id          BIGSERIAL PRIMARY KEY,
+    user_id     TEXT NOT NULL REFERENCES user_configs(user_id) ON DELETE CASCADE,
+    label       TEXT NOT NULL DEFAULT 'Timer',
+    fire_at     TIMESTAMPTZ NOT NULL,
+    fired       BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_timers_user ON timers (user_id, fire_at);
+
+CREATE TABLE IF NOT EXISTS reminders (
+    id                  BIGSERIAL PRIMARY KEY,
+    user_id             TEXT NOT NULL REFERENCES user_configs(user_id) ON DELETE CASCADE,
+    text                TEXT NOT NULL,
+    fire_at             TIMESTAMPTZ NOT NULL,
+    recurring_minutes   INTEGER,
+    active              BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_reminders_user ON reminders (user_id, fire_at);
+
+CREATE TABLE IF NOT EXISTS routines (
+    id              BIGSERIAL PRIMARY KEY,
+    user_id         TEXT NOT NULL REFERENCES user_configs(user_id) ON DELETE CASCADE,
+    name            TEXT NOT NULL,
+    trigger_phrases JSONB NOT NULL DEFAULT '[]',
+    steps           JSONB NOT NULL DEFAULT '[]',
+    active          BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_routines_user ON routines (user_id);
+
+CREATE TABLE IF NOT EXISTS device_alert_rules (
+    id               BIGSERIAL PRIMARY KEY,
+    user_id          TEXT NOT NULL REFERENCES user_configs(user_id) ON DELETE CASCADE,
+    name             TEXT NOT NULL,
+    entity_id        TEXT NOT NULL,
+    condition        TEXT NOT NULL,
+    value            TEXT NOT NULL DEFAULT '',
+    message          TEXT NOT NULL,
+    cooldown_minutes INTEGER NOT NULL DEFAULT 30,
+    last_fired       TIMESTAMPTZ,
+    active           BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_device_alerts_user ON device_alert_rules (user_id);
 
 CREATE TABLE IF NOT EXISTS phone_messages (
     id          BIGSERIAL PRIMARY KEY,
@@ -162,7 +236,7 @@ async def _db_ensure_user(user_id: str, email: str, role: str):
 async def _db_load_config(user_id: str) -> dict:
     async with _pool().acquire() as conn:
         row = await conn.fetchrow(
-            "SELECT role, provider, api_key, model, base_url, ha_url, ha_token, myq_email, myq_password, tesla_method, tesla_refresh_token, tesla_fleet_refresh_token, spotify_refresh_token, spotify_access_token, spotify_token_expiry FROM user_configs WHERE user_id = $1",
+            "SELECT role, provider, api_key, model, base_url, ha_url, ha_token, myq_email, myq_password, tesla_method, tesla_refresh_token, tesla_fleet_refresh_token, spotify_refresh_token, spotify_access_token, spotify_token_expiry, display_name, voice_embedding, is_kid_safe FROM user_configs WHERE user_id = $1",
             user_id,
         )
     if row is None:
@@ -182,6 +256,9 @@ async def _db_load_config(user_id: str) -> dict:
             "spotify_refresh_token": "",
             "spotify_access_token": "",
             "spotify_token_expiry": 0.0,
+            "display_name": "",
+            "voice_embedding": None,
+            "is_kid_safe": False,
         }
     return dict(row)
 
@@ -291,6 +368,252 @@ async def _db_find_user_by_token(token: str) -> str | None:
             token,
         )
     return row["user_id"] if row else None
+
+
+async def _db_save_voice_embedding(user_id: str, embedding: list) -> None:
+    async with _pool().acquire() as conn:
+        await conn.execute(
+            "UPDATE user_configs SET voice_embedding = $2 WHERE user_id = $1",
+            user_id,
+            json.dumps(embedding),
+        )
+
+
+async def _db_clear_voice_embedding(user_id: str) -> None:
+    async with _pool().acquire() as conn:
+        await conn.execute("UPDATE user_configs SET voice_embedding = NULL WHERE user_id = $1", user_id)
+
+
+async def _db_get_all_voice_embeddings() -> dict:
+    async with _pool().acquire() as conn:
+        rows = await conn.fetch("SELECT user_id, voice_embedding, display_name, is_kid_safe FROM user_configs WHERE voice_embedding IS NOT NULL")
+    result = {}
+    for row in rows:
+        emb = row["voice_embedding"]
+        if emb:
+            parsed = json.loads(emb) if isinstance(emb, str) else emb
+            result[row["user_id"]] = (parsed, row["display_name"] or row["user_id"][:8], row["is_kid_safe"])
+    return result
+
+
+async def _db_set_kid_safe(user_id: str, value: bool) -> None:
+    async with _pool().acquire() as conn:
+        await conn.execute("UPDATE user_configs SET is_kid_safe = $2 WHERE user_id = $1", user_id, value)
+
+
+async def _db_set_display_name(user_id: str, name: str) -> None:
+    async with _pool().acquire() as conn:
+        await conn.execute("UPDATE user_configs SET display_name = $2 WHERE user_id = $1", user_id, name)
+
+
+async def _db_get_shared_list(name: str) -> list:
+    async with _pool().acquire() as conn:
+        row = await conn.fetchrow("SELECT items FROM shared_lists WHERE name = $1", name)
+    if row is None:
+        await _db_create_shared_list(name)
+        return []
+    items = row["items"]
+    return json.loads(items) if isinstance(items, str) else (items or [])
+
+
+async def _db_create_shared_list(name: str) -> None:
+    async with _pool().acquire() as conn:
+        await conn.execute("INSERT INTO shared_lists (name, items) VALUES ($1, '[]') ON CONFLICT (name) DO NOTHING", name)
+
+
+async def _db_update_shared_list(name: str, items: list) -> None:
+    async with _pool().acquire() as conn:
+        await conn.execute(
+            "INSERT INTO shared_lists (name, items, updated_at) VALUES ($1, $2, NOW()) ON CONFLICT (name) DO UPDATE SET items = $2, updated_at = NOW()",
+            name,
+            json.dumps(items),
+        )
+
+
+async def _db_get_all_shared_lists() -> dict:
+    async with _pool().acquire() as conn:
+        rows = await conn.fetch("SELECT name, items FROM shared_lists ORDER BY name")
+    result = {}
+    for row in rows:
+        items = row["items"]
+        result[row["name"]] = json.loads(items) if isinstance(items, str) else (items or [])
+    return result
+
+
+async def _db_get_household_members() -> list:
+    async with _pool().acquire() as conn:
+        rows = await conn.fetch("SELECT user_id, email, display_name, is_kid_safe, voice_embedding IS NOT NULL AS has_voice FROM user_configs ORDER BY email")
+    return [dict(r) for r in rows]
+
+
+async def _db_set_timer(user_id: str, label: str, duration_seconds: int) -> int:
+    fire_at = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None) + datetime.timedelta(seconds=duration_seconds)
+    async with _pool().acquire() as conn:
+        row = await conn.fetchrow(
+            "INSERT INTO timers (user_id, label, fire_at) VALUES ($1, $2, $3) RETURNING id",
+            user_id,
+            label,
+            fire_at,
+        )
+    return row["id"]
+
+
+async def _db_list_timers(user_id: str) -> list:
+    async with _pool().acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT id, label, fire_at FROM timers WHERE user_id = $1 AND fired = FALSE AND fire_at > NOW() ORDER BY fire_at",
+            user_id,
+        )
+    return [dict(r) for r in rows]
+
+
+async def _db_cancel_timer(user_id: str, timer_id: int) -> bool:
+    async with _pool().acquire() as conn:
+        result = await conn.execute(
+            "UPDATE timers SET fired = TRUE WHERE id = $1 AND user_id = $2 AND fired = FALSE",
+            timer_id,
+            user_id,
+        )
+    return result.split()[-1] == "1"
+
+
+async def _db_fire_due_timers() -> list:
+    async with _pool().acquire() as conn:
+        rows = await conn.fetch("UPDATE timers SET fired = TRUE WHERE fire_at <= NOW() AND fired = FALSE RETURNING user_id, label")
+    return [dict(r) for r in rows]
+
+
+async def _db_set_reminder(user_id: str, text: str, fire_at: datetime.datetime, recurring_minutes: int | None) -> int:
+    async with _pool().acquire() as conn:
+        row = await conn.fetchrow(
+            "INSERT INTO reminders (user_id, text, fire_at, recurring_minutes) VALUES ($1, $2, $3, $4) RETURNING id",
+            user_id,
+            text,
+            fire_at,
+            recurring_minutes,
+        )
+    return row["id"]
+
+
+async def _db_list_reminders(user_id: str) -> list:
+    async with _pool().acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT id, text, fire_at, recurring_minutes FROM reminders WHERE user_id = $1 AND active = TRUE AND fire_at > NOW() ORDER BY fire_at",
+            user_id,
+        )
+    return [dict(r) for r in rows]
+
+
+async def _db_cancel_reminder(user_id: str, reminder_id: int) -> bool:
+    async with _pool().acquire() as conn:
+        result = await conn.execute(
+            "UPDATE reminders SET active = FALSE WHERE id = $1 AND user_id = $2",
+            reminder_id,
+            user_id,
+        )
+    return result.split()[-1] == "1"
+
+
+async def _db_fire_due_reminders() -> list:
+    async with _pool().acquire() as conn:
+        rows = await conn.fetch("SELECT id, user_id, text, recurring_minutes FROM reminders WHERE fire_at <= NOW() AND active = TRUE")
+        fired = [dict(r) for r in rows]
+        for r in fired:
+            if r["recurring_minutes"]:
+                next_fire = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None) + datetime.timedelta(minutes=r["recurring_minutes"])
+                await conn.execute("UPDATE reminders SET fire_at = $2 WHERE id = $1", r["id"], next_fire)
+            else:
+                await conn.execute("UPDATE reminders SET active = FALSE WHERE id = $1", r["id"])
+    return fired
+
+
+# ─── ROUTINES DB ─────────────────────────────────────────────────────────────
+async def _db_create_routine(user_id: str, name: str, trigger_phrases: list, steps: list) -> int:
+    async with _pool().acquire() as conn:
+        row = await conn.fetchrow(
+            "INSERT INTO routines (user_id, name, trigger_phrases, steps) VALUES ($1,$2,$3,$4) RETURNING id",
+            user_id,
+            name,
+            json.dumps(trigger_phrases),
+            json.dumps(steps),
+        )
+    return row["id"]
+
+
+async def _db_list_routines(user_id: str) -> list:
+    async with _pool().acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT id, name, trigger_phrases, steps, active FROM routines WHERE user_id = $1 ORDER BY name",
+            user_id,
+        )
+    result = []
+    for row in rows:
+        phrases = row["trigger_phrases"]
+        steps = row["steps"]
+        result.append(
+            {
+                "id": row["id"],
+                "name": row["name"],
+                "trigger_phrases": json.loads(phrases) if isinstance(phrases, str) else (phrases or []),
+                "steps": json.loads(steps) if isinstance(steps, str) else (steps or []),
+                "active": row["active"],
+            }
+        )
+    return result
+
+
+async def _db_delete_routine(user_id: str, routine_id: int) -> bool:
+    async with _pool().acquire() as conn:
+        result = await conn.execute("DELETE FROM routines WHERE id = $1 AND user_id = $2", routine_id, user_id)
+    return result.split()[-1] == "1"
+
+
+async def _db_toggle_routine(user_id: str, routine_id: int, active: bool) -> bool:
+    async with _pool().acquire() as conn:
+        result = await conn.execute("UPDATE routines SET active = $3 WHERE id = $1 AND user_id = $2", routine_id, user_id, active)
+    return result.split()[-1] == "1"
+
+
+# ─── DEVICE ALERTS DB ────────────────────────────────────────────────────────
+async def _db_create_device_alert(user_id: str, name: str, entity_id: str, condition: str, value: str, message: str, cooldown_minutes: int) -> int:
+    async with _pool().acquire() as conn:
+        row = await conn.fetchrow(
+            "INSERT INTO device_alert_rules (user_id, name, entity_id, condition, value, message, cooldown_minutes) VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id",
+            user_id,
+            name,
+            entity_id,
+            condition,
+            value,
+            message,
+            cooldown_minutes,
+        )
+    return row["id"]
+
+
+async def _db_list_device_alerts(user_id: str) -> list:
+    async with _pool().acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT id, name, entity_id, condition, value, message, cooldown_minutes, active FROM device_alert_rules WHERE user_id = $1 ORDER BY name",
+            user_id,
+        )
+    return [dict(r) for r in rows]
+
+
+async def _db_delete_device_alert(user_id: str, alert_id: int) -> bool:
+    async with _pool().acquire() as conn:
+        result = await conn.execute("DELETE FROM device_alert_rules WHERE id = $1 AND user_id = $2", alert_id, user_id)
+    return result.split()[-1] == "1"
+
+
+async def _db_get_active_device_alerts() -> list:
+    async with _pool().acquire() as conn:
+        rows = await conn.fetch("SELECT id, user_id, name, entity_id, condition, value, message, cooldown_minutes, last_fired FROM device_alert_rules WHERE active = TRUE")
+    return [dict(r) for r in rows]
+
+
+async def _db_update_alert_last_fired(alert_id: int) -> None:
+    async with _pool().acquire() as conn:
+        await conn.execute("UPDATE device_alert_rules SET last_fired = NOW() WHERE id = $1", alert_id)
 
 
 async def _db_store_phone_message(user_id: str, sender: str, body: str, important: bool, reason: str):
@@ -424,6 +747,10 @@ _user_locks: dict[str, asyncio.Lock] = {}
 _active_meetings: dict[str, dict] = {}
 _party_tokens: dict[str, str] = {}  # token → user_id
 
+# Dedup map for wake triggers — prevents two devices firing simultaneously
+_last_wake_time: dict[str, float] = {}
+_WAKE_DEDUP_WINDOW = 2.0  # seconds
+
 
 def _create_party_token(user_id: str) -> str:
     for t, uid in list(_party_tokens.items()):
@@ -461,6 +788,46 @@ def _get_whisper():
 
         _whisper = WhisperModel("tiny.en", device="cpu", compute_type="int8")
     return _whisper
+
+
+# Voice embedding cache: user_id → (embedding, display_name, is_kid_safe)
+_voice_cache: dict = {}
+_VOICE_THRESHOLD = 0.82
+
+
+def _cosine_similarity(a: list, b: list) -> float:
+    av = _np.array(a, dtype=float)
+    bv = _np.array(b, dtype=float)
+    denom = _np.linalg.norm(av) * _np.linalg.norm(bv)
+    return float(_np.dot(av, bv) / denom) if denom > 0 else 0.0
+
+
+def _extract_voice_embedding(audio_path: str) -> list | None:
+    if not _VOICE_ID_OK:
+        return None
+    y, _ = _librosa.load(audio_path, sr=16000, mono=True)
+    mfcc = _librosa.feature.mfcc(y=y, sr=16000, n_mfcc=40)
+    return [*mfcc.mean(axis=1).tolist(), *mfcc.std(axis=1).tolist()]
+
+
+async def _refresh_voice_cache() -> None:
+    rows = await _db_get_all_voice_embeddings()
+    _voice_cache.clear()
+    _voice_cache.update(rows)
+
+
+def _identify_speaker_from_embedding(embedding: list) -> tuple:
+    """Returns (user_id | None, display_name, is_kid_safe)."""
+    if not _voice_cache or not embedding:
+        return None, "", False
+    best_uid, best_name, best_safe, best_score = None, "", False, 0.0
+    for uid, (stored, name, is_safe) in _voice_cache.items():
+        score = _cosine_similarity(embedding, stored)
+        if score > best_score:
+            best_uid, best_name, best_safe, best_score = uid, name, is_safe, score
+    if best_score >= _VOICE_THRESHOLD:
+        return best_uid, best_name, best_safe
+    return None, "guest", False
 
 
 def _get_user_lock(user_id: str) -> asyncio.Lock:
@@ -1247,6 +1614,18 @@ async def _validate_ha(url, token):
         return False, f"Could not reach Home Assistant: {e}"
 
 
+async def _ha_get_entity_state(config: dict, entity_id: str) -> str | None:
+    url = config["ha_url"].rstrip("/") + f"/api/states/{entity_id}"
+    try:
+        async with httpx.AsyncClient(timeout=5) as c:
+            r = await c.get(url, headers=_ha_headers(config))
+        if r.status_code == 200:
+            return r.json().get("state")
+        return None
+    except Exception:
+        return None
+
+
 async def _ha_get_states(config: dict, domain=None):
     url = config["ha_url"].rstrip("/") + "/api/states"
     async with httpx.AsyncClient(timeout=8) as c:
@@ -1689,6 +2068,590 @@ def _get_apple_music_tools(config: dict, provider: str) -> list:
     return APPLE_MUSIC_TOOLS_ANTHROPIC if provider == "anthropic" else APPLE_MUSIC_TOOLS_OPENAI
 
 
+# ─── SHARED LIST TOOLS ───────────────────────────────────────────────────────
+_SHARED_LIST_TOOL_ANTHROPIC = {
+    "name": "manage_shared_list",
+    "description": "Manage shared household lists such as shopping or todo. Use to add, remove, read, or clear items.",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "action": {"type": "string", "enum": ["add", "remove", "read", "clear"], "description": "Operation to perform"},
+            "list_name": {"type": "string", "description": "Name of the list, e.g. shopping or todo"},
+            "item": {"type": "string", "description": "Item to add or remove (omit for read/clear)"},
+        },
+        "required": ["action", "list_name"],
+    },
+}
+
+_SHARED_LIST_TOOL_OPENAI = {
+    "type": "function",
+    "function": {
+        "name": "manage_shared_list",
+        "description": "Manage shared household lists such as shopping or todo.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "action": {"type": "string", "enum": ["add", "remove", "read", "clear"]},
+                "list_name": {"type": "string", "description": "Name of the list, e.g. shopping or todo"},
+                "item": {"type": "string", "description": "Item to add or remove (omit for read/clear)"},
+            },
+            "required": ["action", "list_name"],
+        },
+    },
+}
+
+
+def _get_shared_list_tools(provider: str) -> list:
+    return [_SHARED_LIST_TOOL_ANTHROPIC] if provider == "anthropic" else [_SHARED_LIST_TOOL_OPENAI]
+
+
+async def _execute_shared_list_tool(args: dict) -> str:
+    action = (args.get("action") or "").lower()
+    list_name = (args.get("list_name") or "shopping").lower().strip()[:50]
+    item = (args.get("item") or "").strip()[:200]
+    items = await _db_get_shared_list(list_name)
+    if action == "read":
+        return f"{list_name.title()} list is empty." if not items else f"{list_name.title()}: " + ", ".join(items) + "."
+    if action == "add":
+        if not item:
+            return "No item specified."
+        if item.lower() not in [i.lower() for i in items]:
+            items.append(item)
+            await _db_update_shared_list(list_name, items)
+        return f"Added '{item}' to {list_name}. {len(items)} item(s) now."
+    if action == "remove":
+        if not item:
+            return "No item specified."
+        new = [i for i in items if i.lower() != item.lower()]
+        if len(new) == len(items):
+            return f"'{item}' not found in {list_name}."
+        await _db_update_shared_list(list_name, new)
+        return f"Removed '{item}' from {list_name}."
+    if action == "clear":
+        await _db_update_shared_list(list_name, [])
+        return f"{list_name.title()} list cleared."
+    return f"Unknown action: {action}"
+
+
+# ─── TIMER / REMINDER / NEWS TOOLS ───────────────────────────────────────────
+_TIMER_TOOL_ANTHROPIC = {
+    "name": "manage_timer",
+    "description": "Set, list, or cancel kitchen/task timers.",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "action": {"type": "string", "enum": ["set", "list", "cancel"]},
+            "label": {"type": "string", "description": "Name for the timer, e.g. pasta, laundry"},
+            "duration_seconds": {"type": "integer", "description": "Duration in seconds (required for set)"},
+            "timer_id": {"type": "integer", "description": "Timer ID to cancel (required for cancel)"},
+        },
+        "required": ["action"],
+    },
+}
+
+_TIMER_TOOL_OPENAI = {
+    "type": "function",
+    "function": {
+        "name": "manage_timer",
+        "description": "Set, list, or cancel timers.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "action": {"type": "string", "enum": ["set", "list", "cancel"]},
+                "label": {"type": "string"},
+                "duration_seconds": {"type": "integer"},
+                "timer_id": {"type": "integer"},
+            },
+            "required": ["action"],
+        },
+    },
+}
+
+_REMINDER_TOOL_ANTHROPIC = {
+    "name": "manage_reminder",
+    "description": "Set, list, or cancel reminders. fire_at must be ISO 8601 (use the current date/time from context to calculate it).",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "action": {"type": "string", "enum": ["set", "list", "cancel"]},
+            "text": {"type": "string", "description": "Reminder message"},
+            "fire_at": {"type": "string", "description": "ISO 8601 datetime when to fire"},
+            "recurring_minutes": {"type": "integer", "description": "Repeat interval in minutes (optional)"},
+            "reminder_id": {"type": "integer", "description": "Reminder ID to cancel"},
+        },
+        "required": ["action"],
+    },
+}
+
+_REMINDER_TOOL_OPENAI = {
+    "type": "function",
+    "function": {
+        "name": "manage_reminder",
+        "description": "Set, list, or cancel reminders.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "action": {"type": "string", "enum": ["set", "list", "cancel"]},
+                "text": {"type": "string"},
+                "fire_at": {"type": "string"},
+                "recurring_minutes": {"type": "integer"},
+                "reminder_id": {"type": "integer"},
+            },
+            "required": ["action"],
+        },
+    },
+}
+
+_NEWS_TOOL_ANTHROPIC = {
+    "name": "get_news_headlines",
+    "description": "Fetch the latest news headlines by category.",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "category": {
+                "type": "string",
+                "enum": ["general", "technology", "science", "health", "business", "sports"],
+            },
+            "count": {"type": "integer", "description": "Number of headlines (1–10, default 5)"},
+        },
+        "required": [],
+    },
+}
+
+_NEWS_TOOL_OPENAI = {
+    "type": "function",
+    "function": {
+        "name": "get_news_headlines",
+        "description": "Fetch latest news headlines by category.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "category": {"type": "string", "enum": ["general", "technology", "science", "health", "business", "sports"]},
+                "count": {"type": "integer"},
+            },
+            "required": [],
+        },
+    },
+}
+
+_NEWS_RSS = {
+    "general": "https://feeds.bbci.co.uk/news/rss.xml",
+    "technology": "https://feeds.bbci.co.uk/news/technology/rss.xml",
+    "science": "https://feeds.bbci.co.uk/news/science_and_environment/rss.xml",
+    "health": "https://feeds.bbci.co.uk/news/health/rss.xml",
+    "business": "https://feeds.bbci.co.uk/news/business/rss.xml",
+    "sports": "https://feeds.bbci.co.uk/news/sport/rss.xml",
+}
+
+
+def _get_parity_tools(provider: str) -> list:
+    if provider == "anthropic":
+        return [_TIMER_TOOL_ANTHROPIC, _REMINDER_TOOL_ANTHROPIC, _NEWS_TOOL_ANTHROPIC]
+    return [_TIMER_TOOL_OPENAI, _REMINDER_TOOL_OPENAI, _NEWS_TOOL_OPENAI]
+
+
+def _duration_str(seconds: int) -> str:
+    h, rem = divmod(seconds, 3600)
+    m, s = divmod(rem, 60)
+    parts = []
+    if h:
+        parts.append(f"{h}h")
+    if m:
+        parts.append(f"{m}m")
+    if s or not parts:
+        parts.append(f"{s}s")
+    return " ".join(parts)
+
+
+async def _execute_timer_tool(user_id: str, args: dict) -> str:
+    action = (args.get("action") or "").lower()
+    if action == "set":
+        label = (args.get("label") or "Timer").strip()[:100]
+        duration = int(args.get("duration_seconds") or 0)
+        if duration <= 0:
+            return "Please specify a duration greater than zero."
+        tid = await _db_set_timer(user_id, label, duration)
+        return f"Timer '{label}' set for {_duration_str(duration)}. ID: {tid}."
+    if action == "list":
+        timers = await _db_list_timers(user_id)
+        if not timers:
+            return "No active timers."
+        lines = []
+        for t in timers:
+            remaining = int((t["fire_at"].replace(tzinfo=None) - datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)).total_seconds())
+            lines.append(f"[{t['id']}] {t['label']} — {_duration_str(max(remaining, 0))} remaining")
+        return "\n".join(lines)
+    if action == "cancel":
+        tid = args.get("timer_id")
+        if not tid:
+            return "Specify a timer ID to cancel."
+        ok = await _db_cancel_timer(user_id, int(tid))
+        return "Timer cancelled." if ok else "Timer not found or already fired."
+    return f"Unknown action: {action}"
+
+
+async def _execute_reminder_tool(user_id: str, args: dict) -> str:
+    action = (args.get("action") or "").lower()
+    if action == "set":
+        text = (args.get("text") or "").strip()
+        fire_at_str = (args.get("fire_at") or "").strip()
+        if not text or not fire_at_str:
+            return "Specify both reminder text and fire_at datetime."
+        try:
+            fire_at = datetime.datetime.fromisoformat(fire_at_str.replace("Z", "+00:00"))
+        except ValueError:
+            return f"Invalid datetime: {fire_at_str}. Use ISO 8601."
+        recurring = args.get("recurring_minutes")
+        rid = await _db_set_reminder(user_id, text, fire_at, recurring)
+        recur = f", repeating every {recurring} min" if recurring else ""
+        return f"Reminder set: '{text}' at {fire_at.strftime('%I:%M %p on %b %d')}{recur}. ID: {rid}."
+    if action == "list":
+        reminders = await _db_list_reminders(user_id)
+        if not reminders:
+            return "No upcoming reminders."
+        return "\n".join(
+            f"[{r['id']}] {r['text']} — {r['fire_at'].strftime('%I:%M %p, %b %d')}" + (f" (every {r['recurring_minutes']}m)" if r["recurring_minutes"] else "") for r in reminders
+        )
+    if action == "cancel":
+        rid = args.get("reminder_id")
+        if not rid:
+            return "Specify a reminder ID to cancel."
+        ok = await _db_cancel_reminder(user_id, int(rid))
+        return "Reminder cancelled." if ok else "Reminder not found."
+    return f"Unknown action: {action}"
+
+
+async def _execute_news_tool(args: dict) -> str:
+    import xml.etree.ElementTree as ET
+
+    category = (args.get("category") or "general").lower()
+    count = min(max(int(args.get("count") or 5), 1), 10)
+    url = _NEWS_RSS.get(category, _NEWS_RSS["general"])
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(url, timeout=10, follow_redirects=True)
+            resp.raise_for_status()
+        root = ET.fromstring(resp.text)
+        headlines = [item.findtext("title", "").strip() for item in root.findall(".//item")[:count]]
+        headlines = [h for h in headlines if h]
+        if not headlines:
+            return "No headlines available right now."
+        return f"Top {category} news:\n" + "\n".join(f"• {h}" for h in headlines)
+    except Exception as e:
+        return f"Could not fetch news: {e}"
+
+
+# ─── PHASE 5: ROUTINES & DEVICE ALERTS ───────────────────────────────────────
+MQTT_BROKER = os.environ.get("MQTT_BROKER", "")
+MQTT_PORT = int(os.environ.get("MQTT_PORT", "1883"))
+MQTT_USER = os.environ.get("MQTT_USER", "")
+MQTT_PASSWORD = os.environ.get("MQTT_PASSWORD", "")
+Z2M_BASE_TOPIC = os.environ.get("Z2M_BASE_TOPIC", "zigbee2mqtt")
+
+_ROUTINE_TOOL_ANTHROPIC = {
+    "name": "manage_routine",
+    "description": (
+        "Create, list, delete, or run named routines. A routine is a sequence of steps "
+        "(ha_service, speak, delay) triggered by voice phrases. "
+        "Steps: ha_service={domain,service,entity_id?,service_data?}, speak={text}, delay={seconds}."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "action": {"type": "string", "enum": ["create", "list", "delete", "run"]},
+            "name": {"type": "string", "description": "Routine name"},
+            "trigger_phrases": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Voice phrases that trigger this routine",
+            },
+            "steps": {
+                "type": "array",
+                "description": "Ordered steps to execute",
+                "items": {"type": "object"},
+            },
+            "routine_id": {"type": "integer", "description": "ID to delete"},
+        },
+        "required": ["action"],
+    },
+}
+
+_ROUTINE_TOOL_OPENAI = {
+    "type": "function",
+    "function": {
+        "name": "manage_routine",
+        "description": "Create, list, delete, or run named routines (ha_service/speak/delay steps).",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "action": {"type": "string", "enum": ["create", "list", "delete", "run"]},
+                "name": {"type": "string"},
+                "trigger_phrases": {"type": "array", "items": {"type": "string"}},
+                "steps": {"type": "array", "items": {"type": "object"}},
+                "routine_id": {"type": "integer"},
+            },
+            "required": ["action"],
+        },
+    },
+}
+
+_DEVICE_ALERT_TOOL_ANTHROPIC = {
+    "name": "manage_device_alert",
+    "description": ("Create, list, or delete proactive device alert rules. When an HA entity's state matches the condition, Jarvis speaks the alert message."),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "action": {"type": "string", "enum": ["create", "list", "delete"]},
+            "name": {"type": "string", "description": "Human-readable alert name"},
+            "entity_id": {"type": "string", "description": "HA entity to monitor, e.g. sensor.front_door"},
+            "condition": {
+                "type": "string",
+                "enum": ["equals", "not_equals", "greater_than", "less_than"],
+                "description": "Comparison operator",
+            },
+            "value": {"type": "string", "description": "Target state value to compare against"},
+            "message": {"type": "string", "description": "What Jarvis should say when the alert fires"},
+            "cooldown_minutes": {"type": "integer", "description": "Minutes before re-alerting (default 30)"},
+            "alert_id": {"type": "integer", "description": "Alert ID to delete"},
+        },
+        "required": ["action"],
+    },
+}
+
+_DEVICE_ALERT_TOOL_OPENAI = {
+    "type": "function",
+    "function": {
+        "name": "manage_device_alert",
+        "description": "Create, list, or delete proactive HA device alert rules.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "action": {"type": "string", "enum": ["create", "list", "delete"]},
+                "name": {"type": "string"},
+                "entity_id": {"type": "string"},
+                "condition": {"type": "string", "enum": ["equals", "not_equals", "greater_than", "less_than"]},
+                "value": {"type": "string"},
+                "message": {"type": "string"},
+                "cooldown_minutes": {"type": "integer"},
+                "alert_id": {"type": "integer"},
+            },
+            "required": ["action"],
+        },
+    },
+}
+
+_ZIGBEE_TOOL_ANTHROPIC = {
+    "name": "zigbee_control",
+    "description": ("Send a command to a Zigbee device via Zigbee2MQTT. Use for devices not in Home Assistant. Payload is merged into the set topic."),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "device": {"type": "string", "description": "Zigbee2MQTT device friendly name"},
+            "payload": {"type": "object", "description": 'Command payload, e.g. {"state": "ON", "brightness": 128}'},
+        },
+        "required": ["device", "payload"],
+    },
+}
+
+_ZIGBEE_TOOL_OPENAI = {
+    "type": "function",
+    "function": {
+        "name": "zigbee_control",
+        "description": "Send a command to a Zigbee device via Zigbee2MQTT.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "device": {"type": "string"},
+                "payload": {"type": "object"},
+            },
+            "required": ["device", "payload"],
+        },
+    },
+}
+
+
+def _get_phase5_tools(config: dict, provider: str) -> list:
+    tools = []
+    if _ha_configured(config):
+        if provider == "anthropic":
+            tools += [_ROUTINE_TOOL_ANTHROPIC, _DEVICE_ALERT_TOOL_ANTHROPIC]
+        else:
+            tools += [_ROUTINE_TOOL_OPENAI, _DEVICE_ALERT_TOOL_OPENAI]
+    if MQTT_BROKER:
+        tools.append(_ZIGBEE_TOOL_ANTHROPIC if provider == "anthropic" else _ZIGBEE_TOOL_OPENAI)
+    return tools
+
+
+async def _run_routine(user_id: str, config: dict, steps: list) -> None:
+    sids = _sids_for_user(user_id)
+    for i, step in enumerate(steps):
+        step_type = (step.get("type") or "").lower()
+        try:
+            if step_type == "ha_service" and _ha_configured(config):
+                await _ha_call_service(
+                    config,
+                    step.get("domain", ""),
+                    step.get("service", ""),
+                    step.get("entity_id"),
+                    step.get("service_data"),
+                )
+            elif step_type == "speak":
+                text = (step.get("text") or "").strip()
+                if text:
+                    for sid in sids:
+                        await sio.emit("speak_sentence", {"text": text, "seq": i}, to=sid)
+            elif step_type == "delay":
+                secs = float(step.get("seconds") or 0)
+                if secs > 0:
+                    await asyncio.sleep(min(secs, 300))
+        except Exception as e:
+            print(f"[ROUTINE] Step {i} ({step_type}) error: {e}", flush=True)
+
+
+async def _execute_routine_tool(user_id: str, args: dict, config: dict) -> str:
+    action = (args.get("action") or "").lower()
+    if action == "create":
+        name = (args.get("name") or "").strip()
+        if not name:
+            return "Specify a routine name."
+        phrases = args.get("trigger_phrases") or []
+        steps = args.get("steps") or []
+        if not steps:
+            return "Specify at least one step."
+        rid = await _db_create_routine(user_id, name, phrases, steps)
+        phrase_str = ", ".join(f'"{p}"' for p in phrases[:3]) if phrases else "none"
+        return f"Routine '{name}' created with {len(steps)} step(s). Trigger phrases: {phrase_str}. ID: {rid}."
+    if action == "list":
+        routines = await _db_list_routines(user_id)
+        if not routines:
+            return "No routines configured."
+        return "\n".join(
+            f"[{r['id']}] {r['name']} ({'active' if r['active'] else 'disabled'}) — {len(r['steps'])} steps, phrases: {', '.join(r['trigger_phrases']) or 'none'}" for r in routines
+        )
+    if action == "delete":
+        rid = args.get("routine_id")
+        if not rid:
+            return "Specify a routine_id to delete."
+        ok = await _db_delete_routine(user_id, int(rid))
+        return "Routine deleted." if ok else "Routine not found."
+    if action == "run":
+        name = (args.get("name") or "").strip()
+        routines = await _db_list_routines(user_id)
+        routine = next((r for r in routines if r["name"].lower() == name.lower()), None)
+        if not routine:
+            return f"No routine named '{name}'."
+        asyncio.create_task(_run_routine(user_id, config, routine["steps"]))
+        return f"Running routine '{name}'."
+    return f"Unknown action: {action}"
+
+
+async def _execute_device_alert_tool(user_id: str, args: dict) -> str:
+    action = (args.get("action") or "").lower()
+    if action == "create":
+        name = (args.get("name") or "").strip()
+        entity_id = (args.get("entity_id") or "").strip()
+        condition = (args.get("condition") or "equals").strip()
+        value = str(args.get("value") or "").strip()
+        message = (args.get("message") or "").strip()
+        cooldown = int(args.get("cooldown_minutes") or 30)
+        if not all([name, entity_id, message]):
+            return "Specify name, entity_id, and message."
+        aid = await _db_create_device_alert(user_id, name, entity_id, condition, value, message, cooldown)
+        return f"Alert '{name}' created (ID: {aid}). Will notify when {entity_id} {condition} '{value}'."
+    if action == "list":
+        alerts = await _db_list_device_alerts(user_id)
+        if not alerts:
+            return "No alert rules configured."
+        return "\n".join(
+            f"[{a['id']}] {a['name']} — {a['entity_id']} {a['condition']} '{a['value']}' ({'active' if a['active'] else 'disabled'}, cooldown {a['cooldown_minutes']}m)"
+            for a in alerts
+        )
+    if action == "delete":
+        aid = args.get("alert_id")
+        if not aid:
+            return "Specify an alert_id to delete."
+        ok = await _db_delete_device_alert(user_id, int(aid))
+        return "Alert deleted." if ok else "Alert not found."
+    return f"Unknown action: {action}"
+
+
+async def _execute_zigbee_tool(args: dict) -> str:
+    if not MQTT_BROKER:
+        return "MQTT broker not configured."
+    device = (args.get("device") or "").strip()
+    payload = args.get("payload") or {}
+    if not device:
+        return "Specify a device name."
+    try:
+        import aiomqtt
+
+        topic = f"{Z2M_BASE_TOPIC}/{device}/set"
+        async with aiomqtt.Client(
+            hostname=MQTT_BROKER,
+            port=MQTT_PORT,
+            username=MQTT_USER or None,
+            password=MQTT_PASSWORD or None,
+        ) as client:
+            await client.publish(topic, json.dumps(payload))
+        return f"Command sent to {device}: {payload}"
+    except ImportError:
+        return "aiomqtt not installed — Zigbee control unavailable."
+    except Exception as e:
+        return f"MQTT error: {e}"
+
+
+def _evaluate_alert_condition(state: str, condition: str, value: str) -> bool:
+    if condition == "equals":
+        return state.lower() == value.lower()
+    if condition == "not_equals":
+        return state.lower() != value.lower()
+    try:
+        sn, vn = float(state), float(value)
+        if condition == "greater_than":
+            return sn > vn
+        if condition == "less_than":
+            return sn < vn
+    except (ValueError, TypeError):
+        pass
+    return False
+
+
+async def _device_alert_loop():
+    while True:
+        await asyncio.sleep(120)
+        if not _db_pool:
+            continue
+        try:
+            alerts = await _db_get_active_device_alerts()
+            if not alerts:
+                continue
+            now_utc = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
+            for alert in alerts:
+                uid = alert["user_id"]
+                state = _user_states.get(uid)
+                if not state or not _ha_configured(state["config"]):
+                    continue
+                last_fired = alert.get("last_fired")
+                if last_fired:
+                    elapsed = now_utc - last_fired.replace(tzinfo=None)
+                    if elapsed < datetime.timedelta(minutes=alert["cooldown_minutes"]):
+                        continue
+                entity_state = await _ha_get_entity_state(state["config"], alert["entity_id"])
+                if entity_state is None:
+                    continue
+                if _evaluate_alert_condition(entity_state, alert["condition"], alert["value"]):
+                    await _db_update_alert_last_fired(alert["id"])
+                    speak = alert["message"]
+                    for sid in _sids_for_user(uid):
+                        await sio.emit(
+                            "device_alert",
+                            {"name": alert["name"], "message": speak, "speak": speak},
+                            to=sid,
+                        )
+        except Exception as e:
+            print(f"[ALERT] {e}", flush=True)
+
+
 # ─── CONFIG VALIDATION ────────────────────────────────────────────────────────
 def _openai_create_sync(client, model, messages, stream, max_out=500):
     last = None
@@ -1815,10 +2778,14 @@ async def lifespan(application: FastAPI):
     t1 = asyncio.create_task(_telemetry_loop())
     t2 = asyncio.create_task(_weather_loop())
     t3 = asyncio.create_task(_meeting_cleanup_loop())
+    t4 = asyncio.create_task(_timer_reminder_loop())
+    t5 = asyncio.create_task(_device_alert_loop())
     yield
     t1.cancel()
     t2.cancel()
     t3.cancel()
+    t4.cancel()
+    t5.cancel()
     if _db_pool:
         await _db_pool.close()
 
@@ -1976,7 +2943,19 @@ async def api_transcribe(request: Request, audio: UploadFile = File(...)):
 
         async with _whisper_lock:
             text = await asyncio.to_thread(_run)
-        return {"text": text}
+
+        speaker_id, speaker_name, speaker_kid_safe = None, None, False
+        if _VOICE_ID_OK and _voice_cache:
+            embedding = await asyncio.to_thread(_extract_voice_embedding, tmp)
+            if embedding:
+                speaker_id, speaker_name, speaker_kid_safe = _identify_speaker_from_embedding(embedding)
+
+        return {
+            "text": text,
+            "speaker_id": speaker_id,
+            "speaker_name": speaker_name,
+            "speaker_kid_safe": speaker_kid_safe,
+        }
     except Exception as e:
         print(f"[STT] {e}", flush=True)
         return {"text": ""}
@@ -2302,6 +3281,127 @@ async def api_doorbell_event(request: Request):
             )
 
     return {"ok": True}
+
+
+@fast_app.post("/api/wake")
+async def api_wake(request: Request):
+    auth = request.headers.get("Authorization", "")
+    if not auth.startswith("Bearer "):
+        raise HTTPException(401)
+    token = auth[7:].strip()
+    user_id = await _db_find_user_by_token(token)
+    if not user_id:
+        raise HTTPException(401)
+
+    data = await request.json()
+    device_id = (data.get("device_id") or "unknown").strip()[:100]
+
+    now = __import__("time").time()
+    if now - _last_wake_time.get(user_id, 0) < _WAKE_DEDUP_WINDOW:
+        return {"status": "ignored"}
+    _last_wake_time[user_id] = now
+
+    for sid in _sids_for_user(user_id):
+        await sio.emit("wake_trigger", {"device_id": device_id}, to=sid)
+
+    return {"status": "ok"}
+
+
+@fast_app.post("/api/voice/enroll-sample")
+async def api_voice_enroll_sample(request: Request, audio: UploadFile = File(...)):
+    """Extract a voice embedding from an uploaded audio sample. Returns embedding (not saved)."""
+    if not _get_current_user(request):
+        raise HTTPException(401)
+    if not _VOICE_ID_OK:
+        return {"ok": False, "error": "Voice ID unavailable — install librosa on the server."}
+    data = await audio.read()
+    tmp = None
+    try:
+        with tempfile.NamedTemporaryFile(suffix=".webm", delete=False) as f:
+            f.write(data)
+            tmp = f.name
+        embedding = await asyncio.to_thread(_extract_voice_embedding, tmp)
+        if embedding is None:
+            return {"ok": False, "error": "Could not extract embedding."}
+        return {"ok": True, "embedding": embedding}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+    finally:
+        if tmp:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+
+
+@fast_app.post("/api/voice/enroll-finish")
+async def api_voice_enroll_finish(request: Request):
+    """Average provided embeddings and save as the user's voiceprint."""
+    user_id = _get_current_user(request)
+    if not user_id:
+        raise HTTPException(401)
+    if not _VOICE_ID_OK:
+        raise HTTPException(400, "Voice ID unavailable.")
+    data = await request.json()
+    embeddings = data.get("embeddings", [])
+    if not embeddings or len(embeddings) < 2:
+        raise HTTPException(400, "At least 2 samples required.")
+    import numpy as _np2
+
+    avg = _np2.mean([_np2.array(e) for e in embeddings], axis=0).tolist()
+    await _db_save_voice_embedding(user_id, avg)
+    await _refresh_voice_cache()
+    return {"ok": True}
+
+
+@fast_app.delete("/api/voice/enrollment")
+async def api_voice_enrollment_delete(request: Request):
+    user_id = _get_current_user(request)
+    if not user_id:
+        raise HTTPException(401)
+    await _db_clear_voice_embedding(user_id)
+    await _refresh_voice_cache()
+    return {"ok": True}
+
+
+@fast_app.patch("/api/user/profile")
+async def api_user_profile(request: Request):
+    user_id = _get_current_user(request)
+    if not user_id:
+        raise HTTPException(401)
+    data = await request.json()
+    if "display_name" in data:
+        name = str(data["display_name"]).strip()[:100]
+        await _db_set_display_name(user_id, name)
+        if user_id in _user_states:
+            _user_states[user_id]["config"]["display_name"] = name
+        await _refresh_voice_cache()
+    if "is_kid_safe" in data:
+        value = bool(data["is_kid_safe"])
+        await _db_set_kid_safe(user_id, value)
+        if user_id in _user_states:
+            _user_states[user_id]["config"]["is_kid_safe"] = value
+        await _refresh_voice_cache()
+    return {"ok": True}
+
+
+@fast_app.get("/api/household/members")
+async def api_household_members(request: Request):
+    user_id = _get_current_user(request)
+    if not user_id:
+        raise HTTPException(401)
+    state = await _get_user_state(user_id)
+    if state.get("role") != "admin":
+        raise HTTPException(403)
+    members = await _db_get_household_members()
+    return {"members": members}
+
+
+@fast_app.get("/api/shared-lists")
+async def api_shared_lists(request: Request):
+    if not _get_current_user(request):
+        raise HTTPException(401)
+    return {"lists": await _db_get_all_shared_lists()}
 
 
 @fast_app.get("/api/doorbell/token")
@@ -2682,8 +3782,24 @@ async def api_messages(request: Request):
 
 
 # ─── LLM STREAMING ───────────────────────────────────────────────────────────
-def _build_system_prompt(config: dict) -> str:
+def _build_system_prompt(config: dict, speaker_name: str | None = None, is_kid_safe: bool = False) -> str:
     system = JARVIS_SYSTEM
+    now = datetime.datetime.now()
+    system += f"\n\nCURRENT DATE AND TIME: {now.strftime('%A, %B %d, %Y, %I:%M %p')}."
+    system += (
+        "\n\nTIMERS & REMINDERS — use manage_timer to set/list/cancel timers by duration. "
+        "Use manage_reminder to set/list/cancel reminders at a specific datetime (ISO 8601). "
+        "Calculate fire_at from the current date/time above."
+    )
+    system += "\n\nNEWS — use get_news_headlines to fetch the latest headlines by category (general, technology, science, health, business, sports)."
+    if speaker_name and speaker_name != "guest":
+        system += f"\n\nYou are currently speaking with {speaker_name}. Address them by name when it feels natural."
+    if is_kid_safe:
+        system += (
+            "\n\nKID-SAFE MODE — You are speaking with a child. Keep all responses age-appropriate, "
+            "use simple and encouraging language, and avoid adult topics, violence, or anything "
+            "inappropriate for children under 13."
+        )
     ctx = _location_context
     if ctx:
         parts = []
@@ -2735,6 +3851,23 @@ def _build_system_prompt(config: dict) -> str:
             "apple_music_next/apple_music_previous to skip tracks, apple_music_volume to adjust volume (0–100), "
             "and apple_music_search_and_play to find and play a specific song, artist, album, or playlist."
         )
+    system += (
+        "\n\nSHARED HOUSEHOLD LISTS — use manage_shared_list to add, remove, read, or clear items on "
+        "shared lists (shopping, todo, or any custom name). All household members share the same lists."
+    )
+    if _ha_configured(config):
+        system += (
+            "\n\nROUTINES — use manage_routine to create, list, delete, or run named automations. "
+            "A routine is a sequence of steps: ha_service (call HA), speak (say something), or delay (wait N seconds). "
+            "Trigger phrases let users run routines by voice. "
+            "\n\nDEVICE ALERTS — use manage_device_alert to create proactive alerts. "
+            "When an HA entity's state matches a condition, Jarvis speaks the alert message. "
+            "Useful for: garage left open, temperature thresholds, door/window sensors."
+        )
+    if MQTT_BROKER:
+        system += (
+            '\n\nZIGBEE — use zigbee_control to send commands directly to Zigbee devices via MQTT. Payload examples: {"state": "ON"}, {"brightness": 128}, {"color_temp": 300}.'
+        )
     return system
 
 
@@ -2779,13 +3912,20 @@ async def _stream_reply(state: dict, on_text):
     config = state["config"]
     client = state["client"]
     model = config.get("model") or DEFAULT_MODELS.get(provider, "")
-    system = _build_system_prompt(config)
+    system = _build_system_prompt(
+        config,
+        speaker_name=state.get("_speaker_name"),
+        is_kid_safe=state.get("_speaker_kid_safe", False),
+    )
     ha_tools = (
         _get_ha_tools(config, provider)
         + _get_myq_tools(config, provider)
         + _get_tesla_tools(config, provider)
         + _get_spotify_tools(config, provider)
         + _get_apple_music_tools(config, provider)
+        + _get_shared_list_tools(provider)
+        + _get_parity_tools(provider)
+        + _get_phase5_tools(config, provider)
     )
     local_msgs = list(state["conversation"])
 
@@ -2816,7 +3956,23 @@ async def _stream_reply(state: dict, on_text):
             results = []
             for block in final.content:
                 if block.type == "tool_use":
-                    result = await _execute_ha_tool(config, block.name, dict(block.input), state.get("user_id", ""))
+                    uid = state.get("user_id", "")
+                    if block.name == "manage_shared_list":
+                        result = await _execute_shared_list_tool(dict(block.input))
+                    elif block.name == "manage_timer":
+                        result = await _execute_timer_tool(uid, dict(block.input))
+                    elif block.name == "manage_reminder":
+                        result = await _execute_reminder_tool(uid, dict(block.input))
+                    elif block.name == "get_news_headlines":
+                        result = await _execute_news_tool(dict(block.input))
+                    elif block.name == "manage_routine":
+                        result = await _execute_routine_tool(uid, dict(block.input), config)
+                    elif block.name == "manage_device_alert":
+                        result = await _execute_device_alert_tool(uid, dict(block.input))
+                    elif block.name == "zigbee_control":
+                        result = await _execute_zigbee_tool(dict(block.input))
+                    else:
+                        result = await _execute_ha_tool(config, block.name, dict(block.input), uid)
                     results.append(
                         {
                             "type": "tool_result",
@@ -2866,7 +4022,23 @@ async def _stream_reply(state: dict, on_text):
             tool_msgs = []
             for acc in tool_calls_acc.values():
                 args = json.loads(acc["args"] or "{}")
-                result = await _execute_ha_tool(config, acc["name"], args, state.get("user_id", ""))
+                uid = state.get("user_id", "")
+                if acc["name"] == "manage_shared_list":
+                    result = await _execute_shared_list_tool(args)
+                elif acc["name"] == "manage_timer":
+                    result = await _execute_timer_tool(uid, args)
+                elif acc["name"] == "manage_reminder":
+                    result = await _execute_reminder_tool(uid, args)
+                elif acc["name"] == "get_news_headlines":
+                    result = await _execute_news_tool(args)
+                elif acc["name"] == "manage_routine":
+                    result = await _execute_routine_tool(uid, args, config)
+                elif acc["name"] == "manage_device_alert":
+                    result = await _execute_device_alert_tool(uid, args)
+                elif acc["name"] == "zigbee_control":
+                    result = await _execute_zigbee_tool(args)
+                else:
+                    result = await _execute_ha_tool(config, acc["name"], args, uid)
                 tc_list.append(
                     {
                         "id": acc["id"],
@@ -2881,12 +4053,14 @@ async def _stream_reply(state: dict, on_text):
     return full
 
 
-async def _process_message(sid: str, text: str):
+async def _process_message(sid: str, text: str, speaker_name: str | None = None, speaker_kid_safe: bool = False):
     user_id = _sid_to_user.get(sid)
     if not user_id:
         return
 
     state = await _get_user_state(user_id)
+    state["_speaker_name"] = speaker_name
+    state["_speaker_kid_safe"] = speaker_kid_safe
 
     if not _user_configured(state):
         await sio.emit("need_setup", {}, to=sid)
@@ -3001,7 +4175,16 @@ async def on_user_message(sid, data):
         await sio.emit("response_done", {"text": msg}, to=sid)
         await sio.emit("status", {"state": "idle"}, to=sid)
         return
-    asyncio.create_task(_process_message(sid, text))
+    speaker_name: str | None = None
+    speaker_kid_safe = False
+    speaker_id = (data or {}).get("speaker_id", "")
+    if speaker_id and speaker_id != "guest" and _voice_cache:
+        entry = _voice_cache.get(speaker_id)
+        if entry:
+            _, speaker_name, speaker_kid_safe = entry
+    elif speaker_id == "guest":
+        speaker_name = "guest"
+    asyncio.create_task(_process_message(sid, text, speaker_name=speaker_name, speaker_kid_safe=speaker_kid_safe))
 
 
 @sio.on("start_meeting")
@@ -3346,6 +4529,27 @@ async def _weather_loop():
         except Exception:
             pass
         await asyncio.sleep(600)
+
+
+async def _timer_reminder_loop():
+    while True:
+        await asyncio.sleep(30)
+        if not _db_pool:
+            continue
+        try:
+            fired_timers = await _db_fire_due_timers()
+            for t in fired_timers:
+                speak = f"Your {t['label']} timer is done, sir."
+                for sid in _sids_for_user(t["user_id"]):
+                    await sio.emit("timer_fired", {"label": t["label"], "speak": speak}, to=sid)
+
+            fired_reminders = await _db_fire_due_reminders()
+            for r in fired_reminders:
+                speak = f"Reminder, sir: {r['text']}."
+                for sid in _sids_for_user(r["user_id"]):
+                    await sio.emit("reminder_fired", {"text": r["text"], "speak": speak}, to=sid)
+        except Exception as e:
+            print(f"[TIMER] {e}", flush=True)
 
 
 async def _meeting_cleanup_loop():

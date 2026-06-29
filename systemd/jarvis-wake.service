@@ -1,0 +1,23 @@
+[Unit]
+Description=Jarvis Wake Word Daemon
+After=network.target sound.target
+Wants=sound.target
+
+[Service]
+Type=simple
+User=%i
+EnvironmentFile=/etc/jarvis-wake.env
+ExecStart=/usr/local/bin/jarvis-wake
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=jarvis-wake
+
+# Keep CPU usage low — this runs 24/7
+CPUSchedulingPolicy=idle
+IOSchedulingClass=idle
+Nice=10
+
+[Install]
+WantedBy=multi-user.target
