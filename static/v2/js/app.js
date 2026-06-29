@@ -724,7 +724,8 @@
       calendarStatusText.textContent = configured
         ? "CALENDAR CONNECTED"
         : "CALENDAR NOT CONNECTED";
-    if (calendarUrlInput && typeof url === "string") calendarUrlInput.value = url;
+    if (calendarUrlInput && typeof url === "string")
+      calendarUrlInput.value = url;
     if (calendarUsernameInput && typeof username === "string")
       calendarUsernameInput.value = username;
     refreshAgendaButton();
@@ -737,7 +738,8 @@
       contactsStatusText.textContent = configured
         ? "CONTACTS CONNECTED"
         : "CONTACTS NOT CONNECTED";
-    if (contactsUrlInput && typeof url === "string") contactsUrlInput.value = url;
+    if (contactsUrlInput && typeof url === "string")
+      contactsUrlInput.value = url;
     if (contactsUsernameInput && typeof username === "string")
       contactsUsernameInput.value = username;
     refreshAgendaButton();
@@ -783,7 +785,10 @@
         !contacts_username &&
         !!contactsPasswordInput.dataset.hasExisting;
 
-      if ((calendar_url && !calendar_username) || (!calendar_url && calendar_username)) {
+      if (
+        (calendar_url && !calendar_username) ||
+        (!calendar_url && calendar_username)
+      ) {
         pimMsg.className = "err";
         pimMsg.textContent = "Calendar needs both a URL and username.";
         return;
@@ -797,7 +802,10 @@
         pimMsg.textContent = "Please provide the CalDAV password.";
         return;
       }
-      if ((contacts_url && !contacts_username) || (!contacts_url && contacts_username)) {
+      if (
+        (contacts_url && !contacts_username) ||
+        (!contacts_url && contacts_username)
+      ) {
         pimMsg.className = "err";
         pimMsg.textContent = "Contacts needs both a URL and username.";
         return;
