@@ -28,7 +28,7 @@ from personality import JARVIS_SYSTEM
 try:
     import jwt
 except ImportError:
-    jwt = None  # type: ignore[assignment]
+    jwt = None  # type: ignore
 
 try:
     import librosa as _librosa
