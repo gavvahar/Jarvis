@@ -10,7 +10,8 @@ Three providers:
   • openai_compatible — any OpenAI-compatible endpoint (Ollama, OpenRouter, …)
 """
 
-import json, os, re, asyncio, secrets, tempfile, urllib.parse, asyncpg, httpx, datetime, hashlib, base64, pathlib, jwt
+import json, os, re, asyncio, secrets, tempfile, urllib.parse, asyncpg, httpx, datetime, hashlib, base64, pathlib, uuid
+import xml.etree.ElementTree as ET
 
 
 from contextlib import asynccontextmanager
@@ -23,6 +24,11 @@ import socketio
 from dotenv import load_dotenv
 
 from personality import JARVIS_SYSTEM
+
+try:
+    import jwt
+except ImportError:
+    jwt = None  # type: ignore
 
 try:
     import librosa as _librosa
@@ -99,6 +105,12 @@ ALTER TABLE user_configs ADD COLUMN IF NOT EXISTS spotify_access_token TEXT NOT 
 ALTER TABLE user_configs ADD COLUMN IF NOT EXISTS spotify_token_expiry DOUBLE PRECISION NOT NULL DEFAULT 0;
 ALTER TABLE user_configs ADD COLUMN IF NOT EXISTS apple_music_user_token TEXT NOT NULL DEFAULT '';
 ALTER TABLE user_configs ADD COLUMN IF NOT EXISTS apple_music_storefront TEXT NOT NULL DEFAULT 'us';
+ALTER TABLE user_configs ADD COLUMN IF NOT EXISTS calendar_url TEXT NOT NULL DEFAULT '';
+ALTER TABLE user_configs ADD COLUMN IF NOT EXISTS calendar_username TEXT NOT NULL DEFAULT '';
+ALTER TABLE user_configs ADD COLUMN IF NOT EXISTS calendar_password TEXT NOT NULL DEFAULT '';
+ALTER TABLE user_configs ADD COLUMN IF NOT EXISTS contacts_url TEXT NOT NULL DEFAULT '';
+ALTER TABLE user_configs ADD COLUMN IF NOT EXISTS contacts_username TEXT NOT NULL DEFAULT '';
+ALTER TABLE user_configs ADD COLUMN IF NOT EXISTS contacts_password TEXT NOT NULL DEFAULT '';
 ALTER TABLE user_configs ADD COLUMN IF NOT EXISTS display_name TEXT NOT NULL DEFAULT '';
 ALTER TABLE user_configs ADD COLUMN IF NOT EXISTS voice_embedding JSONB;
 ALTER TABLE user_configs ADD COLUMN IF NOT EXISTS is_kid_safe BOOLEAN NOT NULL DEFAULT FALSE;
@@ -236,7 +248,7 @@ async def _db_ensure_user(user_id: str, email: str, role: str):
 async def _db_load_config(user_id: str) -> dict:
     async with _pool().acquire() as conn:
         row = await conn.fetchrow(
-            "SELECT role, provider, api_key, model, base_url, ha_url, ha_token, myq_email, myq_password, tesla_method, tesla_refresh_token, tesla_fleet_refresh_token, spotify_refresh_token, spotify_access_token, spotify_token_expiry, display_name, voice_embedding, is_kid_safe FROM user_configs WHERE user_id = $1",
+            "SELECT role, provider, api_key, model, base_url, ha_url, ha_token, myq_email, myq_password, tesla_method, tesla_refresh_token, tesla_fleet_refresh_token, spotify_refresh_token, spotify_access_token, spotify_token_expiry, apple_music_user_token, apple_music_storefront, calendar_url, calendar_username, calendar_password, contacts_url, contacts_username, contacts_password, display_name, voice_embedding, is_kid_safe FROM user_configs WHERE user_id = $1",
             user_id,
         )
     if row is None:
@@ -256,6 +268,14 @@ async def _db_load_config(user_id: str) -> dict:
             "spotify_refresh_token": "",
             "spotify_access_token": "",
             "spotify_token_expiry": 0.0,
+            "apple_music_user_token": "",
+            "apple_music_storefront": "us",
+            "calendar_url": "",
+            "calendar_username": "",
+            "calendar_password": "",
+            "contacts_url": "",
+            "contacts_username": "",
+            "contacts_password": "",
             "display_name": "",
             "voice_embedding": None,
             "is_kid_safe": False,
@@ -404,6 +424,38 @@ async def _db_set_kid_safe(user_id: str, value: bool) -> None:
 async def _db_set_display_name(user_id: str, name: str) -> None:
     async with _pool().acquire() as conn:
         await conn.execute("UPDATE user_configs SET display_name = $2 WHERE user_id = $1", user_id, name)
+
+
+async def _db_save_pim_config(
+    user_id: str,
+    calendar_url: str,
+    calendar_username: str,
+    calendar_password: str,
+    contacts_url: str,
+    contacts_username: str,
+    contacts_password: str,
+) -> None:
+    async with _pool().acquire() as conn:
+        await conn.execute(
+            "INSERT INTO user_configs (user_id, email, role) VALUES ($1, '', 'user') ON CONFLICT (user_id) DO NOTHING",
+            user_id,
+        )
+        await conn.execute(
+            """
+            UPDATE user_configs
+            SET calendar_url=$2, calendar_username=$3, calendar_password=$4,
+                contacts_url=$5, contacts_username=$6, contacts_password=$7,
+                updated_at=NOW()
+            WHERE user_id=$1
+            """,
+            user_id,
+            calendar_url,
+            calendar_username,
+            calendar_password,
+            contacts_url,
+            contacts_username,
+            contacts_password,
+        )
 
 
 async def _db_get_shared_list(name: str) -> list:
@@ -1939,6 +1991,8 @@ def _apple_music_configured(config: dict) -> bool:
 
 
 def _apple_music_dev_token() -> str:
+    if jwt is None:
+        raise RuntimeError("PyJWT is required for Apple Music support. Install dependencies from requirements.txt.")
     now = int(datetime.datetime.now().timestamp())
     return jwt.encode(
         {"iss": APPLE_MUSIC_TEAM_ID, "iat": now, "exp": now + 15777000},
@@ -2133,6 +2187,642 @@ async def _execute_shared_list_tool(args: dict) -> str:
     return f"Unknown action: {action}"
 
 
+# ─── CALENDAR & CONTACTS (CALDAV / CARDDAV) ─────────────────────────────────
+_DAV_NS = {
+    "D": "DAV:",
+    "C": "urn:ietf:params:xml:ns:caldav",
+    "A": "urn:ietf:params:xml:ns:carddav",
+}
+
+
+def _calendar_configured(config: dict) -> bool:
+    return bool(config.get("calendar_url") and config.get("calendar_username") and config.get("calendar_password"))
+
+
+def _contacts_configured(config: dict) -> bool:
+    return bool(config.get("contacts_url") and config.get("contacts_username") and config.get("contacts_password"))
+
+
+def _ensure_trailing_slash(url: str) -> str:
+    parsed = urllib.parse.urlsplit(url)
+    path = parsed.path or "/"
+    if not path.endswith("/"):
+        path += "/"
+    return urllib.parse.urlunsplit((parsed.scheme, parsed.netloc, path, parsed.query, parsed.fragment))
+
+
+def _dav_join(base: str, href: str) -> str:
+    base_url = base if base.endswith("/") else base + "/"
+    return urllib.parse.urljoin(base_url, href or "")
+
+
+def _dav_propfind_body(props: list[tuple[str, str]]) -> bytes:
+    root = ET.Element("{DAV:}propfind")
+    prop_el = ET.SubElement(root, "{DAV:}prop")
+    for ns_uri, name in props:
+        ET.SubElement(prop_el, f"{{{ns_uri}}}{name}")
+    return ET.tostring(root, encoding="utf-8", xml_declaration=True)
+
+
+async def _dav_request(
+    method: str,
+    url: str,
+    username: str,
+    password: str,
+    body: bytes | str | None = None,
+    *,
+    depth: str | None = None,
+    content_type: str | None = "application/xml; charset=utf-8",
+    extra_headers: dict | None = None,
+):
+    headers = {"User-Agent": "Jarvis/1.0"}
+    if depth is not None:
+        headers["Depth"] = depth
+    if body is not None and content_type:
+        headers["Content-Type"] = content_type
+    if extra_headers:
+        headers.update(extra_headers)
+    async with httpx.AsyncClient(follow_redirects=True) as client:
+        return await client.request(method, url, headers=headers, content=body, auth=(username, password), timeout=15)
+
+
+def _dav_raise_for_status(response, action: str) -> None:
+    if response.status_code in (200, 201, 204, 207):
+        return
+    if response.status_code in (401, 403):
+        raise ValueError(f"{action}: authentication failed.")
+    detail = re.sub(r"\s+", " ", response.text or "").strip()[:140]
+    if detail:
+        raise ValueError(f"{action}: server returned {response.status_code} ({detail}).")
+    raise ValueError(f"{action}: server returned {response.status_code}.")
+
+
+def _dav_multistatus_responses(xml_text: str) -> list:
+    try:
+        root = ET.fromstring(xml_text)
+    except ET.ParseError as e:
+        raise ValueError(f"DAV server returned malformed XML: {e}") from e
+    return root.findall("D:response", _DAV_NS)
+
+
+def _dav_href(response) -> str:
+    return (response.findtext("D:href", default="", namespaces=_DAV_NS) or "").strip()
+
+
+def _dav_response_for_url(responses: list, url: str):
+    wanted_path = urllib.parse.urlsplit(url).path.rstrip("/")
+    for response in responses:
+        href = _dav_href(response)
+        if urllib.parse.urlsplit(href).path.rstrip("/") == wanted_path:
+            return response
+    return responses[0] if responses else None
+
+
+def _dav_response_prop(response):
+    for propstat in response.findall("D:propstat", _DAV_NS):
+        status = (propstat.findtext("D:status", default="", namespaces=_DAV_NS) or "").upper()
+        if " 200 " in status:
+            prop = propstat.find("D:prop", _DAV_NS)
+            if prop is not None:
+                return prop
+    propstat = response.find("D:propstat", _DAV_NS)
+    return propstat.find("D:prop", _DAV_NS) if propstat is not None else None
+
+
+def _dav_resource_types(response) -> set[str]:
+    prop = _dav_response_prop(response)
+    if prop is None:
+        return set()
+    resourcetype = prop.find("D:resourcetype", _DAV_NS)
+    if resourcetype is None:
+        return set()
+    return {child.tag.split("}", 1)[-1] for child in list(resourcetype)}
+
+
+def _dav_display_name(response) -> str:
+    prop = _dav_response_prop(response)
+    if prop is None:
+        return ""
+    return (prop.findtext("D:displayname", default="", namespaces=_DAV_NS) or "").strip()
+
+
+def _dav_prop_href(response, path: str) -> str | None:
+    prop = _dav_response_prop(response)
+    if prop is None:
+        return None
+    node = prop.find(path, _DAV_NS)
+    if node is None:
+        return None
+    if node.tag.endswith("href"):
+        return (node.text or "").strip() or None
+    href = node.findtext("D:href", default="", namespaces=_DAV_NS)
+    return href.strip() or None
+
+
+def _pick_best_dav_collection(collections: list[dict], kind: str) -> dict | None:
+    if not collections:
+        return None
+
+    def score(item: dict) -> int:
+        name = (item.get("display_name") or "").lower()
+        url = (item.get("url") or "").lower()
+        score = 0
+        if "default" in name or "primary" in name:
+            score += 4
+        if kind == "calendar" and url.endswith("/events/"):
+            score += 3
+        if kind == "addressbook" and ("contacts" in name or "address" in name):
+            score += 3
+        if kind == "calendar" and not any(piece in url for piece in ("inbox", "outbox", "notification")):
+            score += 2
+        if item.get("display_name"):
+            score += 1
+        return score
+
+    return max(collections, key=score)
+
+
+async def _resolve_dav_collection(url: str, username: str, password: str, kind: str) -> dict:
+    url = (url or "").strip()
+    username = (username or "").strip()
+    password = (password or "").strip()
+    if not url or not username or not password:
+        raise ValueError("Server URL, username, and password are all required.")
+
+    direct_props = [
+        ("DAV:", "resourcetype"),
+        ("DAV:", "displayname"),
+        ("DAV:", "current-user-principal"),
+    ]
+    direct = await _dav_request("PROPFIND", url, username, password, _dav_propfind_body(direct_props), depth="0")
+    _dav_raise_for_status(direct, "DAV discovery")
+    responses = _dav_multistatus_responses(direct.text)
+    current = _dav_response_for_url(responses, url)
+    if current and kind in _dav_resource_types(current):
+        return {
+            "url": _ensure_trailing_slash(url),
+            "display_name": _dav_display_name(current),
+        }
+
+    principal_href = _dav_prop_href(current, "D:current-user-principal") if current is not None else None
+    if not principal_href:
+        raise ValueError("Could not discover the current DAV principal from that URL.")
+    principal_url = _dav_join(url, principal_href)
+
+    home_ns = "urn:ietf:params:xml:ns:caldav" if kind == "calendar" else "urn:ietf:params:xml:ns:carddav"
+    home_prop = "calendar-home-set" if kind == "calendar" else "addressbook-home-set"
+    home = await _dav_request("PROPFIND", principal_url, username, password, _dav_propfind_body([(home_ns, home_prop)]), depth="0")
+    _dav_raise_for_status(home, "DAV home-set discovery")
+    home_responses = _dav_multistatus_responses(home.text)
+    principal_response = _dav_response_for_url(home_responses, principal_url)
+    home_href = _dav_prop_href(principal_response, f"{'C' if kind == 'calendar' else 'A'}:{home_prop}") if principal_response is not None else None
+    if not home_href:
+        raise ValueError(f"Could not find a {kind} home for this account.")
+    home_url = _dav_join(principal_url, home_href)
+
+    collection = await _dav_request(
+        "PROPFIND",
+        home_url,
+        username,
+        password,
+        _dav_propfind_body([("DAV:", "resourcetype"), ("DAV:", "displayname")]),
+        depth="1",
+    )
+    _dav_raise_for_status(collection, "DAV collection discovery")
+    collections = []
+    for response in _dav_multistatus_responses(collection.text):
+        if kind not in _dav_resource_types(response):
+            continue
+        href = _dav_href(response)
+        if not href:
+            continue
+        collections.append(
+            {
+                "url": _ensure_trailing_slash(_dav_join(home_url, href)),
+                "display_name": _dav_display_name(response),
+            }
+        )
+
+    best = _pick_best_dav_collection(collections, kind)
+    if not best:
+        raise ValueError(f"No {kind} collection was found for this account.")
+    return best
+
+
+def _unfold_ical_lines(text: str) -> list[str]:
+    lines = text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    unfolded = []
+    for line in lines:
+        if not line:
+            continue
+        if line[:1] in (" ", "\t") and unfolded:
+            unfolded[-1] += line[1:]
+        else:
+            unfolded.append(line)
+    return unfolded
+
+
+def _parse_ical_line(line: str) -> tuple[str, dict, str]:
+    key, value = line.split(":", 1)
+    parts = key.split(";")
+    params = {}
+    for param in parts[1:]:
+        if "=" in param:
+            pkey, pvalue = param.split("=", 1)
+            params[pkey.upper()] = pvalue
+    return parts[0].upper(), params, value
+
+
+def _unescape_ical_text(value: str) -> str:
+    return value.replace("\\n", "\n").replace("\\N", "\n").replace("\\,", ",").replace("\\;", ";").replace("\\\\", "\\")
+
+
+def _parse_ical_datetime(value: str, params: dict) -> tuple[datetime.datetime, bool]:
+    local_tz = datetime.datetime.now().astimezone().tzinfo
+    if re.fullmatch(r"\d{8}", value):
+        day = datetime.date(int(value[:4]), int(value[4:6]), int(value[6:8]))
+        return datetime.datetime.combine(day, datetime.time.min, tzinfo=local_tz), True
+    if value.endswith("Z"):
+        dt = datetime.datetime.strptime(value, "%Y%m%dT%H%M%SZ").replace(tzinfo=datetime.timezone.utc)
+        return dt.astimezone(local_tz), False
+    for fmt in ("%Y%m%dT%H%M%S", "%Y%m%dT%H%M"):
+        try:
+            dt = datetime.datetime.strptime(value, fmt)
+            return dt.replace(tzinfo=local_tz), False
+        except ValueError:
+            continue
+    raise ValueError(f"Unsupported iCalendar datetime: {value}")
+
+
+def _friendly_when(dt: datetime.datetime, *, include_date: bool = True) -> str:
+    stamp = dt.astimezone().strftime("%a %b %d, %I:%M %p" if include_date else "%I:%M %p")
+    stamp = re.sub(r"(?<=\s)0(\d)", r"\1", stamp)
+    return stamp
+
+
+type _CalendarEvent = dict[str, datetime.datetime | str | bool]
+type _ContactCard = dict[str, str | list[str]]
+
+
+def _format_calendar_event(event: _CalendarEvent) -> str:
+    title_value = event.get("title")
+    title = title_value if isinstance(title_value, str) and title_value else "Untitled event"
+    start_value = event.get("start")
+    end_value = event.get("end")
+    start = start_value if isinstance(start_value, datetime.datetime) else None
+    end = end_value if isinstance(end_value, datetime.datetime) else start
+    if not start:
+        return title
+    if bool(event.get("all_day")):
+        when = f"{start.strftime('%a %b %d').replace(' 0', ' ')} (all day)"
+    elif end and start.date() == end.date():
+        when = f"{_friendly_when(start)}–{_friendly_when(end, include_date=False)}"
+    else:
+        when = f"{_friendly_when(start)} to {_friendly_when(end)}"
+    bits = [f"{title} — {when}"]
+    location_value = event.get("location")
+    if isinstance(location_value, str) and location_value:
+        bits.append(f"@ {location_value}")
+    return " ".join(bits)
+
+
+def _parse_ical_events(calendar_blob: str) -> list[_CalendarEvent]:
+    events: list[_CalendarEvent] = []
+    current: _CalendarEvent | None = None
+    for line in _unfold_ical_lines(calendar_blob):
+        upper = line.upper()
+        if upper == "BEGIN:VEVENT":
+            current = {"title": "", "location": "", "description": "", "all_day": False}
+            continue
+        if upper == "END:VEVENT":
+            if current and current.get("start"):
+                if "end" not in current:
+                    current["end"] = current["start"]
+                events.append(current)
+            current = None
+            continue
+        if current is None or ":" not in line:
+            continue
+        name, params, value = _parse_ical_line(line)
+        if name == "SUMMARY":
+            current["title"] = _unescape_ical_text(value).strip()
+        elif name == "LOCATION":
+            current["location"] = _unescape_ical_text(value).strip()
+        elif name == "DESCRIPTION":
+            current["description"] = _unescape_ical_text(value).strip()
+        elif name == "DTSTART":
+            current["start"], current["all_day"] = _parse_ical_datetime(value.strip(), params)
+        elif name == "DTEND":
+            current["end"], _ = _parse_ical_datetime(value.strip(), params)
+    return events
+
+
+def _parse_calendar_input(value: str):
+    raw = (value or "").strip()
+    if re.fullmatch(r"\d{4}-\d{2}-\d{2}", raw):
+        return datetime.date.fromisoformat(raw), True
+    try:
+        parsed = datetime.datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError as e:
+        raise ValueError(f"Invalid datetime: {raw}. Use ISO 8601.") from e
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=datetime.datetime.now().astimezone().tzinfo)
+    return parsed, False
+
+
+def _ical_escape(value: str) -> str:
+    return value.replace("\\", "\\\\").replace("\n", "\\n").replace(",", "\\,").replace(";", "\\;")
+
+
+def _build_calendar_event_ics(title: str, start, end, *, description: str = "", location: str = "", all_day: bool = False) -> str:
+    uid = f"{uuid.uuid4().hex}@jarvis"
+    lines = [
+        "BEGIN:VCALENDAR",
+        "VERSION:2.0",
+        "PRODID:-//JARVIS//EN",
+        "CALSCALE:GREGORIAN",
+        "BEGIN:VEVENT",
+        f"UID:{uid}",
+        f"DTSTAMP:{datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%dT%H%M%SZ')}",
+    ]
+    if all_day:
+        start_day = start if isinstance(start, datetime.date) and not isinstance(start, datetime.datetime) else start.date()
+        end_day = end if isinstance(end, datetime.date) and not isinstance(end, datetime.datetime) else end.date()
+        lines.append(f"DTSTART;VALUE=DATE:{start_day.strftime('%Y%m%d')}")
+        lines.append(f"DTEND;VALUE=DATE:{end_day.strftime('%Y%m%d')}")
+    else:
+        start_utc = start.astimezone(datetime.timezone.utc)
+        end_utc = end.astimezone(datetime.timezone.utc)
+        lines.append(f"DTSTART:{start_utc.strftime('%Y%m%dT%H%M%SZ')}")
+        lines.append(f"DTEND:{end_utc.strftime('%Y%m%dT%H%M%SZ')}")
+    lines.append(f"SUMMARY:{_ical_escape(title)}")
+    if location:
+        lines.append(f"LOCATION:{_ical_escape(location)}")
+    if description:
+        lines.append(f"DESCRIPTION:{_ical_escape(description)}")
+    lines.extend(["END:VEVENT", "END:VCALENDAR", ""])
+    return "\r\n".join(lines)
+
+
+async def _calendar_events_between(config: dict, start: datetime.datetime, end: datetime.datetime, *, limit: int = 10) -> list[_CalendarEvent]:
+    start_utc = start.astimezone(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    end_utc = end.astimezone(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    body = f"""<?xml version="1.0" encoding="utf-8"?>
+<C:calendar-query xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">
+  <D:prop>
+    <D:getetag />
+    <C:calendar-data />
+  </D:prop>
+  <C:filter>
+    <C:comp-filter name="VCALENDAR">
+      <C:comp-filter name="VEVENT">
+        <C:time-range start="{start_utc}" end="{end_utc}" />
+      </C:comp-filter>
+    </C:comp-filter>
+  </C:filter>
+</C:calendar-query>"""
+    response = await _dav_request(
+        "REPORT",
+        config["calendar_url"],
+        config["calendar_username"],
+        config["calendar_password"],
+        body,
+        depth="1",
+    )
+    _dav_raise_for_status(response, "Calendar lookup")
+    events: list[_CalendarEvent] = []
+    for dav_response in _dav_multistatus_responses(response.text):
+        prop = _dav_response_prop(dav_response)
+        if prop is None:
+            continue
+        calendar_data = prop.findtext("C:calendar-data", default="", namespaces=_DAV_NS)
+        if not calendar_data:
+            continue
+        for event in _parse_ical_events(calendar_data):
+            event_end_value = event.get("end") or event.get("start")
+            event_start_value = event.get("start")
+            event_start = event_start_value if isinstance(event_start_value, datetime.datetime) else None
+            event_end = event_end_value if isinstance(event_end_value, datetime.datetime) else None
+            if not event_start or not event_end:
+                continue
+            if event_start < end and event_end >= start:
+                events.append(event)
+    events.sort(key=lambda event: event["start"] if isinstance(event.get("start"), datetime.datetime) else datetime.datetime.max.replace(tzinfo=datetime.timezone.utc))
+    return events[:limit]
+
+
+async def _lookup_contacts(config: dict, query: str, *, preferred_channel: str = "any", limit: int = 5) -> list[_ContactCard]:
+    body = """<?xml version="1.0" encoding="utf-8"?>
+<A:addressbook-query xmlns:D="DAV:" xmlns:A="urn:ietf:params:xml:ns:carddav">
+  <D:prop>
+    <D:getetag />
+    <A:address-data />
+  </D:prop>
+</A:addressbook-query>"""
+    response = await _dav_request(
+        "REPORT",
+        config["contacts_url"],
+        config["contacts_username"],
+        config["contacts_password"],
+        body,
+        depth="1",
+    )
+    _dav_raise_for_status(response, "Contacts lookup")
+    query_lc = query.lower().strip()
+    digits = re.sub(r"\D", "", query)
+    matches: list[tuple[int, _ContactCard]] = []
+    for dav_response in _dav_multistatus_responses(response.text):
+        prop = _dav_response_prop(dav_response)
+        if prop is None:
+            continue
+        address_data = prop.findtext("A:address-data", default="", namespaces=_DAV_NS)
+        if not address_data:
+            continue
+        for contact in _parse_vcards(address_data):
+            if preferred_channel == "phone" and not contact["phones"]:
+                continue
+            if preferred_channel == "email" and not contact["emails"]:
+                continue
+            score = _score_contact_match(contact, query_lc, digits)
+            if score <= 0:
+                continue
+            matches.append((score, contact))
+    matches.sort(key=lambda item: (-item[0], (item[1].get("name") or "").lower()))
+    return [contact for _, contact in matches[:limit]]
+
+
+def _dedupe_preserve_order(values: list[str]) -> list[str]:
+    seen = set()
+    out = []
+    for value in values:
+        key = value.lower()
+        if not value or key in seen:
+            continue
+        seen.add(key)
+        out.append(value)
+    return out
+
+
+def _parse_vcards(vcard_blob: str) -> list[_ContactCard]:
+    cards: list[_ContactCard] = []
+    current: _ContactCard | None = None
+    for line in _unfold_ical_lines(vcard_blob):
+        upper = line.upper()
+        if upper == "BEGIN:VCARD":
+            current = {"name": "", "nicknames": [], "phones": [], "emails": []}
+            continue
+        if upper == "END:VCARD":
+            name_value = current.get("name") if current else ""
+            phones_value = current.get("phones") if current else []
+            emails_value = current.get("emails") if current else []
+            nicknames_value = current.get("nicknames") if current else []
+            if current and (name_value or phones_value or emails_value):
+                if isinstance(phones_value, list):
+                    current["phones"] = _dedupe_preserve_order(phones_value)
+                if isinstance(emails_value, list):
+                    current["emails"] = _dedupe_preserve_order(emails_value)
+                if isinstance(nicknames_value, list):
+                    current["nicknames"] = _dedupe_preserve_order(nicknames_value)
+                cards.append(current)
+            current = None
+            continue
+        if current is None or ":" not in line:
+            continue
+        name, _params, value = _parse_ical_line(line)
+        clean = _unescape_ical_text(value).strip()
+        if name == "FN":
+            current["name"] = clean
+        elif name == "NICKNAME":
+            nicknames = current.get("nicknames")
+            if isinstance(nicknames, list):
+                nicknames.extend([part.strip() for part in clean.split(",") if part.strip()])
+        elif name == "TEL":
+            phones = current.get("phones")
+            if isinstance(phones, list):
+                phones.append(clean[4:] if clean.lower().startswith("tel:") else clean)
+        elif name == "EMAIL":
+            emails = current.get("emails")
+            if isinstance(emails, list):
+                emails.append(clean[7:] if clean.lower().startswith("mailto:") else clean)
+    return cards
+
+
+def _score_contact_match(contact: _ContactCard, query_lc: str, digits: str) -> int:
+    if not query_lc and not digits:
+        return 0
+    name_value = contact.get("name")
+    nicknames_value = contact.get("nicknames", [])
+    emails_value = contact.get("emails", [])
+    phones_value = contact.get("phones", [])
+    name = name_value.lower() if isinstance(name_value, str) else ""
+    nicknames = [nick.lower() for nick in nicknames_value] if isinstance(nicknames_value, list) else []
+    emails = [email.lower() for email in emails_value] if isinstance(emails_value, list) else []
+    phones = phones_value if isinstance(phones_value, list) else []
+    if query_lc and name == query_lc:
+        return 100
+    if query_lc and query_lc in nicknames:
+        return 95
+    if query_lc and name.startswith(query_lc):
+        return 85
+    if query_lc and any(nick.startswith(query_lc) for nick in nicknames):
+        return 80
+    if query_lc and query_lc in name:
+        return 70
+    if query_lc and any(query_lc in nick for nick in nicknames):
+        return 65
+    if query_lc and any(query_lc in email for email in emails):
+        return 60
+    if digits and any(digits in re.sub(r"\D", "", phone) for phone in phones):
+        return 60
+    return 0
+
+
+def _format_contact(contact: _ContactCard, preferred_channel: str) -> str:
+    name_value = contact.get("name")
+    emails_value = contact.get("emails", [])
+    phones_value = contact.get("phones", [])
+    emails = emails_value if isinstance(emails_value, list) else []
+    phones = phones_value if isinstance(phones_value, list) else []
+    name = name_value if isinstance(name_value, str) and name_value else (emails or phones or ["Unnamed contact"])[0]
+    details = []
+    if preferred_channel in ("any", "phone") and phones:
+        details.append("phone: " + ", ".join(phones[:2]))
+    if preferred_channel in ("any", "email") and emails:
+        details.append("email: " + ", ".join(emails[:2]))
+    return f"{name} — " + "; ".join(details) if details else name
+
+
+_CALENDAR_TOOL_ANTHROPIC = {
+    "name": "manage_calendar",
+    "description": "Read upcoming calendar events or create a new event in the user's CalDAV calendar.",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "action": {"type": "string", "enum": ["list", "create"]},
+            "start": {"type": "string", "description": "Start date/time in ISO 8601. Optional for list; required for create."},
+            "end": {"type": "string", "description": "End date/time in ISO 8601. Optional for list; required for create."},
+            "title": {"type": "string", "description": "Event title for create."},
+            "location": {"type": "string", "description": "Event location for create."},
+            "description": {"type": "string", "description": "Event notes/description for create."},
+            "all_day": {"type": "boolean", "description": "Whether this should be created as an all-day event."},
+            "limit": {"type": "integer", "description": "How many events to return when listing (default 5, max 10)."},
+        },
+        "required": ["action"],
+    },
+}
+
+_CALENDAR_TOOL_OPENAI = {
+    "type": "function",
+    "function": {
+        "name": "manage_calendar",
+        "description": "Read upcoming calendar events or create a new event in the user's CalDAV calendar.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "action": {"type": "string", "enum": ["list", "create"]},
+                "start": {"type": "string"},
+                "end": {"type": "string"},
+                "title": {"type": "string"},
+                "location": {"type": "string"},
+                "description": {"type": "string"},
+                "all_day": {"type": "boolean"},
+                "limit": {"type": "integer"},
+            },
+            "required": ["action"],
+        },
+    },
+}
+
+_CONTACT_LOOKUP_TOOL_ANTHROPIC = {
+    "name": "lookup_contact",
+    "description": "Look up a contact by name, nickname, phone number, or email in the user's CardDAV address book.",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "query": {"type": "string", "description": "Name, nickname, email, or phone digits to search for."},
+            "preferred_channel": {"type": "string", "enum": ["any", "phone", "email"], "description": "Prefer phone numbers, email addresses, or either."},
+        },
+        "required": ["query"],
+    },
+}
+
+_CONTACT_LOOKUP_TOOL_OPENAI = {
+    "type": "function",
+    "function": {
+        "name": "lookup_contact",
+        "description": "Look up a contact by name, nickname, phone number, or email in the user's CardDAV address book.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string"},
+                "preferred_channel": {"type": "string", "enum": ["any", "phone", "email"]},
+            },
+            "required": ["query"],
+        },
+    },
+}
+
+
 # ─── TIMER / REMINDER / NEWS TOOLS ───────────────────────────────────────────
 _TIMER_TOOL_ANTHROPIC = {
     "name": "manage_timer",
@@ -2250,6 +2940,15 @@ def _get_parity_tools(provider: str) -> list:
     return [_TIMER_TOOL_OPENAI, _REMINDER_TOOL_OPENAI, _NEWS_TOOL_OPENAI]
 
 
+def _get_phase1_tools(config: dict, provider: str) -> list:
+    tools = _get_parity_tools(provider)
+    if _calendar_configured(config):
+        tools.append(_CALENDAR_TOOL_ANTHROPIC if provider == "anthropic" else _CALENDAR_TOOL_OPENAI)
+    if _contacts_configured(config):
+        tools.append(_CONTACT_LOOKUP_TOOL_ANTHROPIC if provider == "anthropic" else _CONTACT_LOOKUP_TOOL_OPENAI)
+    return tools
+
+
 def _duration_str(seconds: int) -> str:
     h, rem = divmod(seconds, 3600)
     m, s = divmod(rem, 60)
@@ -2322,8 +3021,6 @@ async def _execute_reminder_tool(user_id: str, args: dict) -> str:
 
 
 async def _execute_news_tool(args: dict) -> str:
-    import xml.etree.ElementTree as ET
-
     category = (args.get("category") or "general").lower()
     count = min(max(int(args.get("count") or 5), 1), 10)
     url = _NEWS_RSS.get(category, _NEWS_RSS["general"])
@@ -2339,6 +3036,107 @@ async def _execute_news_tool(args: dict) -> str:
         return f"Top {category} news:\n" + "\n".join(f"• {h}" for h in headlines)
     except Exception as e:
         return f"Could not fetch news: {e}"
+
+
+async def _execute_calendar_tool(config: dict, args: dict) -> str:
+    if not _calendar_configured(config):
+        return "Calendar is not configured yet."
+
+    action = (args.get("action") or "").lower()
+    local_tz = datetime.datetime.now().astimezone().tzinfo
+    if action == "list":
+        start_raw = (args.get("start") or "").strip()
+        end_raw = (args.get("end") or "").strip()
+        limit = min(max(int(args.get("limit") or 5), 1), 10)
+        if start_raw:
+            parsed_start, is_date_start = _parse_calendar_input(start_raw)
+            if is_date_start:
+                start = datetime.datetime.combine(parsed_start, datetime.time.min, tzinfo=local_tz)
+            else:
+                start = parsed_start
+        else:
+            start = datetime.datetime.now().astimezone()
+        if end_raw:
+            parsed_end, is_date_end = _parse_calendar_input(end_raw)
+            if is_date_end:
+                end = datetime.datetime.combine(parsed_end, datetime.time.min, tzinfo=local_tz) + datetime.timedelta(days=1)
+            else:
+                end = parsed_end
+        else:
+            end = start + datetime.timedelta(days=7)
+        if end <= start:
+            return "Calendar end must be after the start time."
+        try:
+            events = await _calendar_events_between(config, start, end, limit=limit)
+        except ValueError as e:
+            return f"Could not read the calendar: {e}"
+        if not events:
+            return "No calendar events found in that time range."
+        return "Upcoming events:\n" + "\n".join(f"• {_format_calendar_event(event)}" for event in events)
+
+    if action == "create":
+        title = (args.get("title") or "").strip()
+        start_raw = (args.get("start") or "").strip()
+        end_raw = (args.get("end") or "").strip()
+        location = (args.get("location") or "").strip()[:200]
+        description = (args.get("description") or "").strip()[:1000]
+        if not title or not start_raw or not end_raw:
+            return "Calendar create needs title, start, and end."
+        try:
+            start_value, start_is_date = _parse_calendar_input(start_raw)
+            end_value, end_is_date = _parse_calendar_input(end_raw)
+        except ValueError as e:
+            return str(e)
+        all_day = bool(args.get("all_day")) or start_is_date or end_is_date
+        if all_day:
+            start_day = start_value if isinstance(start_value, datetime.date) and not isinstance(start_value, datetime.datetime) else start_value.date()
+            end_day = end_value if isinstance(end_value, datetime.date) and not isinstance(end_value, datetime.datetime) else end_value.date()
+            if end_day < start_day:
+                return "Calendar end must not be before the start date."
+            if end_day == start_day:
+                end_day += datetime.timedelta(days=1)
+            body = _build_calendar_event_ics(title, start_day, end_day, description=description, location=location, all_day=True)
+            human_when = f"{start_day.strftime('%a %b %d').replace(' 0', ' ')} (all day)"
+        else:
+            if end_value <= start_value:
+                return "Calendar end must be after the start time."
+            body = _build_calendar_event_ics(title, start_value, end_value, description=description, location=location, all_day=False)
+            human_when = _format_calendar_event({"title": title, "start": start_value, "end": end_value, "location": location})
+        event_url = _dav_join(config["calendar_url"], f"{uuid.uuid4().hex}.ics")
+        try:
+            response = await _dav_request(
+                "PUT",
+                event_url,
+                config["calendar_username"],
+                config["calendar_password"],
+                body,
+                content_type="text/calendar; charset=utf-8",
+                extra_headers={"If-None-Match": "*"},
+            )
+            _dav_raise_for_status(response, "Calendar create")
+        except ValueError as e:
+            return f"Could not create the calendar event: {e}"
+        return f"Created calendar event '{title}' for {human_when}."
+
+    return f"Unknown action: {action}"
+
+
+async def _execute_contact_lookup_tool(config: dict, args: dict) -> str:
+    if not _contacts_configured(config):
+        return "Contacts are not configured yet."
+    query = (args.get("query") or "").strip()
+    preferred_channel = (args.get("preferred_channel") or "any").lower()
+    if preferred_channel not in {"any", "phone", "email"}:
+        preferred_channel = "any"
+    if not query:
+        return "Provide a name, nickname, phone number, or email to search for."
+    try:
+        matches = await _lookup_contacts(config, query, preferred_channel=preferred_channel, limit=5)
+    except ValueError as e:
+        return f"Could not search contacts: {e}"
+    if not matches:
+        return f"No contacts matched '{query}'."
+    return f"Contact matches for '{query}':\n" + "\n".join(f"• {_format_contact(contact, preferred_channel)}" for contact in matches)
 
 
 # ─── PHASE 5: ROUTINES & DEVICE ALERTS ───────────────────────────────────────
@@ -2905,6 +3703,12 @@ async def api_status(request: Request):
         "model": config.get("model", ""),
         "ha_configured": _ha_configured(config),
         "ha_url": config.get("ha_url", ""),
+        "calendar_configured": _calendar_configured(config),
+        "calendar_url": config.get("calendar_url", ""),
+        "calendar_username": config.get("calendar_username", ""),
+        "contacts_configured": _contacts_configured(config),
+        "contacts_url": config.get("contacts_url", ""),
+        "contacts_username": config.get("contacts_username", ""),
         "myq_configured": _myq_configured(config),
         "tesla_configured": _tesla_configured(config),
         "tesla_method": config.get("tesla_method", ""),
@@ -3046,6 +3850,100 @@ async def api_save_ha(request: Request):
         await _db_save_config(user_id, config)
 
     return {"ok": True, "ha_configured": _ha_configured(config)}
+
+
+@fast_app.post("/api/save_pim")
+async def api_save_pim(request: Request):
+    user_id = _get_current_user(request)
+    if not user_id:
+        raise HTTPException(401)
+
+    data = await request.json()
+    state = await _get_user_state(user_id)
+    config = state["config"]
+
+    calendar_url = (data.get("calendar_url") or "").strip()
+    calendar_username = (data.get("calendar_username") or "").strip()
+    calendar_password = (data.get("calendar_password") or "").strip()
+    contacts_url = (data.get("contacts_url") or "").strip()
+    contacts_username = (data.get("contacts_username") or "").strip()
+    contacts_password = (data.get("contacts_password") or "").strip()
+    clear_calendar = bool(data.get("clear_calendar"))
+    clear_contacts = bool(data.get("clear_contacts"))
+
+    calendar_to_save = {
+        "url": config.get("calendar_url", ""),
+        "username": config.get("calendar_username", ""),
+        "password": config.get("calendar_password", ""),
+    }
+    contacts_to_save = {
+        "url": config.get("contacts_url", ""),
+        "username": config.get("contacts_username", ""),
+        "password": config.get("contacts_password", ""),
+    }
+
+    if clear_calendar:
+        calendar_to_save = {"url": "", "username": "", "password": ""}
+    elif calendar_url or calendar_username:
+        if not calendar_url or not calendar_username:
+            return {"ok": False, "error": "Calendar needs both a server URL and username."}
+        effective_calendar_password = calendar_password or config.get("calendar_password", "")
+        if not effective_calendar_password:
+            return {"ok": False, "error": "Calendar password is required."}
+        try:
+            resolved = await _resolve_dav_collection(calendar_url, calendar_username, effective_calendar_password, "calendar")
+        except ValueError as e:
+            return {"ok": False, "error": f"Calendar: {e}"}
+        calendar_to_save = {
+            "url": resolved["url"],
+            "username": calendar_username,
+            "password": effective_calendar_password,
+        }
+
+    if clear_contacts:
+        contacts_to_save = {"url": "", "username": "", "password": ""}
+    elif contacts_url or contacts_username:
+        if not contacts_url or not contacts_username:
+            return {"ok": False, "error": "Contacts needs both a server URL and username."}
+        effective_contacts_password = contacts_password or config.get("contacts_password", "")
+        if not effective_contacts_password:
+            return {"ok": False, "error": "Contacts password is required."}
+        try:
+            resolved = await _resolve_dav_collection(contacts_url, contacts_username, effective_contacts_password, "addressbook")
+        except ValueError as e:
+            return {"ok": False, "error": f"Contacts: {e}"}
+        contacts_to_save = {
+            "url": resolved["url"],
+            "username": contacts_username,
+            "password": effective_contacts_password,
+        }
+
+    async with _get_user_lock(user_id):
+        config["calendar_url"] = calendar_to_save["url"]
+        config["calendar_username"] = calendar_to_save["username"]
+        config["calendar_password"] = calendar_to_save["password"]
+        config["contacts_url"] = contacts_to_save["url"]
+        config["contacts_username"] = contacts_to_save["username"]
+        config["contacts_password"] = contacts_to_save["password"]
+        await _db_save_pim_config(
+            user_id,
+            config["calendar_url"],
+            config["calendar_username"],
+            config["calendar_password"],
+            config["contacts_url"],
+            config["contacts_username"],
+            config["contacts_password"],
+        )
+
+    return {
+        "ok": True,
+        "calendar_configured": _calendar_configured(config),
+        "calendar_url": config.get("calendar_url", ""),
+        "calendar_username": config.get("calendar_username", ""),
+        "contacts_configured": _contacts_configured(config),
+        "contacts_url": config.get("contacts_url", ""),
+        "contacts_username": config.get("contacts_username", ""),
+    }
 
 
 @fast_app.post("/api/save_myq")
@@ -3792,6 +4690,16 @@ def _build_system_prompt(config: dict, speaker_name: str | None = None, is_kid_s
         "Calculate fire_at from the current date/time above."
     )
     system += "\n\nNEWS — use get_news_headlines to fetch the latest headlines by category (general, technology, science, health, business, sports)."
+    if _calendar_configured(config):
+        system += (
+            "\n\nCALENDAR — use manage_calendar to read upcoming events or create new events in the user's calendar. "
+            "Always calculate ISO 8601 start/end values from the current date/time above before calling the tool."
+        )
+    if _contacts_configured(config):
+        system += (
+            "\n\nCONTACTS — use lookup_contact to find phone numbers or email addresses for people in the user's address book. "
+            "If the user asks to call or text someone, look up the contact first and provide the right number if direct dialing is unavailable."
+        )
     if speaker_name and speaker_name != "guest":
         system += f"\n\nYou are currently speaking with {speaker_name}. Address them by name when it feels natural."
     if is_kid_safe:
@@ -3924,7 +4832,7 @@ async def _stream_reply(state: dict, on_text):
         + _get_spotify_tools(config, provider)
         + _get_apple_music_tools(config, provider)
         + _get_shared_list_tools(provider)
-        + _get_parity_tools(provider)
+        + _get_phase1_tools(config, provider)
         + _get_phase5_tools(config, provider)
     )
     local_msgs = list(state["conversation"])
@@ -3965,6 +4873,10 @@ async def _stream_reply(state: dict, on_text):
                         result = await _execute_reminder_tool(uid, dict(block.input))
                     elif block.name == "get_news_headlines":
                         result = await _execute_news_tool(dict(block.input))
+                    elif block.name == "manage_calendar":
+                        result = await _execute_calendar_tool(config, dict(block.input))
+                    elif block.name == "lookup_contact":
+                        result = await _execute_contact_lookup_tool(config, dict(block.input))
                     elif block.name == "manage_routine":
                         result = await _execute_routine_tool(uid, dict(block.input), config)
                     elif block.name == "manage_device_alert":
@@ -4031,6 +4943,10 @@ async def _stream_reply(state: dict, on_text):
                     result = await _execute_reminder_tool(uid, args)
                 elif acc["name"] == "get_news_headlines":
                     result = await _execute_news_tool(args)
+                elif acc["name"] == "manage_calendar":
+                    result = await _execute_calendar_tool(config, args)
+                elif acc["name"] == "lookup_contact":
+                    result = await _execute_contact_lookup_tool(config, args)
                 elif acc["name"] == "manage_routine":
                     result = await _execute_routine_tool(uid, args, config)
                 elif acc["name"] == "manage_device_alert":

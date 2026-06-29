@@ -19,6 +19,7 @@ Beyond conversation, J.A.R.V.I.S. can:
 
 - Control your entire smart home via Home Assistant
 - Set timers and reminders you hear across the house
+- Read upcoming calendar events, create new ones, and look up contacts
 - Manage shared household shopping and to-do lists
 - Run named routines (a sequence of smart-home actions)
 - Alert you proactively when a device changes state
@@ -208,6 +209,26 @@ the browser tab is reloaded — as long as one session is open.
 
 When a timer or reminder fires, J.A.R.V.I.S. wakes from standby and speaks the
 alert on every connected session for that user.
+
+## CALENDAR & CONTACTS
+
+Open the **AGENDA** button in the top bar to connect a CalDAV calendar and a
+CardDAV address book. This works with iCloud, Google, Fastmail, Nextcloud, and
+other DAV providers. If your provider requires an app-specific password, use
+that instead of your normal login password.
+
+Once connected, J.A.R.V.I.S. can:
+
+- Read your upcoming events
+- Create new calendar events
+- Look up phone numbers and email addresses from your contacts
+
+Examples:
+
+- "What's on my calendar tomorrow?"
+- "Add dinner with Sam on Friday at 7 PM."
+- "What's Mom's number?"
+- "Look up John's email."
 
 ## NEWS
 
