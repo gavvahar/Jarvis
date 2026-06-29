@@ -518,14 +518,18 @@ class TestPickBestDavCollection:
             {"url": "https://dav.example.com/cal/inbox/", "display_name": "Inbox"},
             {"url": "https://dav.example.com/cal/events/", "display_name": "Primary"},
         ]
-        assert _pick_best_dav_collection(collections, "calendar")["url"].endswith("/events/")
+        best = _pick_best_dav_collection(collections, "calendar")
+        assert best is not None
+        assert best["url"].endswith("/events/")
 
     def test_prefers_named_contacts_collection(self):
         collections = [
             {"url": "https://dav.example.com/addressbooks/1/", "display_name": "Archive"},
             {"url": "https://dav.example.com/addressbooks/2/", "display_name": "Contacts"},
         ]
-        assert _pick_best_dav_collection(collections, "addressbook")["display_name"] == "Contacts"
+        best = _pick_best_dav_collection(collections, "addressbook")
+        assert best is not None
+        assert best["display_name"] == "Contacts"
 
 
 class TestParseIcalEvents:
@@ -615,6 +619,7 @@ class TestExecuteCalendarTool:
                 )
             )
         assert "Created calendar event" in result
+        assert mock_req.await_args is not None
         assert mock_req.await_args.args[0] == "PUT"
 
     def test_create_rejects_backwards_time(self):
