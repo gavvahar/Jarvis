@@ -24,6 +24,13 @@ from dotenv import load_dotenv
 
 from personality import JARVIS_SYSTEM
 
+try:
+    import librosa as _librosa
+    import numpy as _np
+    _VOICE_ID_OK = True
+except ImportError:
+    _VOICE_ID_OK = False
+
 load_dotenv()
 
 # ─── CONSTANTS ────────────────────────────────────────────────────────────────
@@ -91,6 +98,21 @@ ALTER TABLE user_configs ADD COLUMN IF NOT EXISTS spotify_access_token TEXT NOT 
 ALTER TABLE user_configs ADD COLUMN IF NOT EXISTS spotify_token_expiry DOUBLE PRECISION NOT NULL DEFAULT 0;
 ALTER TABLE user_configs ADD COLUMN IF NOT EXISTS apple_music_user_token TEXT NOT NULL DEFAULT '';
 ALTER TABLE user_configs ADD COLUMN IF NOT EXISTS apple_music_storefront TEXT NOT NULL DEFAULT 'us';
+ALTER TABLE user_configs ADD COLUMN IF NOT EXISTS display_name TEXT NOT NULL DEFAULT '';
+ALTER TABLE user_configs ADD COLUMN IF NOT EXISTS voice_embedding JSONB;
+ALTER TABLE user_configs ADD COLUMN IF NOT EXISTS is_kid_safe BOOLEAN NOT NULL DEFAULT FALSE;
+
+CREATE TABLE IF NOT EXISTS shared_lists (
+    id          BIGSERIAL PRIMARY KEY,
+    name        TEXT NOT NULL,
+    items       JSONB NOT NULL DEFAULT '[]',
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_shared_lists_name ON shared_lists (name);
+
+INSERT INTO shared_lists (name, items) VALUES ('shopping', '[]'), ('todo', '[]') ON CONFLICT (name) DO NOTHING;
 
 CREATE TABLE IF NOT EXISTS phone_messages (
     id          BIGSERIAL PRIMARY KEY,
@@ -162,7 +184,7 @@ async def _db_ensure_user(user_id: str, email: str, role: str):
 async def _db_load_config(user_id: str) -> dict:
     async with _pool().acquire() as conn:
         row = await conn.fetchrow(
-            "SELECT role, provider, api_key, model, base_url, ha_url, ha_token, myq_email, myq_password, tesla_method, tesla_refresh_token, tesla_fleet_refresh_token, spotify_refresh_token, spotify_access_token, spotify_token_expiry FROM user_configs WHERE user_id = $1",
+            "SELECT role, provider, api_key, model, base_url, ha_url, ha_token, myq_email, myq_password, tesla_method, tesla_refresh_token, tesla_fleet_refresh_token, spotify_refresh_token, spotify_access_token, spotify_token_expiry, display_name, voice_embedding, is_kid_safe FROM user_configs WHERE user_id = $1",
             user_id,
         )
     if row is None:
@@ -182,6 +204,9 @@ async def _db_load_config(user_id: str) -> dict:
             "spotify_refresh_token": "",
             "spotify_access_token": "",
             "spotify_token_expiry": 0.0,
+            "display_name": "",
+            "voice_embedding": None,
+            "is_kid_safe": False,
         }
     return dict(row)
 
@@ -287,6 +312,89 @@ async def _db_find_user_by_token(token: str) -> str | None:
             token,
         )
     return row["user_id"] if row else None
+
+
+async def _db_save_voice_embedding(user_id: str, embedding: list) -> None:
+    async with _pool().acquire() as conn:
+        await conn.execute(
+            "UPDATE user_configs SET voice_embedding = $2 WHERE user_id = $1",
+            user_id,
+            json.dumps(embedding),
+        )
+
+
+async def _db_clear_voice_embedding(user_id: str) -> None:
+    async with _pool().acquire() as conn:
+        await conn.execute("UPDATE user_configs SET voice_embedding = NULL WHERE user_id = $1", user_id)
+
+
+async def _db_get_all_voice_embeddings() -> dict:
+    async with _pool().acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT user_id, voice_embedding, display_name, is_kid_safe FROM user_configs WHERE voice_embedding IS NOT NULL"
+        )
+    result = {}
+    for row in rows:
+        emb = row["voice_embedding"]
+        if emb:
+            parsed = json.loads(emb) if isinstance(emb, str) else emb
+            result[row["user_id"]] = (parsed, row["display_name"] or row["user_id"][:8], row["is_kid_safe"])
+    return result
+
+
+async def _db_set_kid_safe(user_id: str, value: bool) -> None:
+    async with _pool().acquire() as conn:
+        await conn.execute("UPDATE user_configs SET is_kid_safe = $2 WHERE user_id = $1", user_id, value)
+
+
+async def _db_set_display_name(user_id: str, name: str) -> None:
+    async with _pool().acquire() as conn:
+        await conn.execute("UPDATE user_configs SET display_name = $2 WHERE user_id = $1", user_id, name)
+
+
+async def _db_get_shared_list(name: str) -> list:
+    async with _pool().acquire() as conn:
+        row = await conn.fetchrow("SELECT items FROM shared_lists WHERE name = $1", name)
+    if row is None:
+        await _db_create_shared_list(name)
+        return []
+    items = row["items"]
+    return json.loads(items) if isinstance(items, str) else (items or [])
+
+
+async def _db_create_shared_list(name: str) -> None:
+    async with _pool().acquire() as conn:
+        await conn.execute(
+            "INSERT INTO shared_lists (name, items) VALUES ($1, '[]') ON CONFLICT (name) DO NOTHING", name
+        )
+
+
+async def _db_update_shared_list(name: str, items: list) -> None:
+    async with _pool().acquire() as conn:
+        await conn.execute(
+            "INSERT INTO shared_lists (name, items, updated_at) VALUES ($1, $2, NOW()) "
+            "ON CONFLICT (name) DO UPDATE SET items = $2, updated_at = NOW()",
+            name,
+            json.dumps(items),
+        )
+
+
+async def _db_get_all_shared_lists() -> dict:
+    async with _pool().acquire() as conn:
+        rows = await conn.fetch("SELECT name, items FROM shared_lists ORDER BY name")
+    result = {}
+    for row in rows:
+        items = row["items"]
+        result[row["name"]] = json.loads(items) if isinstance(items, str) else (items or [])
+    return result
+
+
+async def _db_get_household_members() -> list:
+    async with _pool().acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT user_id, email, display_name, is_kid_safe, voice_embedding IS NOT NULL AS has_voice FROM user_configs ORDER BY email"
+        )
+    return [dict(r) for r in rows]
 
 
 async def _db_store_phone_message(user_id: str, sender: str, body: str, important: bool, reason: str):
@@ -461,6 +569,46 @@ def _get_whisper():
 
         _whisper = WhisperModel("tiny.en", device="cpu", compute_type="int8")
     return _whisper
+
+
+# Voice embedding cache: user_id → (embedding, display_name, is_kid_safe)
+_voice_cache: dict = {}
+_VOICE_THRESHOLD = 0.82
+
+
+def _cosine_similarity(a: list, b: list) -> float:
+    av = _np.array(a, dtype=float)
+    bv = _np.array(b, dtype=float)
+    denom = _np.linalg.norm(av) * _np.linalg.norm(bv)
+    return float(_np.dot(av, bv) / denom) if denom > 0 else 0.0
+
+
+def _extract_voice_embedding(audio_path: str) -> list | None:
+    if not _VOICE_ID_OK:
+        return None
+    y, _ = _librosa.load(audio_path, sr=16000, mono=True)
+    mfcc = _librosa.feature.mfcc(y=y, sr=16000, n_mfcc=40)
+    return [*mfcc.mean(axis=1).tolist(), *mfcc.std(axis=1).tolist()]
+
+
+async def _refresh_voice_cache() -> None:
+    rows = await _db_get_all_voice_embeddings()
+    _voice_cache.clear()
+    _voice_cache.update(rows)
+
+
+def _identify_speaker_from_embedding(embedding: list) -> tuple:
+    """Returns (user_id | None, display_name, is_kid_safe)."""
+    if not _voice_cache or not embedding:
+        return None, "", False
+    best_uid, best_name, best_safe, best_score = None, "", False, 0.0
+    for uid, (stored, name, is_safe) in _voice_cache.items():
+        score = _cosine_similarity(embedding, stored)
+        if score > best_score:
+            best_uid, best_name, best_safe, best_score = uid, name, is_safe, score
+    if best_score >= _VOICE_THRESHOLD:
+        return best_uid, best_name, best_safe
+    return None, "guest", False
 
 
 def _get_user_lock(user_id: str) -> asyncio.Lock:
@@ -1689,6 +1837,71 @@ def _get_apple_music_tools(config: dict, provider: str) -> list:
     return APPLE_MUSIC_TOOLS_ANTHROPIC if provider == "anthropic" else APPLE_MUSIC_TOOLS_OPENAI
 
 
+# ─── SHARED LIST TOOLS ───────────────────────────────────────────────────────
+_SHARED_LIST_TOOL_ANTHROPIC = {
+    "name": "manage_shared_list",
+    "description": "Manage shared household lists such as shopping or todo. Use to add, remove, read, or clear items.",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "action": {"type": "string", "enum": ["add", "remove", "read", "clear"], "description": "Operation to perform"},
+            "list_name": {"type": "string", "description": "Name of the list, e.g. shopping or todo"},
+            "item": {"type": "string", "description": "Item to add or remove (omit for read/clear)"},
+        },
+        "required": ["action", "list_name"],
+    },
+}
+
+_SHARED_LIST_TOOL_OPENAI = {
+    "type": "function",
+    "function": {
+        "name": "manage_shared_list",
+        "description": "Manage shared household lists such as shopping or todo.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "action": {"type": "string", "enum": ["add", "remove", "read", "clear"]},
+                "list_name": {"type": "string", "description": "Name of the list, e.g. shopping or todo"},
+                "item": {"type": "string", "description": "Item to add or remove (omit for read/clear)"},
+            },
+            "required": ["action", "list_name"],
+        },
+    },
+}
+
+
+def _get_shared_list_tools(provider: str) -> list:
+    return [_SHARED_LIST_TOOL_ANTHROPIC] if provider == "anthropic" else [_SHARED_LIST_TOOL_OPENAI]
+
+
+async def _execute_shared_list_tool(args: dict) -> str:
+    action = (args.get("action") or "").lower()
+    list_name = (args.get("list_name") or "shopping").lower().strip()[:50]
+    item = (args.get("item") or "").strip()[:200]
+    items = await _db_get_shared_list(list_name)
+    if action == "read":
+        return f"{list_name.title()} list is empty." if not items else f"{list_name.title()}: " + ", ".join(items) + "."
+    if action == "add":
+        if not item:
+            return "No item specified."
+        if item.lower() not in [i.lower() for i in items]:
+            items.append(item)
+            await _db_update_shared_list(list_name, items)
+        return f"Added '{item}' to {list_name}. {len(items)} item(s) now."
+    if action == "remove":
+        if not item:
+            return "No item specified."
+        new = [i for i in items if i.lower() != item.lower()]
+        if len(new) == len(items):
+            return f"'{item}' not found in {list_name}."
+        await _db_update_shared_list(list_name, new)
+        return f"Removed '{item}' from {list_name}."
+    if action == "clear":
+        await _db_update_shared_list(list_name, [])
+        return f"{list_name.title()} list cleared."
+    return f"Unknown action: {action}"
+
+
 # ─── CONFIG VALIDATION ────────────────────────────────────────────────────────
 def _openai_create_sync(client, model, messages, stream, max_out=500):
     last = None
@@ -1976,7 +2189,19 @@ async def api_transcribe(request: Request, audio: UploadFile = File(...)):
 
         async with _whisper_lock:
             text = await asyncio.to_thread(_run)
-        return {"text": text}
+
+        speaker_id, speaker_name, speaker_kid_safe = None, None, False
+        if _VOICE_ID_OK and _voice_cache:
+            embedding = await asyncio.to_thread(_extract_voice_embedding, tmp)
+            if embedding:
+                speaker_id, speaker_name, speaker_kid_safe = _identify_speaker_from_embedding(embedding)
+
+        return {
+            "text": text,
+            "speaker_id": speaker_id,
+            "speaker_name": speaker_name,
+            "speaker_kid_safe": speaker_kid_safe,
+        }
     except Exception as e:
         print(f"[STT] {e}", flush=True)
         return {"text": ""}
@@ -2326,6 +2551,102 @@ async def api_wake(request: Request):
         await sio.emit("wake_trigger", {"device_id": device_id}, to=sid)
 
     return {"status": "ok"}
+
+
+@fast_app.post("/api/voice/enroll-sample")
+async def api_voice_enroll_sample(request: Request, audio: UploadFile = File(...)):
+    """Extract a voice embedding from an uploaded audio sample. Returns embedding (not saved)."""
+    if not _get_current_user(request):
+        raise HTTPException(401)
+    if not _VOICE_ID_OK:
+        return {"ok": False, "error": "Voice ID unavailable — install librosa on the server."}
+    data = await audio.read()
+    tmp = None
+    try:
+        with tempfile.NamedTemporaryFile(suffix=".webm", delete=False) as f:
+            f.write(data)
+            tmp = f.name
+        embedding = await asyncio.to_thread(_extract_voice_embedding, tmp)
+        if embedding is None:
+            return {"ok": False, "error": "Could not extract embedding."}
+        return {"ok": True, "embedding": embedding}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+    finally:
+        if tmp:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+
+
+@fast_app.post("/api/voice/enroll-finish")
+async def api_voice_enroll_finish(request: Request):
+    """Average provided embeddings and save as the user's voiceprint."""
+    user_id = _get_current_user(request)
+    if not user_id:
+        raise HTTPException(401)
+    if not _VOICE_ID_OK:
+        raise HTTPException(400, "Voice ID unavailable.")
+    data = await request.json()
+    embeddings = data.get("embeddings", [])
+    if not embeddings or len(embeddings) < 2:
+        raise HTTPException(400, "At least 2 samples required.")
+    import numpy as _np2
+    avg = _np2.mean([_np2.array(e) for e in embeddings], axis=0).tolist()
+    await _db_save_voice_embedding(user_id, avg)
+    await _refresh_voice_cache()
+    return {"ok": True}
+
+
+@fast_app.delete("/api/voice/enrollment")
+async def api_voice_enrollment_delete(request: Request):
+    user_id = _get_current_user(request)
+    if not user_id:
+        raise HTTPException(401)
+    await _db_clear_voice_embedding(user_id)
+    await _refresh_voice_cache()
+    return {"ok": True}
+
+
+@fast_app.patch("/api/user/profile")
+async def api_user_profile(request: Request):
+    user_id = _get_current_user(request)
+    if not user_id:
+        raise HTTPException(401)
+    data = await request.json()
+    if "display_name" in data:
+        name = str(data["display_name"]).strip()[:100]
+        await _db_set_display_name(user_id, name)
+        if user_id in _user_states:
+            _user_states[user_id]["config"]["display_name"] = name
+        await _refresh_voice_cache()
+    if "is_kid_safe" in data:
+        value = bool(data["is_kid_safe"])
+        await _db_set_kid_safe(user_id, value)
+        if user_id in _user_states:
+            _user_states[user_id]["config"]["is_kid_safe"] = value
+        await _refresh_voice_cache()
+    return {"ok": True}
+
+
+@fast_app.get("/api/household/members")
+async def api_household_members(request: Request):
+    user_id = _get_current_user(request)
+    if not user_id:
+        raise HTTPException(401)
+    state = await _get_user_state(user_id)
+    if state.get("role") != "admin":
+        raise HTTPException(403)
+    members = await _db_get_household_members()
+    return {"members": members}
+
+
+@fast_app.get("/api/shared-lists")
+async def api_shared_lists(request: Request):
+    if not _get_current_user(request):
+        raise HTTPException(401)
+    return {"lists": await _db_get_all_shared_lists()}
 
 
 @fast_app.get("/api/doorbell/token")
@@ -2706,8 +3027,16 @@ async def api_messages(request: Request):
 
 
 # ─── LLM STREAMING ───────────────────────────────────────────────────────────
-def _build_system_prompt(config: dict) -> str:
+def _build_system_prompt(config: dict, speaker_name: str | None = None, is_kid_safe: bool = False) -> str:
     system = JARVIS_SYSTEM
+    if speaker_name and speaker_name != "guest":
+        system += f"\n\nYou are currently speaking with {speaker_name}. Address them by name when it feels natural."
+    if is_kid_safe:
+        system += (
+            "\n\nKID-SAFE MODE — You are speaking with a child. Keep all responses age-appropriate, "
+            "use simple and encouraging language, and avoid adult topics, violence, or anything "
+            "inappropriate for children under 13."
+        )
     ctx = _location_context
     if ctx:
         parts = []
@@ -2759,6 +3088,10 @@ def _build_system_prompt(config: dict) -> str:
             "apple_music_next/apple_music_previous to skip tracks, apple_music_volume to adjust volume (0–100), "
             "and apple_music_search_and_play to find and play a specific song, artist, album, or playlist."
         )
+    system += (
+        "\n\nSHARED HOUSEHOLD LISTS — use manage_shared_list to add, remove, read, or clear items on "
+        "shared lists (shopping, todo, or any custom name). All household members share the same lists."
+    )
     return system
 
 
@@ -2803,13 +3136,18 @@ async def _stream_reply(state: dict, on_text):
     config = state["config"]
     client = state["client"]
     model = config.get("model") or DEFAULT_MODELS.get(provider, "")
-    system = _build_system_prompt(config)
+    system = _build_system_prompt(
+        config,
+        speaker_name=state.get("_speaker_name"),
+        is_kid_safe=state.get("_speaker_kid_safe", False),
+    )
     ha_tools = (
         _get_ha_tools(config, provider)
         + _get_myq_tools(config, provider)
         + _get_tesla_tools(config, provider)
         + _get_spotify_tools(config, provider)
         + _get_apple_music_tools(config, provider)
+        + _get_shared_list_tools(provider)
     )
     local_msgs = list(state["conversation"])
 
@@ -2840,7 +3178,10 @@ async def _stream_reply(state: dict, on_text):
             results = []
             for block in final.content:
                 if block.type == "tool_use":
-                    result = await _execute_ha_tool(config, block.name, dict(block.input), state.get("user_id", ""))
+                    if block.name == "manage_shared_list":
+                        result = await _execute_shared_list_tool(dict(block.input))
+                    else:
+                        result = await _execute_ha_tool(config, block.name, dict(block.input), state.get("user_id", ""))
                     results.append(
                         {
                             "type": "tool_result",
@@ -2890,7 +3231,10 @@ async def _stream_reply(state: dict, on_text):
             tool_msgs = []
             for acc in tool_calls_acc.values():
                 args = json.loads(acc["args"] or "{}")
-                result = await _execute_ha_tool(config, acc["name"], args, state.get("user_id", ""))
+                if acc["name"] == "manage_shared_list":
+                    result = await _execute_shared_list_tool(args)
+                else:
+                    result = await _execute_ha_tool(config, acc["name"], args, state.get("user_id", ""))
                 tc_list.append(
                     {
                         "id": acc["id"],
@@ -2905,12 +3249,14 @@ async def _stream_reply(state: dict, on_text):
     return full
 
 
-async def _process_message(sid: str, text: str):
+async def _process_message(sid: str, text: str, speaker_name: str | None = None, speaker_kid_safe: bool = False):
     user_id = _sid_to_user.get(sid)
     if not user_id:
         return
 
     state = await _get_user_state(user_id)
+    state["_speaker_name"] = speaker_name
+    state["_speaker_kid_safe"] = speaker_kid_safe
 
     if not _user_configured(state):
         await sio.emit("need_setup", {}, to=sid)
@@ -3025,7 +3371,16 @@ async def on_user_message(sid, data):
         await sio.emit("response_done", {"text": msg}, to=sid)
         await sio.emit("status", {"state": "idle"}, to=sid)
         return
-    asyncio.create_task(_process_message(sid, text))
+    speaker_name: str | None = None
+    speaker_kid_safe = False
+    speaker_id = (data or {}).get("speaker_id", "")
+    if speaker_id and speaker_id != "guest" and _voice_cache:
+        entry = _voice_cache.get(speaker_id)
+        if entry:
+            _, speaker_name, speaker_kid_safe = entry
+    elif speaker_id == "guest":
+        speaker_name = "guest"
+    asyncio.create_task(_process_message(sid, text, speaker_name=speaker_name, speaker_kid_safe=speaker_kid_safe))
 
 
 @sio.on("start_meeting")

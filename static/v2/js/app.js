@@ -257,15 +257,18 @@
     tick();
   }
 
+  let _lastSpeakerId = null;
+
   async function _transcribe(blob) {
     const fd = new FormData();
     fd.append("audio", blob, "speech.webm");
     try {
       const r = await fetch("/api/transcribe", { method: "POST", body: fd });
-      const { text } = await r.json();
+      const { text, speaker_id, speaker_name } = await r.json();
+      if (speaker_id) _lastSpeakerId = speaker_id;
       const t = (text || "").trim();
       if (t && t.split(/\s+/).length >= 2) {
-        console.log("[STT]", t);
+        console.log("[STT]", t, speaker_name ? `(${speaker_name})` : "");
         handleHeard(t);
       } else if (t) {
         console.log("[STT] ignored (too short):", t);
@@ -323,7 +326,7 @@
     }
     if (window.__chat) window.__chat.addMsg(text, "out"); // show the heard/typed command
     window.__justTyped = { text, t: Date.now() };
-    socket.emit("user_message", { text });
+    socket.emit("user_message", { text, speaker_id: _lastSpeakerId });
   }
   // chat.js hands typed text here (it already renders the 'out' bubble itself)
   window.__sendMessage = (text) => {
@@ -332,7 +335,7 @@
       return;
     }
     if (_standby) wake();
-    socket.emit("user_message", { text });
+    socket.emit("user_message", { text, speaker_id: _lastSpeakerId });
   };
 
   // ===================================================================
