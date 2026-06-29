@@ -2600,13 +2600,7 @@ async def _calendar_events_between(config: dict, start: datetime.datetime, end: 
                 continue
             if event_start < end and event_end >= start:
                 events.append(event)
-    events.sort(
-        key=lambda event: (
-            event["start"]
-            if isinstance(event.get("start"), datetime.datetime)
-            else datetime.datetime.max.replace(tzinfo=datetime.timezone.utc)
-        )
-    )
+    events.sort(key=lambda event: event["start"] if isinstance(event.get("start"), datetime.datetime) else datetime.datetime.max.replace(tzinfo=datetime.timezone.utc))
     return events[:limit]
 
 
