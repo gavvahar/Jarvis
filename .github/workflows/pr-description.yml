@@ -20,7 +20,12 @@ jobs:
       - name: Gather PR context
         run: |
           git log "origin/${{ github.base_ref }}...HEAD" --format="%s" --no-merges > /tmp/commits.txt || true
-          git log "origin/${{ github.base_ref }}...HEAD" --format="%s" --no-merges | head -1 > /tmp/first_subject.txt || true
+          git log "origin/${{ github.base_ref }}...HEAD" --format="%s" --no-merges \
+            | grep -vE "^(chore|lint|style|ci|build)\b" | head -1 \
+            > /tmp/first_subject.txt || true
+          [ -s /tmp/first_subject.txt ] || \
+            git log "origin/${{ github.base_ref }}...HEAD" --format="%s" --no-merges | head -1 \
+            > /tmp/first_subject.txt || true
           git diff "origin/${{ github.base_ref }}...HEAD" --stat > /tmp/diff_stat.txt || true
           git diff "origin/${{ github.base_ref }}...HEAD" | head -c 51200 > /tmp/diff.txt || true
 
@@ -179,7 +184,7 @@ jobs:
           CLIFF=$(find /tmp -name "git-cliff" -type f | head -1)
           chmod +x "$CLIFF"
 
-          "$CLIFF" --config .github/scripts/cliff.toml "origin/${{ github.base_ref }}..HEAD" \
+          "$CLIFF" --config pyproject.toml "origin/${{ github.base_ref }}..HEAD" \
             > /tmp/pr_body.txt 2>/tmp/cliff_err.txt
 
           grep -q "^### " /tmp/pr_body.txt || { echo "No conventional commits found"; exit 1; }

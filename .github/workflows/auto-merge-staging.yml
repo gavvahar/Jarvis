@@ -2,8 +2,8 @@ name: Auto Merge Staging to Main
 
 on:
   schedule:
-    - cron: "0 17 * * 1,3,5" # Mon/Wed/Fri 12pm EST (UTC-5, Nov–Mar)
-    - cron: "0 16 * * 1,3,5" # Mon/Wed/Fri 12pm EDT (UTC-4, Mar–Nov)
+    - cron: "0 5 * * 1,3,5" # Mon/Wed/Fri midnight EST (UTC-5, Nov–Mar)
+    - cron: "0 4 * * 1,3,5" # Mon/Wed/Fri midnight EDT (UTC-4, Mar–Nov)
   workflow_dispatch: # Allow manual trigger
 
 jobs:
