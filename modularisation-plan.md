@@ -11,7 +11,7 @@ metadata:
 
 ## Target Structure
 
-```
+```text
 config.py
 db.py
 auth.py
@@ -52,7 +52,7 @@ schema.sql  ← already extracted
 
 ## Dependency Order (build bottom-up to avoid circular imports)
 
-```
+```text
 config.py           ← no local imports
     ↓
 db.py               ← imports config
