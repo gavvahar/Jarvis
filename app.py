@@ -2108,8 +2108,7 @@ async def _execute_ha_tool(config: dict, name, args, user_id: str = ""):
             if not members:
                 return "No one detected at home right now (or no face enrollments set up)."
             return "\n".join(
-                f"{m['name']} — {m['activity']}" + (f" in {m['room']}" if m["room"] else "") + (f" (last seen {m['last_seen_at']})" if m["last_seen_at"] else "")
-                for m in members
+                f"{m['name']} — {m['activity']}" + (f" in {m['room']}" if m["room"] else "") + (f" (last seen {m['last_seen_at']})" if m["last_seen_at"] else "") for m in members
             )
         if name == "get_security_events":
             if not user_id:
@@ -3917,7 +3916,9 @@ async def _vision_loop():
                         activity = _infer_activity(room, hour)
                         if not prev_home:
                             for sid in _sids_for_user(user_id):
-                                await sio.emit("presence_update", {"user_id": det["detected_user_id"], "name": det["name"], "is_home": True, "room": room, "activity": activity}, to=sid)
+                                await sio.emit(
+                                    "presence_update", {"user_id": det["detected_user_id"], "name": det["name"], "is_home": True, "room": room, "activity": activity}, to=sid
+                                )
                     else:
                         # Unknown person — alert if away mode or night hours
                         async with _pool().acquire() as conn:
