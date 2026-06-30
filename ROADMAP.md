@@ -9,11 +9,12 @@
 | 1        | Phase 2 — Always-On Wake Word                | In Progress |
 | 2        | Phase 7 — Multi-User & Household             | Complete    |
 | 3        | Phase 1 — Foundation & Parity                | Complete    |
-| 4        | Phase 4 — Smart Speaker & Local Hardware     | Planned     |
-| 5        | Phase 5 — Deeper Smart Home                  | In Progress |
-| 6        | Phase 6 — Proactive & Ambient Intelligence   | Planned     |
-| 7        | Phase 8 — Developer & Extensibility Platform | In Progress |
-| 8        | Phase 3 — Mobile PWA                         | Last        |
+| 4        | GitHub Actions & CI/CD                       | Complete    |
+| 5        | Phase 4 — Smart Speaker & Local Hardware     | Planned     |
+| 6        | Phase 5 — Deeper Smart Home                  | In Progress |
+| 7        | Phase 6 — Proactive & Ambient Intelligence   | Planned     |
+| 8        | Phase 8 — Developer & Extensibility Platform | In Progress |
+| 9        | Phase 3 — Mobile PWA                         | Last        |
 
 ---
 
