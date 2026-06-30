@@ -44,6 +44,31 @@ from integrations.tesla import (
     _TESLA_TOOL_NAMES,
     _tesla_unofficial_access_token,
 )
+from integrations.music.spotify import (
+    _spotify_configured,
+    _get_spotify_tools,
+    _execute_spotify_tool,
+    _spotify_req,
+    _spotify_start_party,
+    _SPOTIFY_TOOL_NAMES,
+    _spotify_auth_url,
+    _spotify_finish_auth,
+    _spotify_disconnect,
+)
+from integrations.music.apple_music import (
+    init as _init_apple_music,
+    _apple_music_server_configured,
+    _apple_music_configured,
+    _apple_music_dev_token,
+    _am_request_callback,
+    _apple_music_start_party,
+    _execute_apple_music_tool,
+    _AM_TOOL_NAMES,
+    _get_apple_music_tools,
+    _save_apple_music_user_token,
+    _disconnect_apple_music_user_token,
+    _resolve_apple_music_callback,
+)
 from config import (
     MAX_HISTORY,
     DEFAULT_MODELS,
@@ -56,10 +81,6 @@ from config import (
     TESLA_CLIENT_ID,
     TESLA_CLIENT_SECRET,
     SPOTIFY_CLIENT_ID,
-    SPOTIFY_CLIENT_SECRET,
-    APPLE_MUSIC_TEAM_ID,
-    APPLE_MUSIC_KEY_ID,
-    APPLE_MUSIC_PRIVATE_KEY,
     VISION_POLL_INTERVAL,
     VISION_AWAY_TIMEOUT,
     VISION_FACE_THRESHOLD,
@@ -69,11 +90,6 @@ from config import (
     MQTT_PASSWORD,
     Z2M_BASE_TOPIC,
 )
-
-try:
-    import jwt
-except ImportError:
-    jwt = None  # type: ignore
 
 try:
     import librosa as _librosa
@@ -577,381 +593,6 @@ async def _execute_ha_tool(config: dict, name, args, user_id: str = ""):
         return f"Unknown tool: {name}"
     except Exception as e:
         return f"Error: {e}"
-
-
-# ─── SPOTIFY ──────────────────────────────────────────────────────────────────
-_SPOTIFY_AUTH_BASE = "https://accounts.spotify.com"
-_SPOTIFY_API_BASE = "https://api.spotify.com/v1"
-_SPOTIFY_SCOPES = "user-read-playback-state user-modify-playback-state user-read-currently-playing"
-
-_spotify_auth_pending: dict[str, str] = {}
-_spotify_tokens: dict[str, dict] = {}
-
-
-def _spotify_configured(config: dict) -> bool:
-    return bool(config.get("spotify_refresh_token"))
-
-
-async def _db_save_spotify_tokens(user_id: str, access_token: str, refresh_token: str, expiry: float):
-    async with _pool().acquire() as conn:
-        await conn.execute(
-            "UPDATE user_configs SET spotify_access_token=$2, spotify_refresh_token=$3, spotify_token_expiry=$4 WHERE user_id=$1",
-            user_id,
-            access_token,
-            refresh_token,
-            expiry,
-        )
-
-
-async def _spotify_access_token(user_id: str, config: dict) -> str:
-    cached = _spotify_tokens.get(user_id, {})
-    now = datetime.datetime.now().timestamp()
-    if cached.get("access") and cached.get("expiry", 0) > now + 60:
-        return cached["access"]
-
-    refresh = config.get("spotify_refresh_token", "")
-    if not refresh:
-        raise ValueError("Spotify not connected")
-
-    async with httpx.AsyncClient(timeout=15) as c:
-        r = await c.post(
-            f"{_SPOTIFY_AUTH_BASE}/api/token",
-            data={
-                "grant_type": "refresh_token",
-                "refresh_token": refresh,
-                "client_id": SPOTIFY_CLIENT_ID,
-                "client_secret": SPOTIFY_CLIENT_SECRET,
-            },
-        )
-        r.raise_for_status()
-        data = r.json()
-
-    access = data["access_token"]
-    expiry = now + data.get("expires_in", 3600)
-    new_refresh = data.get("refresh_token", refresh)
-
-    _spotify_tokens[user_id] = {"access": access, "expiry": expiry}
-    config["spotify_access_token"] = access
-    config["spotify_refresh_token"] = new_refresh
-    config["spotify_token_expiry"] = expiry
-    await _db_save_spotify_tokens(user_id, access, new_refresh, expiry)
-    return access
-
-
-async def _spotify_req(method: str, endpoint: str, user_id: str, config: dict, **kwargs):
-    token = await _spotify_access_token(user_id, config)
-    headers = {"Authorization": f"Bearer {token}"}
-    async with httpx.AsyncClient(timeout=15) as c:
-        return await getattr(c, method)(f"{_SPOTIFY_API_BASE}{endpoint}", headers=headers, **kwargs)
-
-
-async def _spotify_start_party(user_id: str, config: dict):
-    try:
-        await _spotify_req("put", "/me/player/shuffle", user_id, config, params={"state": "true"})
-        await _spotify_req("put", "/me/player/play", user_id, config)
-    except Exception:
-        pass
-
-
-async def _execute_spotify_tool(name: str, args: dict, user_id: str, config: dict) -> str:
-    if name == "spotify_now_playing":
-        r = await _spotify_req("get", "/me/player/currently-playing", user_id, config)
-        if r.status_code == 204 or not r.text:
-            return "Nothing is currently playing."
-        d = r.json()
-        item = d.get("item") or {}
-        track = item.get("name", "Unknown")
-        artists = ", ".join(a["name"] for a in item.get("artists", []))
-        state = "playing" if d.get("is_playing") else "paused"
-        return f"Currently {state}: {track} by {artists}."
-    if name == "spotify_play":
-        r = await _spotify_req("put", "/me/player/play", user_id, config)
-        return "Resumed playback." if r.status_code in (200, 204) else f"Spotify returned {r.status_code}."
-    if name == "spotify_pause":
-        r = await _spotify_req("put", "/me/player/pause", user_id, config)
-        return "Playback paused." if r.status_code in (200, 204) else f"Spotify returned {r.status_code}."
-    if name == "spotify_next":
-        r = await _spotify_req("post", "/me/player/next", user_id, config)
-        return "Skipped to next track." if r.status_code in (200, 204) else f"Spotify returned {r.status_code}."
-    if name == "spotify_previous":
-        r = await _spotify_req("post", "/me/player/previous", user_id, config)
-        return "Back to previous track." if r.status_code in (200, 204) else f"Spotify returned {r.status_code}."
-    if name == "spotify_volume":
-        vol = max(0, min(100, int(args.get("volume_percent", 50))))
-        r = await _spotify_req("put", "/me/player/volume", user_id, config, params={"volume_percent": vol})
-        return f"Volume set to {vol}%." if r.status_code in (200, 204) else f"Spotify returned {r.status_code}."
-    if name == "spotify_search_and_play":
-        query = args.get("query", "")
-        search_type = args.get("type", "track")
-        r = await _spotify_req("get", "/search", user_id, config, params={"q": query, "type": search_type, "limit": 1})
-        r.raise_for_status()
-        data = r.json()
-        uri = label = None
-        if search_type == "track":
-            items = data.get("tracks", {}).get("items", [])
-            if items:
-                uri = items[0]["uri"]
-                label = f"{items[0]['name']} by {items[0]['artists'][0]['name']}"
-        elif search_type == "playlist":
-            items = data.get("playlists", {}).get("items", [])
-            if items:
-                uri, label = items[0]["uri"], items[0]["name"]
-        elif search_type == "artist":
-            items = data.get("artists", {}).get("items", [])
-            if items:
-                uri, label = items[0]["uri"], items[0]["name"]
-        elif search_type == "album":
-            items = data.get("albums", {}).get("items", [])
-            if items:
-                uri = items[0]["uri"]
-                label = f"{items[0]['name']} by {items[0]['artists'][0]['name']}"
-        if not uri:
-            return f"Could not find any {search_type} matching '{query}'."
-        play_body = {"uris": [uri]} if search_type == "track" else {"context_uri": uri}
-        r2 = await _spotify_req("put", "/me/player/play", user_id, config, json=play_body)
-        if r2.status_code in (200, 204):
-            return f"Now playing {label}."
-        return f"Found {label} but playback failed (Spotify returned {r2.status_code})."
-    return f"Unknown Spotify tool: {name}"
-
-
-SPOTIFY_TOOLS_ANTHROPIC = [
-    {
-        "name": "spotify_now_playing",
-        "description": "Get the currently playing track on Spotify.",
-        "input_schema": {"type": "object", "properties": {}},
-    },
-    {
-        "name": "spotify_play",
-        "description": "Resume or start Spotify playback.",
-        "input_schema": {"type": "object", "properties": {}},
-    },
-    {
-        "name": "spotify_pause",
-        "description": "Pause Spotify playback.",
-        "input_schema": {"type": "object", "properties": {}},
-    },
-    {
-        "name": "spotify_next",
-        "description": "Skip to the next track on Spotify.",
-        "input_schema": {"type": "object", "properties": {}},
-    },
-    {
-        "name": "spotify_previous",
-        "description": "Go back to the previous track on Spotify.",
-        "input_schema": {"type": "object", "properties": {}},
-    },
-    {
-        "name": "spotify_volume",
-        "description": "Set the Spotify playback volume (0–100).",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "volume_percent": {"type": "integer", "description": "Volume from 0 to 100."},
-            },
-            "required": ["volume_percent"],
-        },
-    },
-    {
-        "name": "spotify_search_and_play",
-        "description": "Search Spotify and play the best matching track, artist, album, or playlist.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "query": {"type": "string", "description": "Search query (artist, song, playlist name, etc.)"},
-                "type": {
-                    "type": "string",
-                    "enum": ["track", "artist", "album", "playlist"],
-                    "description": "What to search for. Default: track.",
-                },
-            },
-            "required": ["query"],
-        },
-    },
-]
-
-SPOTIFY_TOOLS_OPENAI = [
-    {
-        "type": "function",
-        "function": {"name": "spotify_now_playing", "description": "Get the currently playing track on Spotify.", "parameters": {"type": "object", "properties": {}}},
-    },
-    {"type": "function", "function": {"name": "spotify_play", "description": "Resume or start Spotify playback.", "parameters": {"type": "object", "properties": {}}}},
-    {"type": "function", "function": {"name": "spotify_pause", "description": "Pause Spotify playback.", "parameters": {"type": "object", "properties": {}}}},
-    {"type": "function", "function": {"name": "spotify_next", "description": "Skip to the next track on Spotify.", "parameters": {"type": "object", "properties": {}}}},
-    {"type": "function", "function": {"name": "spotify_previous", "description": "Go back to the previous track on Spotify.", "parameters": {"type": "object", "properties": {}}}},
-    {
-        "type": "function",
-        "function": {
-            "name": "spotify_volume",
-            "description": "Set the Spotify playback volume (0–100).",
-            "parameters": {"type": "object", "properties": {"volume_percent": {"type": "integer", "description": "Volume 0–100."}}, "required": ["volume_percent"]},
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "spotify_search_and_play",
-            "description": "Search Spotify and play the best matching track, artist, album, or playlist.",
-            "parameters": {
-                "type": "object",
-                "properties": {"query": {"type": "string", "description": "Search query"}, "type": {"type": "string", "enum": ["track", "artist", "album", "playlist"]}},
-                "required": ["query"],
-            },
-        },
-    },
-]
-
-_SPOTIFY_TOOL_NAMES = {t["name"] for t in SPOTIFY_TOOLS_ANTHROPIC}
-
-
-def _get_spotify_tools(config: dict, provider: str) -> list:
-    if not _spotify_configured(config):
-        return []
-    return SPOTIFY_TOOLS_ANTHROPIC if provider == "anthropic" else SPOTIFY_TOOLS_OPENAI
-
-
-# ─── APPLE MUSIC ──────────────────────────────────────────────────────────────
-_am_callbacks: dict[str, asyncio.Future] = {}
-
-
-def _apple_music_server_configured() -> bool:
-    return bool(APPLE_MUSIC_TEAM_ID and APPLE_MUSIC_KEY_ID and APPLE_MUSIC_PRIVATE_KEY)
-
-
-def _apple_music_configured(config: dict) -> bool:
-    return _apple_music_server_configured() and bool(config.get("apple_music_user_token"))
-
-
-def _apple_music_dev_token() -> str:
-    if jwt is None:
-        raise RuntimeError("PyJWT is required for Apple Music support. Install dependencies from requirements.txt.")
-    now = int(datetime.datetime.now().timestamp())
-    return jwt.encode(
-        {"iss": APPLE_MUSIC_TEAM_ID, "iat": now, "exp": now + 15777000},
-        APPLE_MUSIC_PRIVATE_KEY,
-        algorithm="ES256",
-        headers={"kid": APPLE_MUSIC_KEY_ID},
-    )
-
-
-async def _am_request_callback(sid: str, action: str, extra: dict | None = None, timeout: float = 7.0) -> str:
-    cb_id = secrets.token_hex(8)
-    fut: asyncio.Future = asyncio.get_event_loop().create_future()
-    _am_callbacks[cb_id] = fut
-    await sio.emit("apple_music_cmd", {"action": action, "cb": cb_id, **(extra or {})}, to=sid)
-    try:
-        return await asyncio.wait_for(fut, timeout=timeout)
-    except asyncio.TimeoutError:
-        return "Request timed out."
-    finally:
-        _am_callbacks.pop(cb_id, None)
-
-
-async def _apple_music_start_party(user_id: str):
-    sids = [sid for sid, uid in _sid_to_user.items() if uid == user_id]
-    if sids:
-        await sio.emit("apple_music_cmd", {"action": "party"}, to=sids[0])
-
-
-async def _execute_apple_music_tool(name: str, args: dict, user_id: str) -> str:
-    sids = [sid for sid, uid in _sid_to_user.items() if uid == user_id]
-    if not sids:
-        return "No active Apple Music session."
-    sid = sids[0]
-
-    _simple: dict[str, tuple[str, str]] = {
-        "apple_music_play": ("play", "Playback started."),
-        "apple_music_pause": ("pause", "Playback paused."),
-        "apple_music_next": ("next", "Skipped to next track."),
-        "apple_music_previous": ("previous", "Back to previous track."),
-    }
-    if name in _simple:
-        action, msg = _simple[name]
-        await sio.emit("apple_music_cmd", {"action": action}, to=sid)
-        return msg
-    if name == "apple_music_now_playing":
-        return await _am_request_callback(sid, "now_playing")
-    if name == "apple_music_volume":
-        vol = max(0, min(100, int(args.get("volume_percent", 50))))
-        await sio.emit("apple_music_cmd", {"action": "volume", "value": vol / 100}, to=sid)
-        return f"Volume set to {vol}%."
-    if name == "apple_music_search_and_play":
-        type_map = {"track": "songs", "artist": "artists", "album": "albums", "playlist": "playlists"}
-        am_type = type_map.get(args.get("type", "track"), "songs")
-        return await _am_request_callback(sid, "search_and_play", {"query": args.get("query", ""), "type": am_type}, timeout=12.0)
-    return f"Unknown Apple Music tool: {name}"
-
-
-APPLE_MUSIC_TOOLS_ANTHROPIC = [
-    {"name": "apple_music_now_playing", "description": "Get the currently playing track on Apple Music.", "input_schema": {"type": "object", "properties": {}}},
-    {"name": "apple_music_play", "description": "Resume or start Apple Music playback.", "input_schema": {"type": "object", "properties": {}}},
-    {"name": "apple_music_pause", "description": "Pause Apple Music playback.", "input_schema": {"type": "object", "properties": {}}},
-    {"name": "apple_music_next", "description": "Skip to the next track on Apple Music.", "input_schema": {"type": "object", "properties": {}}},
-    {"name": "apple_music_previous", "description": "Go back to the previous track on Apple Music.", "input_schema": {"type": "object", "properties": {}}},
-    {
-        "name": "apple_music_volume",
-        "description": "Set the Apple Music playback volume (0–100).",
-        "input_schema": {
-            "type": "object",
-            "properties": {"volume_percent": {"type": "integer", "description": "Volume from 0 to 100."}},
-            "required": ["volume_percent"],
-        },
-    },
-    {
-        "name": "apple_music_search_and_play",
-        "description": "Search Apple Music and play the best matching song, artist, album, or playlist.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "query": {"type": "string", "description": "Search query (artist, song, playlist name, etc.)"},
-                "type": {"type": "string", "enum": ["track", "artist", "album", "playlist"], "description": "What to search for. Default: track."},
-            },
-            "required": ["query"],
-        },
-    },
-]
-
-APPLE_MUSIC_TOOLS_OPENAI = [
-    {
-        "type": "function",
-        "function": {"name": "apple_music_now_playing", "description": "Get the currently playing track on Apple Music.", "parameters": {"type": "object", "properties": {}}},
-    },
-    {"type": "function", "function": {"name": "apple_music_play", "description": "Resume or start Apple Music playback.", "parameters": {"type": "object", "properties": {}}}},
-    {"type": "function", "function": {"name": "apple_music_pause", "description": "Pause Apple Music playback.", "parameters": {"type": "object", "properties": {}}}},
-    {"type": "function", "function": {"name": "apple_music_next", "description": "Skip to the next track on Apple Music.", "parameters": {"type": "object", "properties": {}}}},
-    {
-        "type": "function",
-        "function": {"name": "apple_music_previous", "description": "Go back to the previous track on Apple Music.", "parameters": {"type": "object", "properties": {}}},
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "apple_music_volume",
-            "description": "Set the Apple Music playback volume (0–100).",
-            "parameters": {"type": "object", "properties": {"volume_percent": {"type": "integer", "description": "Volume 0–100."}}, "required": ["volume_percent"]},
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "apple_music_search_and_play",
-            "description": "Search Apple Music and play the best matching song, artist, album, or playlist.",
-            "parameters": {
-                "type": "object",
-                "properties": {"query": {"type": "string", "description": "Search query"}, "type": {"type": "string", "enum": ["track", "artist", "album", "playlist"]}},
-                "required": ["query"],
-            },
-        },
-    },
-]
-
-_AM_TOOL_NAMES = {t["name"] for t in APPLE_MUSIC_TOOLS_ANTHROPIC}
-
-
-def _get_apple_music_tools(config: dict, provider: str) -> list:
-    if not _apple_music_configured(config):
-        return []
-    return APPLE_MUSIC_TOOLS_ANTHROPIC if provider == "anthropic" else APPLE_MUSIC_TOOLS_OPENAI
 
 
 # ─── CALENDAR & CONTACTS (CALDAV / CARDDAV) ─────────────────────────────────
@@ -2410,6 +2051,7 @@ async def _generate_meeting_notes(state: dict, transcript: str) -> str:
 
 # ─── SOCKET.IO + FASTAPI ─────────────────────────────────────────────────────
 sio = socketio.AsyncServer(async_mode="asgi", cors_allowed_origins="*")
+_init_apple_music(sio, _sid_to_user)
 
 
 @asynccontextmanager
@@ -3481,65 +3123,14 @@ async def api_spotify_auth(request: Request):
     user_id = _get_current_user(request)
     if not user_id:
         raise HTTPException(401)
-    if not SPOTIFY_CLIENT_ID:
-        raise HTTPException(503, "Spotify not configured — set SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET in .env")
-
-    state_token = secrets.token_urlsafe(32)
-    _spotify_auth_pending[state_token] = user_id
-    if len(_spotify_auth_pending) > 200:
-        for k in list(_spotify_auth_pending.keys())[:100]:
-            _spotify_auth_pending.pop(k, None)
-
-    params = urllib.parse.urlencode(
-        {
-            "client_id": SPOTIFY_CLIENT_ID,
-            "response_type": "code",
-            "redirect_uri": f"{APP_URL}/auth/spotify/callback",
-            "scope": _SPOTIFY_SCOPES,
-            "state": state_token,
-        }
-    )
-    return RedirectResponse(f"{_SPOTIFY_AUTH_BASE}/authorize?{params}")
+    return RedirectResponse(_spotify_auth_url(user_id))
 
 
 @fast_app.get("/auth/spotify/callback")
 async def auth_spotify_callback(request: Request):
     code = request.query_params.get("code")
     state_token = request.query_params.get("state")
-    user_id = _spotify_auth_pending.pop(state_token, None) if state_token else None
-    if not user_id or not code:
-        raise HTTPException(400, "Invalid Spotify OAuth callback — state mismatch or missing code")
-
-    try:
-        async with httpx.AsyncClient(timeout=15) as c:
-            r = await c.post(
-                f"{_SPOTIFY_AUTH_BASE}/api/token",
-                data={
-                    "grant_type": "authorization_code",
-                    "code": code,
-                    "redirect_uri": f"{APP_URL}/auth/spotify/callback",
-                    "client_id": SPOTIFY_CLIENT_ID,
-                    "client_secret": SPOTIFY_CLIENT_SECRET,
-                },
-            )
-            r.raise_for_status()
-            tokens = r.json()
-    except Exception as e:
-        raise HTTPException(502, f"Spotify token exchange failed: {e}") from e
-
-    access = tokens.get("access_token", "")
-    refresh = tokens.get("refresh_token", "")
-    expiry = datetime.datetime.now().timestamp() + tokens.get("expires_in", 3600)
-
-    state = await _get_user_state(user_id)
-    config = state["config"]
-    async with _get_user_lock(user_id):
-        config["spotify_access_token"] = access
-        config["spotify_refresh_token"] = refresh
-        config["spotify_token_expiry"] = expiry
-        await _db_save_spotify_tokens(user_id, access, refresh, expiry)
-    _spotify_tokens[user_id] = {"access": access, "expiry": expiry}
-
+    await _spotify_finish_auth(state_token, code, _get_user_state, _get_user_lock)
     return RedirectResponse("/?spotify_connected=1", status_code=303)
 
 
@@ -3548,14 +3139,7 @@ async def api_spotify_disconnect(request: Request):
     user_id = _get_current_user(request)
     if not user_id:
         raise HTTPException(401)
-    state = await _get_user_state(user_id)
-    config = state["config"]
-    async with _get_user_lock(user_id):
-        config["spotify_access_token"] = ""
-        config["spotify_refresh_token"] = ""
-        config["spotify_token_expiry"] = 0.0
-        await _db_save_spotify_tokens(user_id, "", "", 0.0)
-    _spotify_tokens.pop(user_id, None)
+    await _spotify_disconnect(user_id, _get_user_state, _get_user_lock)
     return {"ok": True}
 
 
@@ -3578,18 +3162,7 @@ async def api_apple_music_user_token(request: Request):
     body = await request.json()
     token = (body.get("token") or "").strip()
     storefront = (body.get("storefront") or "us").strip().lower()
-    state = await _get_user_state(user_id)
-    config = state["config"]
-    async with _get_user_lock(user_id):
-        config["apple_music_user_token"] = token
-        config["apple_music_storefront"] = storefront
-        async with _pool().acquire() as conn:
-            await conn.execute(
-                "UPDATE user_configs SET apple_music_user_token=$2, apple_music_storefront=$3 WHERE user_id=$1",
-                user_id,
-                token,
-                storefront,
-            )
+    await _save_apple_music_user_token(user_id, token, storefront, _get_user_state, _get_user_lock)
     return {"ok": True}
 
 
@@ -3598,22 +3171,13 @@ async def api_apple_music_disconnect(request: Request):
     user_id = _get_current_user(request)
     if not user_id:
         raise HTTPException(401)
-    state = await _get_user_state(user_id)
-    config = state["config"]
-    async with _get_user_lock(user_id):
-        config["apple_music_user_token"] = ""
-        async with _pool().acquire() as conn:
-            await conn.execute("UPDATE user_configs SET apple_music_user_token='' WHERE user_id=$1", user_id)
+    await _disconnect_apple_music_user_token(user_id, _get_user_state, _get_user_lock)
     return {"ok": True}
 
 
 @sio.on("apple_music_callback")
 async def on_apple_music_callback(sid, data):
-    cb_id = (data or {}).get("cb")
-    result = (data or {}).get("result", "")
-    fut = _am_callbacks.get(cb_id)
-    if fut and not fut.done():
-        fut.set_result(result)
+    _resolve_apple_music_callback(data)
 
 
 @fast_app.get("/api/messages")

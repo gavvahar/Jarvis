@@ -211,8 +211,8 @@ Split the monolithic `app.py` (~5,900 lines) into focused modules so each integr
 - [x] **`integrations/ha.py`** — Home Assistant tool schemas, `_ha_call_service`, `_ha_get_states`, `_execute_ha_tool`
 - [x] **`integrations/myq.py`** — MyQ/Chamberlain tool schemas and execution
 - [x] **`integrations/tesla.py`** — Tesla tool schemas, token management, and execution
-- [ ] **`integrations/spotify.py`** — Spotify tool schemas, OAuth helpers, and execution
-- [ ] **`integrations/apple_music.py`** — Apple Music tool schemas and execution
+- [x] **`integrations/music/spotify.py`** — Spotify tool schemas, OAuth helpers, and execution
+- [x] **`integrations/music/apple_music.py`** — Apple Music tool schemas and execution
 - [ ] **`integrations/vision.py`** — face recognition, camera snapshots, `_vision_loop`, vision tool schemas
 - [ ] **`integrations/phase1.py`** — timers, reminders, news, calendar, contacts tool schemas and execution
 - [ ] **`integrations/phase5.py`** — routines, device alerts, Zigbee tool schemas and execution
