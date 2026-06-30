@@ -195,6 +195,7 @@ _sid_to_user: dict[str, str] = {}
 def _sids_for_user(user_id: str) -> list[str]:
     return [sid for sid, uid in _sid_to_user.items() if uid == user_id]
 
+
 # {user_id: {unofficial_access, unofficial_expiry, fleet_access, fleet_expiry}}
 # {state_token: {user_id, code_verifier}}
 
