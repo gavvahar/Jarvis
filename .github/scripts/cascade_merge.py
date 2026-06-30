@@ -5,6 +5,7 @@ On success: push the merged branch.
 On conflict: abort, then open a GitHub issue listing the conflicting files
              and assign it to whoever made the last commit on the target branch.
 """
+
 import json
 import os
 import subprocess
@@ -172,7 +173,7 @@ def main():
         b = b.strip()
         if not b.startswith("origin/"):
             continue
-        name = b[len("origin/"):]
+        name = b[len("origin/") :]
         if name in SKIP_BRANCHES or name == source or name.endswith("/HEAD"):
             continue
         branches.append(name)
@@ -186,7 +187,7 @@ def main():
     trigger_sha = run(["git", "log", "-1", "--format=%H", f"origin/{source}"]).stdout.strip()
 
     for branch in branches:
-        print(f"\n{'='*60}\nCascade: {source} → {branch}")
+        print(f"\n{'=' * 60}\nCascade: {source} → {branch}")
 
         # Skip if source is already an ancestor of branch
         if run(["git", "merge-base", "--is-ancestor", f"origin/{source}", f"origin/{branch}"]).returncode == 0:
@@ -196,10 +197,16 @@ def main():
         # Reset local branch to remote state
         run_check(["git", "checkout", "-B", branch, f"origin/{branch}"])
 
-        merge = run([
-            "git", "merge", "--no-ff", f"origin/{source}",
-            "-m", f"chore: cascade merge {source} into {branch}",
-        ])
+        merge = run(
+            [
+                "git",
+                "merge",
+                "--no-ff",
+                f"origin/{source}",
+                "-m",
+                f"chore: cascade merge {source} into {branch}",
+            ]
+        )
 
         if merge.returncode == 0:
             push = run(["git", "push", push_url, branch])
