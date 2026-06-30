@@ -6,7 +6,7 @@
 
 | Priority | Phase                                          | Status      |
 | -------- | ---------------------------------------------- | ----------- |
-| 1        | Phase 2 — Always-On Wake Word                  | In Progress |
+| 1        | Phase 2 — Always-On Wake Word                  | Complete    |
 | 2        | Phase 7 — Multi-User & Household               | Complete    |
 | 3        | Phase 1 — Foundation & Parity                  | Complete    |
 | 4        | GitHub Actions & CI/CD                         | Complete    |
@@ -37,15 +37,15 @@ Get Jarvis to feature parity with Siri/Google Assistant/Alexa on core everyday t
 
 ---
 
-## Phase 2 — Always-On Wake Word ← Starting Here
+## Phase 2 — Always-On Wake Word
 
 Move from browser/spacebar activation to always-listening hardware-grade detection.
 
 - [x] **Local wake word engine** — openWakeWord with custom "hey_jarvis" model; threshold tunable via env
-- [ ] **Replace openwakeword with direct onnxruntime** — openwakeword pulls in tflite-runtime which blocks Python 3.14; call onnxruntime directly with the same HuggingFace ONNX models (onnxruntime + huggingface-hub already installed)
+- [x] **Replace openwakeword with direct onnxruntime** — openwakeword pulls in tflite-runtime which blocks Python 3.14; call onnxruntime directly with the same HuggingFace ONNX models (onnxruntime + huggingface-hub already installed)
 - [x] **Microphone daemon** — `wake_daemon.py` runs as a systemd service (`jarvis-wake.service`)
 - [x] **Low-power standby mode** — noise gate skips inference on silence; CPU-only via systemd idle priority
-- [ ] **Multi-room wake word** — simultaneous detection across devices, first responder wins
+- [x] **Multi-room wake word** — simultaneous detection across devices, first responder wins
 - [x] **False-positive suppression** — noise gate (RMS), confidence threshold, and cooldown all implemented
 
 ---
@@ -103,7 +103,7 @@ Move from reactive (answer questions) to proactive (anticipate needs).
 
 ---
 
-## Phase 7 — Multi-User & Household ← Up Next After Phase 2
+## Phase 7 — Multi-User & Household
 
 Scale from single-user to full household with voice recognition.
 
