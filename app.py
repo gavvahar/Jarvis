@@ -97,9 +97,6 @@ from config import (
     TESLA_CLIENT_ID,
     TESLA_CLIENT_SECRET,
     SPOTIFY_CLIENT_ID,
-    VISION_POLL_INTERVAL,
-    VISION_AWAY_TIMEOUT,
-    VISION_FACE_THRESHOLD,
     MQTT_BROKER,
     MQTT_PORT,
     MQTT_USER,
@@ -159,9 +156,6 @@ from db import (
     _db_finalize_meeting,
     _db_store_doorbell_event,
     _db_get_recent_doorbell_events,
-    _db_record_detection,
-    _db_record_security_event,
-    _db_get_recent_security_events,
 )
 
 
@@ -196,6 +190,10 @@ def _clear_party_tokens(user_id: str):
 
 # socket sid → user_id
 _sid_to_user: dict[str, str] = {}
+
+
+def _sids_for_user(user_id: str) -> list[str]:
+    return [sid for sid, uid in _sid_to_user.items() if uid == user_id]
 
 # {user_id: {unofficial_access, unofficial_expiry, fleet_access, fleet_expiry}}
 # {state_token: {user_id, code_verifier}}
@@ -2277,10 +2275,6 @@ async def api_meeting_detail(request: Request, meeting_id: int):
 
 
 # ─── PHONE MESSAGES ──────────────────────────────────────────────────────────
-def _sids_for_user(user_id: str) -> list[str]:
-    return [sid for sid, uid in _sid_to_user.items() if uid == user_id]
-
-
 async def _classify_message(state: dict, sender: str, body: str) -> tuple[bool, str]:
     """Return (is_important, reason). Falls back to False on any error."""
     provider = state["provider"]

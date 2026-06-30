@@ -258,8 +258,7 @@ async def _execute_vision_tool(name: str, args: dict, user_id: str = "") -> str:
             if not members:
                 return "No one detected at home right now (or no face enrollments set up)."
             return "\n".join(
-                f"{m['name']} — {m['activity']}" + (f" in {m['room']}" if m["room"] else "") + (f" (last seen {m['last_seen_at']})" if m["last_seen_at"] else "")
-                for m in members
+                f"{m['name']} — {m['activity']}" + (f" in {m['room']}" if m["room"] else "") + (f" (last seen {m['last_seen_at']})" if m["last_seen_at"] else "") for m in members
             )
         if name == "get_security_events":
             if not user_id:
@@ -277,10 +276,7 @@ async def _execute_vision_tool(name: str, args: dict, user_id: str = "") -> str:
                 cams = await _db_list_cameras(user_id)
                 if not cams:
                     return "No cameras configured."
-                return "\n".join(
-                    f"[{c['id']}] {c['name']} ({c['source_type']}:{c['source']}) room={c['room'] or '—'} enabled={c['enabled']} privacy={c['privacy']}"
-                    for c in cams
-                )
+                return "\n".join(f"[{c['id']}] {c['name']} ({c['source_type']}:{c['source']}) room={c['room'] or '—'} enabled={c['enabled']} privacy={c['privacy']}" for c in cams)
             if action == "add":
                 name_val = (args.get("name") or "").strip()
                 src_type = args.get("source_type", "ha")
