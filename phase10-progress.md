@@ -26,7 +26,7 @@ metadata:
 | VISION button + settings panel in index.html                    | ✅ Done |
 | Socket.IO security_alert + presence_update handlers in app.js   | ✅ Done |
 | VISION panel JS (camera CRUD, face enrollment UI)               | ✅ Done |
-| _get_vision_tools registered in _stream_reply                   | ✅ Done |
+| `_get_vision_tools` registered in `_stream_reply`               | ✅ Done |
 | ROADMAP.md updated                                              | ✅ Done |
 | Room presence detection                                         | ✅ Done |
 | Activity recognition                                            | ✅ Done |
