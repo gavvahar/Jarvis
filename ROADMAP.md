@@ -37,6 +37,7 @@ Get Jarvis to feature parity with Siri/Google Assistant/Alexa on core everyday t
 Move from browser/spacebar activation to always-listening hardware-grade detection.
 
 - [x] **Local wake word engine** — openWakeWord with custom "hey_jarvis" model; threshold tunable via env
+- [ ] **Replace openwakeword with direct onnxruntime** — openwakeword pulls in tflite-runtime which blocks Python 3.14; call onnxruntime directly with the same HuggingFace ONNX models (onnxruntime + huggingface-hub already installed)
 - [x] **Microphone daemon** — `wake_daemon.py` runs as a systemd service (`jarvis-wake.service`)
 - [x] **Low-power standby mode** — noise gate skips inference on silence; CPU-only via systemd idle priority
 - [ ] **Multi-room wake word** — simultaneous detection across devices, first responder wins
