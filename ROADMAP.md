@@ -191,7 +191,7 @@ Give Jarvis full visibility and control over money — balances, spending, budge
 Automated workflows to keep the repo healthy and branches in sync.
 
 - [x] **Auto-merge staging → main** — nightly cron merges staging into main if clean
-- [ ] **Cascade merge on push** — when `staging` or `main` receives a push, automatically attempt to merge it into every other open branch; on conflict, open a detailed issue describing the conflicting files and assign it to whoever made the last commit on that branch
+- [x] **Cascade merge on push** — when `staging` or `main` receives a push, automatically attempt to merge it into every other open branch; on conflict, open a detailed issue describing the conflicting files and assign it to whoever made the last commit on that branch
 
 ---
 
