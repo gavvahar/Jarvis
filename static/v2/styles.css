@@ -1465,7 +1465,9 @@ body.mode-workspace #workspace-surface {
   padding: 0 4px;
   font-size: 0.85rem;
 }
-.vision-cam-del:hover { color: #ef4444; }
+.vision-cam-del:hover {
+  color: #ef4444;
+}
 .vision-presence-dot {
   width: 7px;
   height: 7px;

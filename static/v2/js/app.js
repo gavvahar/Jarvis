@@ -1440,7 +1440,10 @@
       visionPresenceList.innerHTML = members
         .map((m) => {
           const where = m.room ? ` &mdash; ${m.room}` : "";
-          const activity = m.activity && m.activity !== "home" ? ` <small>(${m.activity})</small>` : "";
+          const activity =
+            m.activity && m.activity !== "home"
+              ? ` <small>(${m.activity})</small>`
+              : "";
           return `<div class="vision-presence-row"><span class="vision-presence-dot"></span><span>${m.name}${where}${activity}</span></div>`;
         })
         .join("");

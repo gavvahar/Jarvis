@@ -13,23 +13,23 @@ metadata:
 
 ## Status
 
-| Feature                                                         | Status     |
-| --------------------------------------------------------------- | ---------- |
-| Camera ingestion (RTSP + HA proxy)                              | ✅ Done    |
-| Person identification (insightface buffalo_sc)                  | ✅ Done    |
-| Security alerts (unknown face + away/night mode)                | ✅ Done    |
-| Away mode (all users absent > VISION_AWAY_TIMEOUT)              | ✅ Done    |
-| Privacy controls (per-camera privacy flag)                      | ✅ Done    |
-| LLM tools (get_who_is_home, get_security_events, manage_camera) | ✅ Done    |
-| Camera/face API endpoints                                       | ✅ Done    |
-| Vision background loop registered in lifespan                   | ✅ Done    |
-| VISION button + settings panel in index.html                    | ✅ Done    |
-| Socket.IO security_alert + presence_update handlers in app.js   | ✅ Done    |
-| VISION panel JS (camera CRUD, face enrollment UI)               | ✅ Done    |
-| _get_vision_tools registered in _stream_reply                   | ✅ Done    |
-| ROADMAP.md updated                                              | ✅ Done    |
-| Room presence detection                                         | ✅ Done    |
-| Activity recognition                                            | ✅ Done    |
+| Feature                                                         | Status  |
+| --------------------------------------------------------------- | ------- |
+| Camera ingestion (RTSP + HA proxy)                              | ✅ Done |
+| Person identification (insightface buffalo_sc)                  | ✅ Done |
+| Security alerts (unknown face + away/night mode)                | ✅ Done |
+| Away mode (all users absent > VISION_AWAY_TIMEOUT)              | ✅ Done |
+| Privacy controls (per-camera privacy flag)                      | ✅ Done |
+| LLM tools (get_who_is_home, get_security_events, manage_camera) | ✅ Done |
+| Camera/face API endpoints                                       | ✅ Done |
+| Vision background loop registered in lifespan                   | ✅ Done |
+| VISION button + settings panel in index.html                    | ✅ Done |
+| Socket.IO security_alert + presence_update handlers in app.js   | ✅ Done |
+| VISION panel JS (camera CRUD, face enrollment UI)               | ✅ Done |
+| _get_vision_tools registered in _stream_reply                   | ✅ Done |
+| ROADMAP.md updated                                              | ✅ Done |
+| Room presence detection                                         | ✅ Done |
+| Activity recognition                                            | ✅ Done |
 
 ## Phase 10 complete — Phase 11 (Accessibility & Hearing Assistance) is next
 
