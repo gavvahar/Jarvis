@@ -54,7 +54,7 @@ CHUNK_SAMPLES = 1280  # 80 ms at 16 kHz
 
 # openWakeWord pipeline dimensions (fixed by the published ONNX models)
 _HF_REPO = "dscripka/openWakeWord"
-_MEL_WINDOW = 76   # mel frames fed into the embedding model per step
+_MEL_WINDOW = 76  # mel frames fed into the embedding model per step
 _EMBED_WINDOW = 16  # embeddings fed into the wake word classifier per step
 
 
@@ -81,14 +81,14 @@ def _load_model():
     ww_sess = ort.InferenceSession(ww_path, sess_options=opts)
 
     return {
-        "melspec":  melspec_sess,
-        "embed":    embed_sess,
-        "ww":       ww_sess,
-        "mel_in":   melspec_sess.get_inputs()[0].name,
-        "emb_in":   embed_sess.get_inputs()[0].name,
-        "ww_in":    ww_sess.get_inputs()[0].name,
-        "mel_buf":  deque(maxlen=_MEL_WINDOW),
-        "emb_buf":  deque(maxlen=_EMBED_WINDOW),
+        "melspec": melspec_sess,
+        "embed": embed_sess,
+        "ww": ww_sess,
+        "mel_in": melspec_sess.get_inputs()[0].name,
+        "emb_in": embed_sess.get_inputs()[0].name,
+        "ww_in": ww_sess.get_inputs()[0].name,
+        "mel_buf": deque(maxlen=_MEL_WINDOW),
+        "emb_buf": deque(maxlen=_EMBED_WINDOW),
     }
 
 
@@ -159,7 +159,9 @@ def main():
 
     log.info(
         "Listening on device '%s' | threshold=%.2f | cooldown=%.1fs",
-        DEVICE_ID, THRESHOLD, COOLDOWN,
+        DEVICE_ID,
+        THRESHOLD,
+        COOLDOWN,
     )
 
     audio_buffer = np.array([], dtype=np.int16)
