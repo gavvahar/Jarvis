@@ -42,6 +42,7 @@ from integrations.tesla import (
     _get_tesla_tools,
     _execute_tesla_tool,
     _TESLA_TOOL_NAMES,
+    _tesla_unofficial_access_token,
 )
 from config import (
     MAX_HISTORY,
