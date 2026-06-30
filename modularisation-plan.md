@@ -52,8 +52,8 @@ schema.sql  ← already extracted
 | `integrations/phase1/timers.py`     | Timers, reminders, news tool schemas + execution + `_get_phase1_tools`          | ✅ Done    |
 | `integrations/phase5.py`            | Routines, device alerts, Zigbee tools                                           | ✅ Done    |
 | `integrations/shared_lists.py`      | Shared list tools                                                               | ✅ Done    |
-| `llm.py`                            | Client builders + `_stream_reply` + `_build_system_prompt`                      | ⏳ Pending |
-| `app.py`                            | FastAPI app + lifespan + routes + Socket.IO handlers                            | ⏳ Pending |
+| `llm.py`                            | Client builders + `_stream_reply` + `_build_system_prompt`                      | ✅ Done    |
+| `app.py`                            | FastAPI app + lifespan + routes + Socket.IO handlers                            | ✅ Done    |
 
 ## Dependency Order (build bottom-up to avoid circular imports)
 

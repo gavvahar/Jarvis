@@ -13,28 +13,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import app as jarvis
 from app import (
     _build_client,
-    _build_system_prompt,
     _calendar_configured,
     _contacts_configured,
-    _execute_calendar_tool,
-    _execute_contact_lookup_tool,
-    _execute_device_alert_tool,
-    _execute_news_tool,
-    _execute_reminder_tool,
-    _execute_routine_tool,
-    _execute_shared_list_tool,
-    _execute_spotify_tool,
-    _execute_timer_tool,
-    _get_phase1_tools,
-    _get_myq_tools,
-    _get_phase5_tools,
-    _get_spotify_tools,
-    _get_tesla_tools,
     _get_user_lock,
     _ha_configured,
     _myq_configured,
     _myq_get_status,
-    _myq_set_door,
     _sids_for_user,
     _split_sentences,
     _spotify_configured,
@@ -42,11 +26,16 @@ from app import (
     _user_configured,
 )
 from integrations.ha import _ha_headers
-from integrations.phase1.calendar import _parse_ical_events
-from integrations.phase1.contacts import _parse_vcards
+from integrations.music.spotify import _execute_spotify_tool, _get_spotify_tools
+from integrations.myq import _get_myq_tools, _myq_set_door
+from integrations.phase1.calendar import _execute_calendar_tool, _parse_ical_events
+from integrations.phase1.contacts import _execute_contact_lookup_tool, _parse_vcards
 from integrations.phase1.dav import _pick_best_dav_collection
-from integrations.phase1.timers import _duration_str
-from integrations.phase5 import _evaluate_alert_condition
+from integrations.phase1.timers import _duration_str, _execute_news_tool, _execute_reminder_tool, _execute_timer_tool, _get_phase1_tools
+from integrations.phase5 import _evaluate_alert_condition, _execute_device_alert_tool, _execute_routine_tool, _get_phase5_tools
+from integrations.shared_lists import _execute_shared_list_tool
+from integrations.tesla import _get_tesla_tools
+from llm import _build_system_prompt
 from integrations.tesla import _c_to_f
 
 # ── Pure function tests ────────────────────────────────────────────────────────
