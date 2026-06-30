@@ -45,7 +45,7 @@ schema.sql  ← already extracted
 | `integrations/tesla.py`             | Tesla tool schemas + token management + execution            | ✅ Done    |
 | `integrations/music/spotify.py`     | Spotify tool schemas + OAuth + execution                     | ✅ Done    |
 | `integrations/music/apple_music.py` | Apple Music tool schemas + execution                         | ✅ Done    |
-| `integrations/vision.py`            | Face recognition + camera snapshots + `_vision_loop` + tools | ⏳ Pending |
+| `integrations/vision.py`            | Face recognition + camera snapshots + `_vision_loop` + tools | ✅ Done    |
 | `integrations/phase1.py`            | Timers, reminders, news, calendar, contacts tools            | ⏳ Pending |
 | `integrations/phase5.py`            | Routines, device alerts, Zigbee tools                        | ⏳ Pending |
 | `integrations/shared_lists.py`      | Shared list tools                                            | ✅ Done    |
