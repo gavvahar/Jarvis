@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - testing
+  pull_request:
+    branches:
+      - staging
 
 jobs:
   smoke-test:
