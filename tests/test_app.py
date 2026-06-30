@@ -831,19 +831,19 @@ class TestGetPhase5Tools:
     _no_ha = {"ha_url": "", "ha_token": ""}
 
     def test_empty_when_no_ha_and_no_mqtt(self):
-        with patch.object(jarvis, "MQTT_BROKER", ""):
+        with patch("integrations.phase5.MQTT_BROKER", ""):
             tools = _get_phase5_tools(self._no_ha, "anthropic")
         assert tools == []
 
     def test_ha_tools_included_when_configured(self):
-        with patch.object(jarvis, "MQTT_BROKER", ""):
+        with patch("integrations.phase5.MQTT_BROKER", ""):
             tools = _get_phase5_tools(self._ha_cfg, "anthropic")
         names = {t["name"] for t in tools}
         assert "manage_routine" in names
         assert "manage_device_alert" in names
 
     def test_openai_format_when_provider_openai(self):
-        with patch.object(jarvis, "MQTT_BROKER", ""):
+        with patch("integrations.phase5.MQTT_BROKER", ""):
             tools = _get_phase5_tools(self._ha_cfg, "openai")
         assert all(t["type"] == "function" for t in tools)
 
