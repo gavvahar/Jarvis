@@ -6,12 +6,7 @@ On conflict: abort, then open a GitHub issue listing the conflicting files
              and assign it to whoever made the last commit on the target branch.
 """
 
-import json
-import os
-import subprocess
-import sys
-import urllib.error
-import urllib.request
+import json, os, subprocess, sys, urllib.error, urllib.request
 from datetime import datetime, timezone
 
 SKIP_BRANCHES = {"main", "staging", "HEAD"}
