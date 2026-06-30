@@ -789,7 +789,11 @@ async def _db_add_camera(user_id: str, name: str, room: str, source_type: str, s
     async with _pool().acquire() as conn:
         return await conn.fetchval(
             "INSERT INTO cameras (user_id, name, room, source_type, source) VALUES ($1,$2,$3,$4,$5) RETURNING id",
-            user_id, name, room, source_type, source,
+            user_id,
+            name,
+            room,
+            source_type,
+            source,
         )
 
 
@@ -813,11 +817,13 @@ async def _db_update_camera(user_id: str, camera_id: int, **kwargs) -> bool:
     updates = {k: v for k, v in kwargs.items() if k in allowed}
     if not updates:
         return False
-    cols = ", ".join(f"{k}=${i+3}" for i, k in enumerate(updates))
+    cols = ", ".join(f"{k}=${i + 3}" for i, k in enumerate(updates))
     async with _pool().acquire() as conn:
         r = await conn.execute(
             f"UPDATE cameras SET {cols} WHERE id=$1 AND user_id=$2",
-            camera_id, user_id, *updates.values(),
+            camera_id,
+            user_id,
+            *updates.values(),
         )
     return r.split()[-1] != "0"
 
@@ -826,7 +832,11 @@ async def _db_record_detection(user_id: str, camera_id: int, detected_user_id: s
     async with _pool().acquire() as conn:
         await conn.execute(
             "INSERT INTO person_detections (user_id, camera_id, detected_user_id, confidence, room) VALUES ($1,$2,$3,$4,$5)",
-            user_id, camera_id, detected_user_id, confidence, room,
+            user_id,
+            camera_id,
+            detected_user_id,
+            confidence,
+            room,
         )
 
 
@@ -834,7 +844,11 @@ async def _db_record_security_event(user_id: str, camera_id: int | None, event_t
     async with _pool().acquire() as conn:
         await conn.execute(
             "INSERT INTO security_events (user_id, camera_id, event_type, room, snapshot) VALUES ($1,$2,$3,$4,$5)",
-            user_id, camera_id, event_type, room, snapshot,
+            user_id,
+            camera_id,
+            event_type,
+            room,
+            snapshot,
         )
 
 
@@ -842,7 +856,8 @@ async def _db_get_recent_security_events(user_id: str, hours: float = 24) -> lis
     async with _pool().acquire() as conn:
         rows = await conn.fetch(
             "SELECT event_type, room, detected_at FROM security_events WHERE user_id=$1 AND detected_at > NOW()-$2 ORDER BY detected_at DESC LIMIT 50",
-            user_id, datetime.timedelta(hours=hours),
+            user_id,
+            datetime.timedelta(hours=hours),
         )
     return [{"event_type": r["event_type"], "room": r["room"], "detected_at": r["detected_at"].isoformat()} for r in rows]
 
@@ -860,16 +875,15 @@ async def _db_get_who_is_home() -> list:
             """,
             cutoff,
         )
-    return [{"user_id": r["user_id"], "name": r["display_name"] or r["user_id"],
-             "last_seen_at": r["last_seen_at"].isoformat() if r["last_seen_at"] else None,
-             "room": r["room"] or ""} for r in rows]
+    return [
+        {"user_id": r["user_id"], "name": r["display_name"] or r["user_id"], "last_seen_at": r["last_seen_at"].isoformat() if r["last_seen_at"] else None, "room": r["room"] or ""}
+        for r in rows
+    ]
 
 
 async def _db_get_all_face_embeddings() -> dict:
     async with _pool().acquire() as conn:
-        rows = await conn.fetch(
-            "SELECT user_id, display_name, face_embedding FROM user_configs WHERE face_embedding IS NOT NULL"
-        )
+        rows = await conn.fetch("SELECT user_id, display_name, face_embedding FROM user_configs WHERE face_embedding IS NOT NULL")
     return {r["user_id"]: (r["face_embedding"], r["display_name"] or r["user_id"]) for r in rows}
 
 
@@ -877,7 +891,8 @@ async def _db_save_face_embedding(user_id: str, embedding: list):
     async with _pool().acquire() as conn:
         await conn.execute(
             "UPDATE user_configs SET face_embedding=$2 WHERE user_id=$1",
-            user_id, json.dumps(embedding),
+            user_id,
+            json.dumps(embedding),
         )
 
 
@@ -890,7 +905,8 @@ async def _db_update_presence(user_id: str, is_home: bool):
     async with _pool().acquire() as conn:
         await conn.execute(
             "UPDATE user_configs SET is_home=$2, last_seen_at=NOW() WHERE user_id=$1",
-            user_id, is_home,
+            user_id,
+            is_home,
         )
 
 
@@ -1392,8 +1408,22 @@ VISION_TOOLS_ANTHROPIC = [
 ]
 
 VISION_TOOLS_OPENAI = [
-    {"type": "function", "function": {"name": "get_who_is_home", "description": "List household members currently home based on camera detections.", "parameters": {"type": "object", "properties": {}}}},
-    {"type": "function", "function": {"name": "get_security_events", "description": "Get recent security events from cameras.", "parameters": {"type": "object", "properties": {"hours": {"type": "number"}}}}},
+    {
+        "type": "function",
+        "function": {
+            "name": "get_who_is_home",
+            "description": "List household members currently home based on camera detections.",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_security_events",
+            "description": "Get recent security events from cameras.",
+            "parameters": {"type": "object", "properties": {"hours": {"type": "number"}}},
+        },
+    },
     {
         "type": "function",
         "function": {
@@ -4360,6 +4390,7 @@ async def api_face_enroll_finish(request: Request):
     if not embeddings or len(embeddings) < 1:
         raise HTTPException(400, "At least 1 face sample required.")
     import numpy as _npf
+
     avg = _npf.mean([_npf.array(e) for e in embeddings], axis=0).tolist()
     await _db_save_face_embedding(user_id, avg)
     await _refresh_face_cache()

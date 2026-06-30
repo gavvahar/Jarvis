@@ -1178,28 +1178,35 @@
     }
   });
 
-  socket.on("security_alert", ({ event_type, camera, room, speak: speakText }) => {
-    const msg = speakText || "Security alert.";
-    const existing = document.getElementById("security-alert-toast");
-    if (existing) existing.remove();
-    const toast = document.createElement("div");
-    toast.id = "security-alert-toast";
-    toast.className = "doorbell-toast";
-    toast.style.borderColor = "#ef4444";
-    const loc = room ? ` — ${room}` : camera ? ` — ${camera}` : "";
-    toast.innerHTML =
-      '<div class="doorbell-toast-label" style="color:#ef4444">SECURITY ALERT' + loc.toUpperCase() + "</div>" +
-      '<div class="doorbell-toast-text">' + msg.replace(/</g, "&lt;") + "</div>";
-    toast.addEventListener("click", () => toast.remove());
-    document.body.appendChild(toast);
-    setTimeout(() => toast && toast.remove(), 12000);
-    if (!_standby) speak(msg);
-    const btn = $("vision-btn");
-    if (btn) {
-      btn.classList.add("doorbell-active");
-      setTimeout(() => btn.classList.remove("doorbell-active"), 8000);
-    }
-  });
+  socket.on(
+    "security_alert",
+    ({ event_type, camera, room, speak: speakText }) => {
+      const msg = speakText || "Security alert.";
+      const existing = document.getElementById("security-alert-toast");
+      if (existing) existing.remove();
+      const toast = document.createElement("div");
+      toast.id = "security-alert-toast";
+      toast.className = "doorbell-toast";
+      toast.style.borderColor = "#ef4444";
+      const loc = room ? ` — ${room}` : camera ? ` — ${camera}` : "";
+      toast.innerHTML =
+        '<div class="doorbell-toast-label" style="color:#ef4444">SECURITY ALERT' +
+        loc.toUpperCase() +
+        "</div>" +
+        '<div class="doorbell-toast-text">' +
+        msg.replace(/</g, "&lt;") +
+        "</div>";
+      toast.addEventListener("click", () => toast.remove());
+      document.body.appendChild(toast);
+      setTimeout(() => toast && toast.remove(), 12000);
+      if (!_standby) speak(msg);
+      const btn = $("vision-btn");
+      if (btn) {
+        btn.classList.add("doorbell-active");
+        setTimeout(() => btn.classList.remove("doorbell-active"), 8000);
+      }
+    },
+  );
 
   socket.on("presence_update", ({ name, is_home, room }) => {
     const action = is_home ? "arrived" : "left";
@@ -1395,17 +1402,20 @@
         visionCameraList.innerHTML = "<em>No cameras configured.</em>";
         return;
       }
-      visionCameraList.innerHTML = cameras.map(c =>
-        `<div class="vision-cam-row">
+      visionCameraList.innerHTML = cameras
+        .map(
+          (c) =>
+            `<div class="vision-cam-row">
           <span>${c.name} <small>(${c.source_type}:${c.source}${c.room ? " · " + c.room : ""})</small></span>
           <span class="vision-cam-badges">
             ${c.enabled ? "" : '<span class="vision-badge">OFF</span>'}
             ${c.privacy ? '<span class="vision-badge vision-badge-priv">PRIVATE</span>' : ""}
           </span>
           <button class="vision-cam-del" data-id="${c.id}">✕</button>
-        </div>`
-      ).join("");
-      visionCameraList.querySelectorAll(".vision-cam-del").forEach(btn => {
+        </div>`,
+        )
+        .join("");
+      visionCameraList.querySelectorAll(".vision-cam-del").forEach((btn) => {
         btn.addEventListener("click", async () => {
           await fetch(`/api/cameras/${btn.dataset.id}`, { method: "DELETE" });
           loadCameras();
@@ -1424,10 +1434,14 @@
       }
     });
   }
-  if (visionClose) visionClose.addEventListener("click", () => visionSettingsEl && visionSettingsEl.classList.add("setup-hidden"));
+  if (visionClose)
+    visionClose.addEventListener(
+      "click",
+      () => visionSettingsEl && visionSettingsEl.classList.add("setup-hidden"),
+    );
 
   if (visionAddForm) {
-    visionAddForm.addEventListener("submit", async e => {
+    visionAddForm.addEventListener("submit", async (e) => {
       e.preventDefault();
       const body = {
         name: $("vision-cam-name").value.trim(),
@@ -1436,7 +1450,11 @@
         room: $("vision-cam-room").value.trim(),
       };
       if (!body.name || !body.source) return;
-      await fetch("/api/cameras", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+      await fetch("/api/cameras", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
       $("vision-cam-name").value = "";
       $("vision-cam-source").value = "";
       $("vision-cam-room").value = "";
@@ -1446,7 +1464,10 @@
 
   let _faceEmbeddings = [];
   if (visionEnrollBtn) {
-    visionEnrollBtn.addEventListener("click", () => visionFaceFile && visionFaceFile.click());
+    visionEnrollBtn.addEventListener(
+      "click",
+      () => visionFaceFile && visionFaceFile.click(),
+    );
   }
   if (visionFaceFile) {
     visionFaceFile.addEventListener("change", async () => {
@@ -1455,16 +1476,27 @@
       if (visionEnrollStatus) visionEnrollStatus.textContent = "Processing…";
       const fd = new FormData();
       fd.append("image", file);
-      const r = await fetch("/api/face/enroll-sample", { method: "POST", body: fd });
+      const r = await fetch("/api/face/enroll-sample", {
+        method: "POST",
+        body: fd,
+      });
       const data = await r.json();
       if (!data.ok) {
-        if (visionEnrollStatus) visionEnrollStatus.textContent = "Error: " + data.error;
+        if (visionEnrollStatus)
+          visionEnrollStatus.textContent = "Error: " + data.error;
         return;
       }
       _faceEmbeddings.push(data.embedding);
-      const r2 = await fetch("/api/face/enroll-finish", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ embeddings: _faceEmbeddings }) });
+      const r2 = await fetch("/api/face/enroll-finish", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ embeddings: _faceEmbeddings }),
+      });
       const d2 = await r2.json();
-      if (visionEnrollStatus) visionEnrollStatus.textContent = d2.ok ? `Face enrolled (${_faceEmbeddings.length} sample${_faceEmbeddings.length > 1 ? "s" : ""}).` : "Enroll failed.";
+      if (visionEnrollStatus)
+        visionEnrollStatus.textContent = d2.ok
+          ? `Face enrolled (${_faceEmbeddings.length} sample${_faceEmbeddings.length > 1 ? "s" : ""}).`
+          : "Enroll failed.";
       visionFaceFile.value = "";
     });
   }
@@ -1472,7 +1504,8 @@
     visionEnrollClear.addEventListener("click", async () => {
       await fetch("/api/face/enrollment", { method: "DELETE" });
       _faceEmbeddings = [];
-      if (visionEnrollStatus) visionEnrollStatus.textContent = "Face data cleared.";
+      if (visionEnrollStatus)
+        visionEnrollStatus.textContent = "Face data cleared.";
     });
   }
 
