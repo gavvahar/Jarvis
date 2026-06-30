@@ -18,9 +18,7 @@ DATABASE_URL = os.environ.get("DATABASE_URL", "postgresql://jarvis:jarvis@postgr
 AUTHENTIK_URL = os.environ.get("AUTHENTIK_URL", "").rstrip("/")
 _OIDC_APP_SLUG = os.environ.get("OIDC_APP_SLUG", "").strip()
 OIDC_DISCOVERY_URL = os.environ.get("OIDC_DISCOVERY_URL", "") or (
-    f"{AUTHENTIK_URL}/application/o/{_OIDC_APP_SLUG}/.well-known/openid-configuration"
-    if AUTHENTIK_URL and _OIDC_APP_SLUG
-    else ""
+    f"{AUTHENTIK_URL}/application/o/{_OIDC_APP_SLUG}/.well-known/openid-configuration" if AUTHENTIK_URL and _OIDC_APP_SLUG else ""
 )
 OIDC_CLIENT_ID = os.environ.get("OIDC_CLIENT_ID", "")
 OIDC_CLIENT_SECRET = os.environ.get("OIDC_CLIENT_SECRET", "")
