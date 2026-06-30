@@ -213,7 +213,7 @@ Split the monolithic `app.py` (~5,900 lines) into focused modules so each integr
 - [x] **`integrations/tesla.py`** — Tesla tool schemas, token management, and execution
 - [x] **`integrations/music/spotify.py`** — Spotify tool schemas, OAuth helpers, and execution
 - [x] **`integrations/music/apple_music.py`** — Apple Music tool schemas and execution
-- [ ] **`integrations/vision.py`** — face recognition, camera snapshots, `_vision_loop`, vision tool schemas
+- [x] **`integrations/vision.py`** — face recognition, camera snapshots, `_vision_loop`, vision tool schemas
 - [ ] **`integrations/phase1.py`** — timers, reminders, news, calendar, contacts tool schemas and execution
 - [ ] **`integrations/phase5.py`** — routines, device alerts, Zigbee tool schemas and execution
 - [x] **`integrations/shared_lists.py`** — shared list tool schemas and execution
