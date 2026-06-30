@@ -17,7 +17,6 @@ from app import (
     _calendar_configured,
     _contacts_configured,
     _duration_str,
-    _evaluate_alert_condition,
     _execute_calendar_tool,
     _execute_contact_lookup_tool,
     _execute_device_alert_tool,
@@ -47,6 +46,7 @@ from app import (
     _user_configured,
 )
 from integrations.ha import _ha_headers
+from integrations.phase5 import _evaluate_alert_condition
 from integrations.tesla import _c_to_f
 
 # ── Pure function tests ────────────────────────────────────────────────────────
@@ -859,7 +859,7 @@ class TestGetPhase5Tools:
         assert all(t["type"] == "function" for t in tools)
 
     def test_zigbee_tool_added_when_mqtt_configured(self):
-        with patch.object(jarvis, "MQTT_BROKER", "mqtt.local"):
+        with patch("integrations.phase5.MQTT_BROKER", "mqtt.local"):
             tools = _get_phase5_tools(self._no_ha, "anthropic")
         names = {t["name"] for t in tools}
         assert "zigbee_control" in names
@@ -1002,7 +1002,7 @@ class TestExecuteRoutineToolMocked:
     _cfg = {"ha_url": "http://ha.local", "ha_token": "tok"}
 
     def test_create_routine(self):
-        with patch.object(jarvis, "_db_create_routine", new=AsyncMock(return_value=5)):
+        with patch("integrations.phase5._db_create_routine", new=AsyncMock(return_value=5)):
             result = asyncio.run(
                 _execute_routine_tool(
                     "u1",
@@ -1022,24 +1022,24 @@ class TestExecuteRoutineToolMocked:
         assert "step" in result.lower()
 
     def test_list_no_routines(self):
-        with patch.object(jarvis, "_db_list_routines", new=AsyncMock(return_value=[])):
+        with patch("integrations.phase5._db_list_routines", new=AsyncMock(return_value=[])):
             result = asyncio.run(_execute_routine_tool("u1", {"action": "list"}, self._cfg))
         assert "No routines" in result
 
     def test_delete_routine(self):
-        with patch.object(jarvis, "_db_delete_routine", new=AsyncMock(return_value=True)):
+        with patch("integrations.phase5._db_delete_routine", new=AsyncMock(return_value=True)):
             result = asyncio.run(_execute_routine_tool("u1", {"action": "delete", "routine_id": 1}, self._cfg))
         assert "deleted" in result.lower()
 
     def test_run_routine_not_found(self):
-        with patch.object(jarvis, "_db_list_routines", new=AsyncMock(return_value=[])):
+        with patch("integrations.phase5._db_list_routines", new=AsyncMock(return_value=[])):
             result = asyncio.run(_execute_routine_tool("u1", {"action": "run", "name": "Nonexistent"}, self._cfg))
         assert "No routine" in result
 
 
 class TestExecuteDeviceAlertToolMocked:
     def test_create_alert(self):
-        with patch.object(jarvis, "_db_create_device_alert", new=AsyncMock(return_value=3)):
+        with patch("integrations.phase5._db_create_device_alert", new=AsyncMock(return_value=3)):
             result = asyncio.run(
                 _execute_device_alert_tool(
                     "u1",
@@ -1061,12 +1061,12 @@ class TestExecuteDeviceAlertToolMocked:
         assert "Specify" in result
 
     def test_list_no_alerts(self):
-        with patch.object(jarvis, "_db_list_device_alerts", new=AsyncMock(return_value=[])):
+        with patch("integrations.phase5._db_list_device_alerts", new=AsyncMock(return_value=[])):
             result = asyncio.run(_execute_device_alert_tool("u1", {"action": "list"}))
         assert "No alert" in result
 
     def test_delete_alert(self):
-        with patch.object(jarvis, "_db_delete_device_alert", new=AsyncMock(return_value=True)):
+        with patch("integrations.phase5._db_delete_device_alert", new=AsyncMock(return_value=True)):
             result = asyncio.run(_execute_device_alert_tool("u1", {"action": "delete", "alert_id": 2}))
         assert "deleted" in result.lower()
 

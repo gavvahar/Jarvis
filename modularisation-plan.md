@@ -47,7 +47,7 @@ schema.sql  ← already extracted
 | `integrations/music/apple_music.py` | Apple Music tool schemas + execution                         | ✅ Done    |
 | `integrations/vision.py`            | Face recognition + camera snapshots + `_vision_loop` + tools | ✅ Done    |
 | `integrations/phase1.py`            | Timers, reminders, news, calendar, contacts tools            | ⏳ Pending |
-| `integrations/phase5.py`            | Routines, device alerts, Zigbee tools                        | ⏳ Pending |
+| `integrations/phase5.py`            | Routines, device alerts, Zigbee tools                        | ✅ Done    |
 | `integrations/shared_lists.py`      | Shared list tools                                            | ✅ Done    |
 | `llm.py`                            | Client builders + `_stream_reply` + `_build_system_prompt`   | ⏳ Pending |
 | `app.py`                            | FastAPI app + lifespan + routes + Socket.IO handlers         | ⏳ Pending |
