@@ -17,8 +17,17 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, File
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
-from dotenv import load_dotenv
 from personality import JARVIS_SYSTEM
+from config import (
+    MAX_HISTORY, DEFAULT_MODELS, VALID_PROVIDERS,
+    DATABASE_URL, OIDC_DISCOVERY_URL,
+    OIDC_CLIENT_ID, OIDC_CLIENT_SECRET, APP_URL, SECRET_KEY, OIDC_ADMIN_GROUP,
+    TESLA_CLIENT_ID, TESLA_CLIENT_SECRET,
+    SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET,
+    APPLE_MUSIC_TEAM_ID, APPLE_MUSIC_KEY_ID, APPLE_MUSIC_PRIVATE_KEY,
+    VISION_POLL_INTERVAL, VISION_AWAY_TIMEOUT, VISION_FACE_THRESHOLD,
+    MQTT_BROKER, MQTT_PORT, MQTT_USER, MQTT_PASSWORD, Z2M_BASE_TOPIC,
+)
 
 try:
     import jwt
@@ -42,692 +51,28 @@ try:
 except ImportError:
     _VISION_OK = False
 
-load_dotenv()
-
-# ─── CONSTANTS ────────────────────────────────────────────────────────────────
-MAX_HISTORY = 20
-
-DEFAULT_MODELS = {
-    "anthropic": "claude-haiku-4-5",
-    "openai": "gpt-4o-mini",
-    "openai_compatible": "",
-}
-VALID_PROVIDERS = set(DEFAULT_MODELS.keys())
-
-# ─── ENV ──────────────────────────────────────────────────────────────────────
-DATABASE_URL = os.environ.get("DATABASE_URL", "postgresql://jarvis:jarvis@postgres/jarvis")
-AUTHENTIK_URL = os.environ.get("AUTHENTIK_URL", "").rstrip("/")
-_OIDC_APP_SLUG = os.environ.get("OIDC_APP_SLUG", "").strip()
-OIDC_DISCOVERY_URL = os.environ.get("OIDC_DISCOVERY_URL", "") or (
-    f"{AUTHENTIK_URL}/application/o/{_OIDC_APP_SLUG}/.well-known/openid-configuration" if AUTHENTIK_URL and _OIDC_APP_SLUG else ""
+from db import (
+    _pool, _db_init, _db_ready, _db_close,
+    _db_ensure_user, _db_load_config, _db_save_config,
+    _db_set_kid_safe, _db_set_display_name, _db_save_pim_config, _db_get_household_members,
+    _db_get_or_create_webhook_token, _db_regenerate_webhook_token, _db_find_user_by_token,
+    _db_load_conversation, _db_append_message, _db_clear_conversation,
+    _db_save_voice_embedding, _db_clear_voice_embedding, _db_get_all_voice_embeddings,
+    _db_get_shared_list, _db_create_shared_list, _db_update_shared_list, _db_get_all_shared_lists,
+    _db_set_timer, _db_list_timers, _db_cancel_timer, _db_fire_due_timers,
+    _db_set_reminder, _db_list_reminders, _db_cancel_reminder, _db_fire_due_reminders,
+    _db_create_routine, _db_list_routines, _db_delete_routine, _db_toggle_routine,
+    _db_create_device_alert, _db_list_device_alerts, _db_delete_device_alert,
+    _db_get_active_device_alerts, _db_update_alert_last_fired,
+    _db_store_phone_message,
+    _db_create_meeting, _db_append_transcript_segment, _db_finalize_meeting,
+    _db_store_doorbell_event, _db_get_recent_doorbell_events,
+    _db_add_camera, _db_list_cameras, _db_delete_camera, _db_update_camera,
+    _db_record_detection, _db_record_security_event, _db_get_recent_security_events,
+    _infer_activity, _db_get_who_is_home,
+    _db_get_all_face_embeddings, _db_save_face_embedding, _db_clear_face_embedding,
+    _db_update_presence,
 )
-OIDC_CLIENT_ID = os.environ.get("OIDC_CLIENT_ID", "")
-OIDC_CLIENT_SECRET = os.environ.get("OIDC_CLIENT_SECRET", "")
-APP_URL = os.environ.get("APP_URL", "http://localhost:5000").rstrip("/")
-SECRET_KEY = os.environ.get("SECRET_KEY", "change-me")
-OIDC_ADMIN_GROUP = os.environ.get("OIDC_ADMIN_GROUP", "jarvis-admins")
-TESLA_CLIENT_ID = os.environ.get("TESLA_CLIENT_ID", "")
-TESLA_CLIENT_SECRET = os.environ.get("TESLA_CLIENT_SECRET", "")
-SPOTIFY_CLIENT_ID = os.environ.get("SPOTIFY_CLIENT_ID", "")
-SPOTIFY_CLIENT_SECRET = os.environ.get("SPOTIFY_CLIENT_SECRET", "")
-APPLE_MUSIC_TEAM_ID = os.environ.get("APPLE_MUSIC_TEAM_ID", "")
-APPLE_MUSIC_KEY_ID = os.environ.get("APPLE_MUSIC_KEY_ID", "")
-APPLE_MUSIC_PRIVATE_KEY = os.environ.get("APPLE_MUSIC_PRIVATE_KEY", "")
-VISION_POLL_INTERVAL = int(os.environ.get("VISION_POLL_INTERVAL", "30"))
-VISION_AWAY_TIMEOUT = int(os.environ.get("VISION_AWAY_TIMEOUT", "1800"))
-VISION_FACE_THRESHOLD = float(os.environ.get("VISION_FACE_THRESHOLD", "0.4"))
-
-# ─── DB ───────────────────────────────────────────────────────────────────────
-_db_pool: asyncpg.Pool | None = None
-
-
-def _pool() -> asyncpg.Pool:
-    assert _db_pool is not None, "Database pool not initialised"
-    return _db_pool
-
-
-_SCHEMA = (pathlib.Path(__file__).parent / "schema.sql").read_text()
-
-
-async def _db_init():
-    global _db_pool
-    _db_pool = await asyncpg.create_pool(DATABASE_URL, min_size=2, max_size=10)
-    async with _pool().acquire() as conn:
-        await conn.execute(_SCHEMA)
-
-
-async def _db_ensure_user(user_id: str, email: str, role: str):
-    async with _pool().acquire() as conn:
-        await conn.execute(
-            """
-            INSERT INTO user_configs (user_id, email, role)
-            VALUES ($1, $2, $3)
-            ON CONFLICT (user_id) DO UPDATE SET email = EXCLUDED.email, role = EXCLUDED.role
-            """,
-            user_id,
-            email,
-            role,
-        )
-
-
-async def _db_load_config(user_id: str) -> dict:
-    async with _pool().acquire() as conn:
-        row = await conn.fetchrow(
-            "SELECT role, provider, api_key, model, base_url, ha_url, ha_token, myq_email, myq_password, tesla_method, tesla_refresh_token, tesla_fleet_refresh_token, spotify_refresh_token, spotify_access_token, spotify_token_expiry, apple_music_user_token, apple_music_storefront, calendar_url, calendar_username, calendar_password, contacts_url, contacts_username, contacts_password, display_name, voice_embedding, is_kid_safe FROM user_configs WHERE user_id = $1",
-            user_id,
-        )
-    if row is None:
-        return {
-            "role": "user",
-            "provider": "anthropic",
-            "api_key": "",
-            "model": "claude-haiku-4-5",
-            "base_url": "",
-            "ha_url": "",
-            "ha_token": "",
-            "myq_email": "",
-            "myq_password": "",
-            "tesla_method": "",
-            "tesla_refresh_token": "",
-            "tesla_fleet_refresh_token": "",
-            "spotify_refresh_token": "",
-            "spotify_access_token": "",
-            "spotify_token_expiry": 0.0,
-            "apple_music_user_token": "",
-            "apple_music_storefront": "us",
-            "calendar_url": "",
-            "calendar_username": "",
-            "calendar_password": "",
-            "contacts_url": "",
-            "contacts_username": "",
-            "contacts_password": "",
-            "display_name": "",
-            "voice_embedding": None,
-            "is_kid_safe": False,
-        }
-    return dict(row)
-
-
-async def _db_save_config(user_id: str, config: dict):
-    async with _pool().acquire() as conn:
-        await conn.execute(
-            "INSERT INTO user_configs (user_id, email, role) VALUES ($1, '', 'user') ON CONFLICT (user_id) DO NOTHING",
-            user_id,
-        )
-        await conn.execute(
-            """
-            UPDATE user_configs
-            SET provider=$2, api_key=$3, model=$4, base_url=$5,
-                ha_url=$6, ha_token=$7, myq_email=$8, myq_password=$9,
-                updated_at=NOW()
-            WHERE user_id=$1
-            """,
-            user_id,
-            config["provider"],
-            config["api_key"],
-            config["model"],
-            config["base_url"],
-            config["ha_url"],
-            config["ha_token"],
-            config.get("myq_email", ""),
-            config.get("myq_password", ""),
-        )
-
-
-async def _db_load_conversation(user_id: str) -> list:
-    async with _pool().acquire() as conn:
-        rows = await conn.fetch(
-            """
-            SELECT role, content FROM (
-                SELECT role, content, created_at
-                FROM conversations
-                WHERE user_id = $1
-                ORDER BY created_at DESC
-                LIMIT $2
-            ) sub ORDER BY created_at ASC
-            """,
-            user_id,
-            MAX_HISTORY,
-        )
-    return [{"role": r["role"], "content": json.loads(r["content"])} for r in rows]
-
-
-async def _db_append_message(user_id: str, role: str, content):
-    async with _pool().acquire() as conn:
-        await conn.execute(
-            "INSERT INTO conversations (user_id, role, content) VALUES ($1, $2, $3)",
-            user_id,
-            role,
-            json.dumps(content),
-        )
-        await conn.execute(
-            """
-            DELETE FROM conversations
-            WHERE user_id = $1 AND id NOT IN (
-                SELECT id FROM conversations
-                WHERE user_id = $1
-                ORDER BY created_at DESC
-                LIMIT $2
-            )
-            """,
-            user_id,
-            MAX_HISTORY,
-        )
-
-
-async def _db_clear_conversation(user_id: str):
-    async with _pool().acquire() as conn:
-        await conn.execute("DELETE FROM conversations WHERE user_id = $1", user_id)
-
-
-async def _db_get_or_create_webhook_token(user_id: str) -> str:
-    async with _pool().acquire() as conn:
-        row = await conn.fetchrow("SELECT webhook_token FROM user_configs WHERE user_id = $1", user_id)
-    if row and row["webhook_token"]:
-        return row["webhook_token"]
-    token = secrets.token_hex(32)
-    async with _pool().acquire() as conn:
-        await conn.execute(
-            "UPDATE user_configs SET webhook_token = $2 WHERE user_id = $1",
-            user_id,
-            token,
-        )
-    return token
-
-
-async def _db_regenerate_webhook_token(user_id: str) -> str:
-    token = secrets.token_hex(32)
-    async with _pool().acquire() as conn:
-        await conn.execute(
-            "UPDATE user_configs SET webhook_token = $2 WHERE user_id = $1",
-            user_id,
-            token,
-        )
-    return token
-
-
-async def _db_find_user_by_token(token: str) -> str | None:
-    async with _pool().acquire() as conn:
-        row = await conn.fetchrow(
-            "SELECT user_id FROM user_configs WHERE webhook_token = $1 AND webhook_token != ''",
-            token,
-        )
-    return row["user_id"] if row else None
-
-
-async def _db_save_voice_embedding(user_id: str, embedding: list) -> None:
-    async with _pool().acquire() as conn:
-        await conn.execute(
-            "UPDATE user_configs SET voice_embedding = $2 WHERE user_id = $1",
-            user_id,
-            json.dumps(embedding),
-        )
-
-
-async def _db_clear_voice_embedding(user_id: str) -> None:
-    async with _pool().acquire() as conn:
-        await conn.execute("UPDATE user_configs SET voice_embedding = NULL WHERE user_id = $1", user_id)
-
-
-async def _db_get_all_voice_embeddings() -> dict:
-    async with _pool().acquire() as conn:
-        rows = await conn.fetch("SELECT user_id, voice_embedding, display_name, is_kid_safe FROM user_configs WHERE voice_embedding IS NOT NULL")
-    result = {}
-    for row in rows:
-        emb = row["voice_embedding"]
-        if emb:
-            parsed = json.loads(emb) if isinstance(emb, str) else emb
-            result[row["user_id"]] = (parsed, row["display_name"] or row["user_id"][:8], row["is_kid_safe"])
-    return result
-
-
-async def _db_set_kid_safe(user_id: str, value: bool) -> None:
-    async with _pool().acquire() as conn:
-        await conn.execute("UPDATE user_configs SET is_kid_safe = $2 WHERE user_id = $1", user_id, value)
-
-
-async def _db_set_display_name(user_id: str, name: str) -> None:
-    async with _pool().acquire() as conn:
-        await conn.execute("UPDATE user_configs SET display_name = $2 WHERE user_id = $1", user_id, name)
-
-
-async def _db_save_pim_config(
-    user_id: str,
-    calendar_url: str,
-    calendar_username: str,
-    calendar_password: str,
-    contacts_url: str,
-    contacts_username: str,
-    contacts_password: str,
-) -> None:
-    async with _pool().acquire() as conn:
-        await conn.execute(
-            "INSERT INTO user_configs (user_id, email, role) VALUES ($1, '', 'user') ON CONFLICT (user_id) DO NOTHING",
-            user_id,
-        )
-        await conn.execute(
-            """
-            UPDATE user_configs
-            SET calendar_url=$2, calendar_username=$3, calendar_password=$4,
-                contacts_url=$5, contacts_username=$6, contacts_password=$7,
-                updated_at=NOW()
-            WHERE user_id=$1
-            """,
-            user_id,
-            calendar_url,
-            calendar_username,
-            calendar_password,
-            contacts_url,
-            contacts_username,
-            contacts_password,
-        )
-
-
-async def _db_get_shared_list(name: str) -> list:
-    async with _pool().acquire() as conn:
-        row = await conn.fetchrow("SELECT items FROM shared_lists WHERE name = $1", name)
-    if row is None:
-        await _db_create_shared_list(name)
-        return []
-    items = row["items"]
-    return json.loads(items) if isinstance(items, str) else (items or [])
-
-
-async def _db_create_shared_list(name: str) -> None:
-    async with _pool().acquire() as conn:
-        await conn.execute("INSERT INTO shared_lists (name, items) VALUES ($1, '[]') ON CONFLICT (name) DO NOTHING", name)
-
-
-async def _db_update_shared_list(name: str, items: list) -> None:
-    async with _pool().acquire() as conn:
-        await conn.execute(
-            "INSERT INTO shared_lists (name, items, updated_at) VALUES ($1, $2, NOW()) ON CONFLICT (name) DO UPDATE SET items = $2, updated_at = NOW()",
-            name,
-            json.dumps(items),
-        )
-
-
-async def _db_get_all_shared_lists() -> dict:
-    async with _pool().acquire() as conn:
-        rows = await conn.fetch("SELECT name, items FROM shared_lists ORDER BY name")
-    result = {}
-    for row in rows:
-        items = row["items"]
-        result[row["name"]] = json.loads(items) if isinstance(items, str) else (items or [])
-    return result
-
-
-async def _db_get_household_members() -> list:
-    async with _pool().acquire() as conn:
-        rows = await conn.fetch("SELECT user_id, email, display_name, is_kid_safe, voice_embedding IS NOT NULL AS has_voice FROM user_configs ORDER BY email")
-    return [dict(r) for r in rows]
-
-
-async def _db_set_timer(user_id: str, label: str, duration_seconds: int) -> int:
-    fire_at = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None) + datetime.timedelta(seconds=duration_seconds)
-    async with _pool().acquire() as conn:
-        row = await conn.fetchrow(
-            "INSERT INTO timers (user_id, label, fire_at) VALUES ($1, $2, $3) RETURNING id",
-            user_id,
-            label,
-            fire_at,
-        )
-    return row["id"]
-
-
-async def _db_list_timers(user_id: str) -> list:
-    async with _pool().acquire() as conn:
-        rows = await conn.fetch(
-            "SELECT id, label, fire_at FROM timers WHERE user_id = $1 AND fired = FALSE AND fire_at > NOW() ORDER BY fire_at",
-            user_id,
-        )
-    return [dict(r) for r in rows]
-
-
-async def _db_cancel_timer(user_id: str, timer_id: int) -> bool:
-    async with _pool().acquire() as conn:
-        result = await conn.execute(
-            "UPDATE timers SET fired = TRUE WHERE id = $1 AND user_id = $2 AND fired = FALSE",
-            timer_id,
-            user_id,
-        )
-    return result.split()[-1] == "1"
-
-
-async def _db_fire_due_timers() -> list:
-    async with _pool().acquire() as conn:
-        rows = await conn.fetch("UPDATE timers SET fired = TRUE WHERE fire_at <= NOW() AND fired = FALSE RETURNING user_id, label")
-    return [dict(r) for r in rows]
-
-
-async def _db_set_reminder(user_id: str, text: str, fire_at: datetime.datetime, recurring_minutes: int | None) -> int:
-    async with _pool().acquire() as conn:
-        row = await conn.fetchrow(
-            "INSERT INTO reminders (user_id, text, fire_at, recurring_minutes) VALUES ($1, $2, $3, $4) RETURNING id",
-            user_id,
-            text,
-            fire_at,
-            recurring_minutes,
-        )
-    return row["id"]
-
-
-async def _db_list_reminders(user_id: str) -> list:
-    async with _pool().acquire() as conn:
-        rows = await conn.fetch(
-            "SELECT id, text, fire_at, recurring_minutes FROM reminders WHERE user_id = $1 AND active = TRUE AND fire_at > NOW() ORDER BY fire_at",
-            user_id,
-        )
-    return [dict(r) for r in rows]
-
-
-async def _db_cancel_reminder(user_id: str, reminder_id: int) -> bool:
-    async with _pool().acquire() as conn:
-        result = await conn.execute(
-            "UPDATE reminders SET active = FALSE WHERE id = $1 AND user_id = $2",
-            reminder_id,
-            user_id,
-        )
-    return result.split()[-1] == "1"
-
-
-async def _db_fire_due_reminders() -> list:
-    async with _pool().acquire() as conn:
-        rows = await conn.fetch("SELECT id, user_id, text, recurring_minutes FROM reminders WHERE fire_at <= NOW() AND active = TRUE")
-        fired = [dict(r) for r in rows]
-        for r in fired:
-            if r["recurring_minutes"]:
-                next_fire = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None) + datetime.timedelta(minutes=r["recurring_minutes"])
-                await conn.execute("UPDATE reminders SET fire_at = $2 WHERE id = $1", r["id"], next_fire)
-            else:
-                await conn.execute("UPDATE reminders SET active = FALSE WHERE id = $1", r["id"])
-    return fired
-
-
-# ─── ROUTINES DB ─────────────────────────────────────────────────────────────
-async def _db_create_routine(user_id: str, name: str, trigger_phrases: list, steps: list) -> int:
-    async with _pool().acquire() as conn:
-        row = await conn.fetchrow(
-            "INSERT INTO routines (user_id, name, trigger_phrases, steps) VALUES ($1,$2,$3,$4) RETURNING id",
-            user_id,
-            name,
-            json.dumps(trigger_phrases),
-            json.dumps(steps),
-        )
-    return row["id"]
-
-
-async def _db_list_routines(user_id: str) -> list:
-    async with _pool().acquire() as conn:
-        rows = await conn.fetch(
-            "SELECT id, name, trigger_phrases, steps, active FROM routines WHERE user_id = $1 ORDER BY name",
-            user_id,
-        )
-    result = []
-    for row in rows:
-        phrases = row["trigger_phrases"]
-        steps = row["steps"]
-        result.append(
-            {
-                "id": row["id"],
-                "name": row["name"],
-                "trigger_phrases": json.loads(phrases) if isinstance(phrases, str) else (phrases or []),
-                "steps": json.loads(steps) if isinstance(steps, str) else (steps or []),
-                "active": row["active"],
-            }
-        )
-    return result
-
-
-async def _db_delete_routine(user_id: str, routine_id: int) -> bool:
-    async with _pool().acquire() as conn:
-        result = await conn.execute("DELETE FROM routines WHERE id = $1 AND user_id = $2", routine_id, user_id)
-    return result.split()[-1] == "1"
-
-
-async def _db_toggle_routine(user_id: str, routine_id: int, active: bool) -> bool:
-    async with _pool().acquire() as conn:
-        result = await conn.execute("UPDATE routines SET active = $3 WHERE id = $1 AND user_id = $2", routine_id, user_id, active)
-    return result.split()[-1] == "1"
-
-
-# ─── DEVICE ALERTS DB ────────────────────────────────────────────────────────
-async def _db_create_device_alert(user_id: str, name: str, entity_id: str, condition: str, value: str, message: str, cooldown_minutes: int) -> int:
-    async with _pool().acquire() as conn:
-        row = await conn.fetchrow(
-            "INSERT INTO device_alert_rules (user_id, name, entity_id, condition, value, message, cooldown_minutes) VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id",
-            user_id,
-            name,
-            entity_id,
-            condition,
-            value,
-            message,
-            cooldown_minutes,
-        )
-    return row["id"]
-
-
-async def _db_list_device_alerts(user_id: str) -> list:
-    async with _pool().acquire() as conn:
-        rows = await conn.fetch(
-            "SELECT id, name, entity_id, condition, value, message, cooldown_minutes, active FROM device_alert_rules WHERE user_id = $1 ORDER BY name",
-            user_id,
-        )
-    return [dict(r) for r in rows]
-
-
-async def _db_delete_device_alert(user_id: str, alert_id: int) -> bool:
-    async with _pool().acquire() as conn:
-        result = await conn.execute("DELETE FROM device_alert_rules WHERE id = $1 AND user_id = $2", alert_id, user_id)
-    return result.split()[-1] == "1"
-
-
-async def _db_get_active_device_alerts() -> list:
-    async with _pool().acquire() as conn:
-        rows = await conn.fetch("SELECT id, user_id, name, entity_id, condition, value, message, cooldown_minutes, last_fired FROM device_alert_rules WHERE active = TRUE")
-    return [dict(r) for r in rows]
-
-
-async def _db_update_alert_last_fired(alert_id: int) -> None:
-    async with _pool().acquire() as conn:
-        await conn.execute("UPDATE device_alert_rules SET last_fired = NOW() WHERE id = $1", alert_id)
-
-
-async def _db_store_phone_message(user_id: str, sender: str, body: str, important: bool, reason: str):
-    async with _pool().acquire() as conn:
-        await conn.execute(
-            "INSERT INTO phone_messages (user_id, sender, body, important, reason) VALUES ($1, $2, $3, $4, $5)",
-            user_id,
-            sender,
-            body,
-            important,
-            reason,
-        )
-
-
-async def _db_create_meeting(user_id: str) -> int:
-    async with _pool().acquire() as conn:
-        row = await conn.fetchrow("INSERT INTO meetings (user_id) VALUES ($1) RETURNING id", user_id)
-    return row["id"]
-
-
-async def _db_append_transcript_segment(meeting_id: int, segment: str):
-    async with _pool().acquire() as conn:
-        await conn.execute(
-            "UPDATE meetings SET transcript = transcript || $2 WHERE id = $1",
-            meeting_id,
-            " " + segment,
-        )
-
-
-async def _db_finalize_meeting(meeting_id: int, notes: str):
-    async with _pool().acquire() as conn:
-        await conn.execute(
-            "UPDATE meetings SET ended_at = NOW(), notes = $2 WHERE id = $1",
-            meeting_id,
-            notes,
-        )
-
-
-async def _db_store_doorbell_event(user_id: str, event_type: str, source: str):
-    async with _pool().acquire() as conn:
-        await conn.execute(
-            "INSERT INTO doorbell_events (user_id, event_type, source) VALUES ($1, $2, $3)",
-            user_id,
-            event_type,
-            source,
-        )
-
-
-async def _db_get_recent_doorbell_events(user_id: str, hours: float = 24) -> list:
-    async with _pool().acquire() as conn:
-        rows = await conn.fetch(
-            "SELECT event_type, source, received_at FROM doorbell_events WHERE user_id = $1 AND received_at > NOW() - $2 ORDER BY received_at DESC LIMIT 50",
-            user_id,
-            datetime.timedelta(hours=hours),
-        )
-    return [
-        {
-            "event_type": r["event_type"],
-            "source": r["source"],
-            "received_at": r["received_at"].isoformat(),
-        }
-        for r in rows
-    ]
-
-
-# ─── VISION DB HELPERS ────────────────────────────────────────────────────────
-async def _db_add_camera(user_id: str, name: str, room: str, source_type: str, source: str) -> int:
-    async with _pool().acquire() as conn:
-        return await conn.fetchval(
-            "INSERT INTO cameras (user_id, name, room, source_type, source) VALUES ($1,$2,$3,$4,$5) RETURNING id",
-            user_id,
-            name,
-            room,
-            source_type,
-            source,
-        )
-
-
-async def _db_list_cameras(user_id: str) -> list:
-    async with _pool().acquire() as conn:
-        rows = await conn.fetch(
-            "SELECT id, name, room, source_type, source, enabled, privacy FROM cameras WHERE user_id=$1 ORDER BY created_at",
-            user_id,
-        )
-    return [dict(r) for r in rows]
-
-
-async def _db_delete_camera(user_id: str, camera_id: int) -> bool:
-    async with _pool().acquire() as conn:
-        r = await conn.execute("DELETE FROM cameras WHERE id=$1 AND user_id=$2", camera_id, user_id)
-    return r.split()[-1] != "0"
-
-
-async def _db_update_camera(user_id: str, camera_id: int, **kwargs) -> bool:
-    allowed = {"enabled", "privacy", "name", "room"}
-    updates = {k: v for k, v in kwargs.items() if k in allowed}
-    if not updates:
-        return False
-    cols = ", ".join(f"{k}=${i + 3}" for i, k in enumerate(updates))
-    async with _pool().acquire() as conn:
-        r = await conn.execute(
-            f"UPDATE cameras SET {cols} WHERE id=$1 AND user_id=$2",
-            camera_id,
-            user_id,
-            *updates.values(),
-        )
-    return r.split()[-1] != "0"
-
-
-async def _db_record_detection(user_id: str, camera_id: int, detected_user_id: str | None, confidence: float, room: str):
-    async with _pool().acquire() as conn:
-        await conn.execute(
-            "INSERT INTO person_detections (user_id, camera_id, detected_user_id, confidence, room) VALUES ($1,$2,$3,$4,$5)",
-            user_id,
-            camera_id,
-            detected_user_id,
-            confidence,
-            room,
-        )
-
-
-async def _db_record_security_event(user_id: str, camera_id: int | None, event_type: str, room: str, snapshot: bytes | None = None):
-    async with _pool().acquire() as conn:
-        await conn.execute(
-            "INSERT INTO security_events (user_id, camera_id, event_type, room, snapshot) VALUES ($1,$2,$3,$4,$5)",
-            user_id,
-            camera_id,
-            event_type,
-            room,
-            snapshot,
-        )
-
-
-async def _db_get_recent_security_events(user_id: str, hours: float = 24) -> list:
-    async with _pool().acquire() as conn:
-        rows = await conn.fetch(
-            "SELECT event_type, room, detected_at FROM security_events WHERE user_id=$1 AND detected_at > NOW()-$2 ORDER BY detected_at DESC LIMIT 50",
-            user_id,
-            datetime.timedelta(hours=hours),
-        )
-    return [{"event_type": r["event_type"], "room": r["room"], "detected_at": r["detected_at"].isoformat()} for r in rows]
-
-
-async def _db_get_who_is_home() -> list:
-    cutoff = datetime.timedelta(seconds=VISION_AWAY_TIMEOUT)
-    hour = datetime.datetime.now().hour
-    async with _pool().acquire() as conn:
-        rows = await conn.fetch(
-            """
-            SELECT u.user_id, u.display_name, u.is_home, u.last_seen_at,
-                   (SELECT room FROM person_detections d WHERE d.detected_user_id=u.user_id
-                    ORDER BY detected_at DESC LIMIT 1) AS room
-            FROM user_configs u
-            WHERE u.is_home = TRUE AND u.last_seen_at > NOW()-$1
-            """,
-            cutoff,
-        )
-    return [
-        {
-            "user_id": r["user_id"],
-            "name": r["display_name"] or r["user_id"],
-            "last_seen_at": r["last_seen_at"].isoformat() if r["last_seen_at"] else None,
-            "room": r["room"] or "",
-            "activity": _infer_activity(r["room"] or "", hour),
-        }
-        for r in rows
-    ]
-
-
-async def _db_get_all_face_embeddings() -> dict:
-    async with _pool().acquire() as conn:
-        rows = await conn.fetch("SELECT user_id, display_name, face_embedding FROM user_configs WHERE face_embedding IS NOT NULL")
-    return {r["user_id"]: (r["face_embedding"], r["display_name"] or r["user_id"]) for r in rows}
-
-
-async def _db_save_face_embedding(user_id: str, embedding: list):
-    async with _pool().acquire() as conn:
-        await conn.execute(
-            "UPDATE user_configs SET face_embedding=$2 WHERE user_id=$1",
-            user_id,
-            json.dumps(embedding),
-        )
-
-
-async def _db_clear_face_embedding(user_id: str):
-    async with _pool().acquire() as conn:
-        await conn.execute("UPDATE user_configs SET face_embedding=NULL WHERE user_id=$1", user_id)
-
-
-async def _db_update_presence(user_id: str, is_home: bool):
-    async with _pool().acquire() as conn:
-        await conn.execute(
-            "UPDATE user_configs SET is_home=$2, last_seen_at=NOW() WHERE user_id=$1",
-            user_id,
-            is_home,
-        )
-
 
 # ─── AUTH ─────────────────────────────────────────────────────────────────────
 _signer: URLSafeTimedSerializer | None = None
@@ -884,21 +229,6 @@ def _identify_speaker_from_embedding(embedding: list) -> tuple:
 _face_app_instance = None
 _face_cache: dict = {}  # user_id → (embedding_list, display_name)
 _presence_cache: list = []  # refreshed after every vision poll
-
-
-def _infer_activity(room: str, hour: int) -> str:
-    r = (room or "").lower()
-    if any(w in r for w in ("bedroom", "bed room", "master")):
-        return "sleeping" if (hour >= 22 or hour < 7) else "resting"
-    if "kitchen" in r:
-        return "cooking"
-    if any(w in r for w in ("gym", "exercise", "workout", "fitness")):
-        return "exercising"
-    if any(w in r for w in ("office", "study", "desk")):
-        return "working"
-    if any(w in r for w in ("bathroom", "bath", "restroom", "toilet")):
-        return "unavailable"
-    return "home"
 
 
 def _get_face_app():
@@ -3367,12 +2697,6 @@ async def _execute_contact_lookup_tool(config: dict, args: dict) -> str:
 
 
 # ─── PHASE 5: ROUTINES & DEVICE ALERTS ───────────────────────────────────────
-MQTT_BROKER = os.environ.get("MQTT_BROKER", "")
-MQTT_PORT = int(os.environ.get("MQTT_PORT", "1883"))
-MQTT_USER = os.environ.get("MQTT_USER", "")
-MQTT_PASSWORD = os.environ.get("MQTT_PASSWORD", "")
-Z2M_BASE_TOPIC = os.environ.get("Z2M_BASE_TOPIC", "zigbee2mqtt")
-
 _ROUTINE_TOOL_ANTHROPIC = {
     "name": "manage_routine",
     "description": (
@@ -3650,7 +2974,7 @@ def _evaluate_alert_condition(state: str, condition: str, value: str) -> bool:
 async def _device_alert_loop():
     while True:
         await asyncio.sleep(120)
-        if not _db_pool:
+        if not _db_ready():
             continue
         try:
             alerts = await _db_get_active_device_alerts()
@@ -3688,7 +3012,7 @@ async def _vision_loop():
     await asyncio.sleep(15)  # let startup finish
     while True:
         await asyncio.sleep(VISION_POLL_INTERVAL)
-        if not _db_pool or not _VISION_OK:
+        if not _db_ready() or not _VISION_OK:
             continue
         try:
             await _refresh_face_cache()
@@ -3903,8 +3227,7 @@ async def lifespan(application: FastAPI):
     t4.cancel()
     t5.cancel()
     t6.cancel()
-    if _db_pool:
-        await _db_pool.close()
+    await _db_close()
 
 
 _SESSION_COOKIE_OPTS = dict(httponly=True, max_age=86400 * 30, samesite="lax")
@@ -5895,7 +5218,7 @@ async def _weather_loop():
 async def _timer_reminder_loop():
     while True:
         await asyncio.sleep(30)
-        if not _db_pool:
+        if not _db_ready():
             continue
         try:
             fired_timers = await _db_fire_due_timers()
@@ -5917,7 +5240,7 @@ async def _meeting_cleanup_loop():
     while True:
         await asyncio.sleep(3600)  # check every hour
         try:
-            if _db_pool:
+            if _db_ready():
                 async with _pool().acquire() as conn:
                     result = await conn.execute("DELETE FROM meetings WHERE created_at < NOW() - INTERVAL '48 hours'")
                 if result != "DELETE 0":

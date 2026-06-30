@@ -35,8 +35,8 @@ schema.sql  ← already extracted
 
 | File                           | Contents                                                     | Status     |
 | ------------------------------ | ------------------------------------------------------------ | ---------- |
-| `config.py`                    | ENV vars, constants                                          | ⏳ Pending |
-| `db.py`                        | DB pool + all `_db_*` functions                              | ⏳ Pending |
+| `config.py`                    | ENV vars, constants                                          | ✅ Done    |
+| `db.py`                        | DB pool + all `_db_*` functions                              | ✅ Done    |
 | `auth.py`                      | OIDC, session, `_get_current_user`, `_require_admin`         | ⏳ Pending |
 | `integrations/ha.py`           | HA tool schemas + `_ha_call_service` + `_execute_ha_tool`    | ⏳ Pending |
 | `integrations/myq.py`          | MyQ tool schemas + execution                                 | ⏳ Pending |
