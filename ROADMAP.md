@@ -123,6 +123,23 @@ Make Jarvis a platform others can build on, like Alexa Skills or Google Actions.
 
 ---
 
+## Phase 9 — Financial Intelligence
+
+Give Jarvis full visibility and control over money — balances, spending, budgets, goals, and payments.
+
+- [ ] **Account aggregation** — Plaid Link for banks and credit cards; direct bank APIs (Chase, Amex, etc.) where available; unified account view in DB
+- [ ] **Balance & transaction lookup** — "what's my Chase balance?", "show my last 10 transactions" answered by voice
+- [ ] **Spending categorization** — auto-categorize transactions (food, transport, utilities, etc.); override via voice
+- [ ] **Budget tracking** — set monthly budgets by category; alert when approaching or over limit
+- [ ] **Bill & subscription detection** — surface recurring charges automatically; alert before due dates
+- [ ] **Savings goals** — "save $5k for vacation by December"; track progress and surface weekly
+- [ ] **Net worth dashboard** — aggregate all accounts (checking, savings, credit, investments) into a single number
+- [ ] **Spending alerts** — flag large, unusual, or out-of-category transactions in real time via webhook
+- [ ] **Transfer & payment initiation** — initiate bank transfers via Plaid Transfer API or direct bank APIs; confirm by voice before executing
+- [ ] **Financial briefing** — daily/weekly money summary: net cash flow, top spending categories, upcoming bills, goal progress
+
+---
+
 ## Non-Goals (for now)
 
 - Replacing a smartphone OS (we augment, not replace)
