@@ -38,6 +38,15 @@ try:
 except ImportError:
     _VOICE_ID_OK = False
 
+try:
+    import cv2 as _cv2
+    import numpy as _np_v
+    from insightface.app import FaceAnalysis as _FaceAnalysis
+
+    _VISION_OK = True
+except ImportError:
+    _VISION_OK = False
+
 load_dotenv()
 
 # ─── CONSTANTS ────────────────────────────────────────────────────────────────
@@ -69,6 +78,9 @@ SPOTIFY_CLIENT_SECRET = os.environ.get("SPOTIFY_CLIENT_SECRET", "")
 APPLE_MUSIC_TEAM_ID = os.environ.get("APPLE_MUSIC_TEAM_ID", "")
 APPLE_MUSIC_KEY_ID = os.environ.get("APPLE_MUSIC_KEY_ID", "")
 APPLE_MUSIC_PRIVATE_KEY = os.environ.get("APPLE_MUSIC_PRIVATE_KEY", "")
+VISION_POLL_INTERVAL = int(os.environ.get("VISION_POLL_INTERVAL", "30"))
+VISION_AWAY_TIMEOUT = int(os.environ.get("VISION_AWAY_TIMEOUT", "1800"))
+VISION_FACE_THRESHOLD = float(os.environ.get("VISION_FACE_THRESHOLD", "0.4"))
 
 # ─── DB ───────────────────────────────────────────────────────────────────────
 _db_pool: asyncpg.Pool | None = None
@@ -114,6 +126,9 @@ ALTER TABLE user_configs ADD COLUMN IF NOT EXISTS contacts_password TEXT NOT NUL
 ALTER TABLE user_configs ADD COLUMN IF NOT EXISTS display_name TEXT NOT NULL DEFAULT '';
 ALTER TABLE user_configs ADD COLUMN IF NOT EXISTS voice_embedding JSONB;
 ALTER TABLE user_configs ADD COLUMN IF NOT EXISTS is_kid_safe BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE user_configs ADD COLUMN IF NOT EXISTS face_embedding JSONB;
+ALTER TABLE user_configs ADD COLUMN IF NOT EXISTS is_home BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE user_configs ADD COLUMN IF NOT EXISTS last_seen_at TIMESTAMPTZ;
 
 CREATE TABLE IF NOT EXISTS shared_lists (
     id          BIGSERIAL PRIMARY KEY,
@@ -221,6 +236,44 @@ CREATE TABLE IF NOT EXISTS doorbell_events (
 );
 
 CREATE INDEX IF NOT EXISTS idx_doorbell_events_user ON doorbell_events (user_id, received_at DESC);
+
+CREATE TABLE IF NOT EXISTS cameras (
+    id          BIGSERIAL PRIMARY KEY,
+    user_id     TEXT NOT NULL REFERENCES user_configs(user_id) ON DELETE CASCADE,
+    name        TEXT NOT NULL,
+    room        TEXT NOT NULL DEFAULT '',
+    source_type TEXT NOT NULL DEFAULT 'ha',
+    source      TEXT NOT NULL DEFAULT '',
+    enabled     BOOLEAN NOT NULL DEFAULT TRUE,
+    privacy     BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_cameras_user ON cameras (user_id);
+
+CREATE TABLE IF NOT EXISTS person_detections (
+    id               BIGSERIAL PRIMARY KEY,
+    user_id          TEXT NOT NULL REFERENCES user_configs(user_id) ON DELETE CASCADE,
+    camera_id        BIGINT NOT NULL REFERENCES cameras(id) ON DELETE CASCADE,
+    detected_user_id TEXT,
+    confidence       REAL NOT NULL DEFAULT 0.0,
+    room             TEXT NOT NULL DEFAULT '',
+    detected_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_person_detections_user ON person_detections (user_id, detected_at DESC);
+
+CREATE TABLE IF NOT EXISTS security_events (
+    id          BIGSERIAL PRIMARY KEY,
+    user_id     TEXT NOT NULL REFERENCES user_configs(user_id) ON DELETE CASCADE,
+    camera_id   BIGINT REFERENCES cameras(id) ON DELETE SET NULL,
+    event_type  TEXT NOT NULL,
+    room        TEXT NOT NULL DEFAULT '',
+    snapshot    BYTEA,
+    detected_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_security_events_user ON security_events (user_id, detected_at DESC);
 """
 
 
@@ -731,6 +784,116 @@ async def _db_get_recent_doorbell_events(user_id: str, hours: float = 24) -> lis
     ]
 
 
+# ─── VISION DB HELPERS ────────────────────────────────────────────────────────
+async def _db_add_camera(user_id: str, name: str, room: str, source_type: str, source: str) -> int:
+    async with _pool().acquire() as conn:
+        return await conn.fetchval(
+            "INSERT INTO cameras (user_id, name, room, source_type, source) VALUES ($1,$2,$3,$4,$5) RETURNING id",
+            user_id, name, room, source_type, source,
+        )
+
+
+async def _db_list_cameras(user_id: str) -> list:
+    async with _pool().acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT id, name, room, source_type, source, enabled, privacy FROM cameras WHERE user_id=$1 ORDER BY created_at",
+            user_id,
+        )
+    return [dict(r) for r in rows]
+
+
+async def _db_delete_camera(user_id: str, camera_id: int) -> bool:
+    async with _pool().acquire() as conn:
+        r = await conn.execute("DELETE FROM cameras WHERE id=$1 AND user_id=$2", camera_id, user_id)
+    return r.split()[-1] != "0"
+
+
+async def _db_update_camera(user_id: str, camera_id: int, **kwargs) -> bool:
+    allowed = {"enabled", "privacy", "name", "room"}
+    updates = {k: v for k, v in kwargs.items() if k in allowed}
+    if not updates:
+        return False
+    cols = ", ".join(f"{k}=${i+3}" for i, k in enumerate(updates))
+    async with _pool().acquire() as conn:
+        r = await conn.execute(
+            f"UPDATE cameras SET {cols} WHERE id=$1 AND user_id=$2",
+            camera_id, user_id, *updates.values(),
+        )
+    return r.split()[-1] != "0"
+
+
+async def _db_record_detection(user_id: str, camera_id: int, detected_user_id: str | None, confidence: float, room: str):
+    async with _pool().acquire() as conn:
+        await conn.execute(
+            "INSERT INTO person_detections (user_id, camera_id, detected_user_id, confidence, room) VALUES ($1,$2,$3,$4,$5)",
+            user_id, camera_id, detected_user_id, confidence, room,
+        )
+
+
+async def _db_record_security_event(user_id: str, camera_id: int | None, event_type: str, room: str, snapshot: bytes | None = None):
+    async with _pool().acquire() as conn:
+        await conn.execute(
+            "INSERT INTO security_events (user_id, camera_id, event_type, room, snapshot) VALUES ($1,$2,$3,$4,$5)",
+            user_id, camera_id, event_type, room, snapshot,
+        )
+
+
+async def _db_get_recent_security_events(user_id: str, hours: float = 24) -> list:
+    async with _pool().acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT event_type, room, detected_at FROM security_events WHERE user_id=$1 AND detected_at > NOW()-$2 ORDER BY detected_at DESC LIMIT 50",
+            user_id, datetime.timedelta(hours=hours),
+        )
+    return [{"event_type": r["event_type"], "room": r["room"], "detected_at": r["detected_at"].isoformat()} for r in rows]
+
+
+async def _db_get_who_is_home() -> list:
+    cutoff = datetime.timedelta(seconds=VISION_AWAY_TIMEOUT)
+    async with _pool().acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT u.user_id, u.display_name, u.is_home, u.last_seen_at,
+                   (SELECT room FROM person_detections d WHERE d.detected_user_id=u.user_id
+                    ORDER BY detected_at DESC LIMIT 1) AS room
+            FROM user_configs u
+            WHERE u.is_home = TRUE AND u.last_seen_at > NOW()-$1
+            """,
+            cutoff,
+        )
+    return [{"user_id": r["user_id"], "name": r["display_name"] or r["user_id"],
+             "last_seen_at": r["last_seen_at"].isoformat() if r["last_seen_at"] else None,
+             "room": r["room"] or ""} for r in rows]
+
+
+async def _db_get_all_face_embeddings() -> dict:
+    async with _pool().acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT user_id, display_name, face_embedding FROM user_configs WHERE face_embedding IS NOT NULL"
+        )
+    return {r["user_id"]: (r["face_embedding"], r["display_name"] or r["user_id"]) for r in rows}
+
+
+async def _db_save_face_embedding(user_id: str, embedding: list):
+    async with _pool().acquire() as conn:
+        await conn.execute(
+            "UPDATE user_configs SET face_embedding=$2 WHERE user_id=$1",
+            user_id, json.dumps(embedding),
+        )
+
+
+async def _db_clear_face_embedding(user_id: str):
+    async with _pool().acquire() as conn:
+        await conn.execute("UPDATE user_configs SET face_embedding=NULL WHERE user_id=$1", user_id)
+
+
+async def _db_update_presence(user_id: str, is_home: bool):
+    async with _pool().acquire() as conn:
+        await conn.execute(
+            "UPDATE user_configs SET is_home=$2, last_seen_at=NOW() WHERE user_id=$1",
+            user_id, is_home,
+        )
+
+
 # ─── AUTH ─────────────────────────────────────────────────────────────────────
 _signer: URLSafeTimedSerializer | None = None
 _oidc_config: dict | None = None
@@ -880,6 +1043,103 @@ def _identify_speaker_from_embedding(embedding: list) -> tuple:
     if best_score >= _VOICE_THRESHOLD:
         return best_uid, best_name, best_safe
     return None, "guest", False
+
+
+# ─── FACE RECOGNITION ─────────────────────────────────────────────────────────
+_face_app_instance = None
+_face_cache: dict = {}  # user_id → (embedding_list, display_name)
+
+
+def _get_face_app():
+    global _face_app_instance
+    if _face_app_instance is None and _VISION_OK:
+        fa = _FaceAnalysis(name="buffalo_sc", providers=["CPUExecutionProvider"])
+        fa.prepare(ctx_id=0, det_size=(320, 320))
+        _face_app_instance = fa
+    return _face_app_instance
+
+
+def _cosine_distance(a: list, b: list) -> float:
+    av = _np_v.array(a, dtype=float)
+    bv = _np_v.array(b, dtype=float)
+    denom = _np_v.linalg.norm(av) * _np_v.linalg.norm(bv)
+    return float(1.0 - _np_v.dot(av, bv) / denom) if denom > 0 else 2.0
+
+
+def _extract_face_embedding(image_bytes: bytes) -> list | None:
+    if not _VISION_OK:
+        return None
+    fa = _get_face_app()
+    if fa is None:
+        return None
+    arr = _np_v.frombuffer(image_bytes, dtype=_np_v.uint8)
+    img = _cv2.imdecode(arr, _cv2.IMREAD_COLOR)
+    if img is None:
+        return None
+    faces = fa.get(img)
+    if not faces:
+        return None
+    return faces[0].normed_embedding.tolist()
+
+
+def _identify_faces_in_image(image_bytes: bytes) -> list:
+    """Returns list of {detected_user_id, name, confidence} for each face found."""
+    if not _VISION_OK or not _face_cache:
+        return []
+    fa = _get_face_app()
+    if fa is None:
+        return []
+    arr = _np_v.frombuffer(image_bytes, dtype=_np_v.uint8)
+    img = _cv2.imdecode(arr, _cv2.IMREAD_COLOR)
+    if img is None:
+        return []
+    faces = fa.get(img)
+    results = []
+    for face in faces:
+        emb = face.normed_embedding.tolist()
+        best_uid, best_name, best_dist = None, "unknown", 2.0
+        for uid, (stored, name) in _face_cache.items():
+            dist = _cosine_distance(emb, stored)
+            if dist < best_dist:
+                best_uid, best_name, best_dist = uid, name, dist
+        if best_dist <= VISION_FACE_THRESHOLD:
+            results.append({"detected_user_id": best_uid, "name": best_name, "confidence": round(1.0 - best_dist, 3)})
+        else:
+            results.append({"detected_user_id": None, "name": "unknown", "confidence": 0.0})
+    return results
+
+
+async def _refresh_face_cache() -> None:
+    rows = await _db_get_all_face_embeddings()
+    _face_cache.clear()
+    _face_cache.update(rows)
+
+
+# ─── CAMERA SNAPSHOTS ─────────────────────────────────────────────────────────
+async def _get_ha_camera_snapshot(ha_url: str, ha_token: str, entity_id: str) -> bytes | None:
+    url = f"{ha_url.rstrip('/')}/api/camera_proxy/{entity_id}"
+    try:
+        async with httpx.AsyncClient(timeout=10) as c:
+            r = await c.get(url, headers={"Authorization": f"Bearer {ha_token}"})
+            if r.status_code == 200:
+                return r.content
+    except Exception:
+        pass
+    return None
+
+
+def _capture_rtsp_frame(rtsp_url: str) -> bytes | None:
+    if not _VISION_OK:
+        return None
+    cap = _cv2.VideoCapture(rtsp_url)
+    try:
+        ok, frame = cap.read()
+        if not ok or frame is None:
+            return None
+        _, buf = _cv2.imencode(".jpg", frame, [_cv2.IMWRITE_JPEG_QUALITY, 70])
+        return buf.tobytes()
+    finally:
+        cap.release()
 
 
 def _get_user_lock(user_id: str) -> asyncio.Lock:
@@ -1098,6 +1358,62 @@ HA_TOOLS_OPENAI = [
     },
 ]
 
+
+VISION_TOOLS_ANTHROPIC = [
+    {
+        "name": "get_who_is_home",
+        "description": "List which household members are currently home based on recent camera detections.",
+        "input_schema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "get_security_events",
+        "description": "Get recent security events detected by cameras (unknown person, motion during away mode).",
+        "input_schema": {
+            "type": "object",
+            "properties": {"hours": {"type": "number", "description": "How many hours back to look (default 24)."}},
+        },
+    },
+    {
+        "name": "manage_camera",
+        "description": "Add, list, remove, enable, disable, or toggle privacy on cameras used for computer vision.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "action": {"type": "string", "enum": ["add", "list", "remove", "enable", "disable", "privacy_on", "privacy_off"]},
+                "name": {"type": "string", "description": "Human-readable camera name, e.g. 'Front Door'."},
+                "source_type": {"type": "string", "enum": ["ha", "rtsp"], "description": "'ha' for Home Assistant camera entity, 'rtsp' for direct stream URL."},
+                "source": {"type": "string", "description": "HA entity_id (e.g. 'camera.front_door') or RTSP URL."},
+                "room": {"type": "string", "description": "Room name, e.g. 'Living Room'."},
+                "camera_id": {"type": "integer", "description": "Camera ID (required for remove/enable/disable/privacy actions)."},
+            },
+            "required": ["action"],
+        },
+    },
+]
+
+VISION_TOOLS_OPENAI = [
+    {"type": "function", "function": {"name": "get_who_is_home", "description": "List household members currently home based on camera detections.", "parameters": {"type": "object", "properties": {}}}},
+    {"type": "function", "function": {"name": "get_security_events", "description": "Get recent security events from cameras.", "parameters": {"type": "object", "properties": {"hours": {"type": "number"}}}}},
+    {
+        "type": "function",
+        "function": {
+            "name": "manage_camera",
+            "description": "Add, list, remove, enable, disable, or toggle privacy on cameras.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {"type": "string", "enum": ["add", "list", "remove", "enable", "disable", "privacy_on", "privacy_off"]},
+                    "name": {"type": "string"},
+                    "source_type": {"type": "string", "enum": ["ha", "rtsp"]},
+                    "source": {"type": "string"},
+                    "room": {"type": "string"},
+                    "camera_id": {"type": "integer"},
+                },
+                "required": ["action"],
+            },
+        },
+    },
+]
 
 MYQ_TOOLS_ANTHROPIC = [
     {
@@ -1732,6 +2048,50 @@ async def _execute_ha_tool(config: dict, name, args, user_id: str = ""):
                     line += f" ({e['source']})"
                 lines.append(line)
             return "\n".join(lines)
+        if name == "get_who_is_home":
+            if not _VISION_OK:
+                return "Vision is not available — install opencv-python-headless and insightface."
+            members = await _db_get_who_is_home()
+            if not members:
+                return "No one detected at home right now (or no face enrollments set up)."
+            return "\n".join(f"{m['name']} — last seen {m['last_seen_at']}" + (f" in {m['room']}" if m["room"] else "") for m in members)
+        if name == "get_security_events":
+            if not user_id:
+                return "No user context available."
+            hours = float(args.get("hours", 24))
+            events = await _db_get_recent_security_events(user_id, hours)
+            if not events:
+                return f"No security events in the past {hours:.0f} hours."
+            return "\n".join(f"{e['detected_at']}: {e['event_type']}" + (f" ({e['room']})" if e["room"] else "") for e in events)
+        if name == "manage_camera":
+            if not user_id:
+                return "No user context available."
+            action = args.get("action", "list")
+            if action == "list":
+                cams = await _db_list_cameras(user_id)
+                if not cams:
+                    return "No cameras configured."
+                return "\n".join(f"[{c['id']}] {c['name']} ({c['source_type']}:{c['source']}) room={c['room'] or '—'} enabled={c['enabled']} privacy={c['privacy']}" for c in cams)
+            if action == "add":
+                name_val = (args.get("name") or "").strip()
+                src_type = args.get("source_type", "ha")
+                src = (args.get("source") or "").strip()
+                room = (args.get("room") or "").strip()
+                if not name_val or not src:
+                    return "Provide 'name' and 'source' to add a camera."
+                cid = await _db_add_camera(user_id, name_val, room, src_type, src)
+                return f"Camera '{name_val}' added (id={cid})."
+            cam_id = args.get("camera_id")
+            if not cam_id:
+                return "Provide 'camera_id' for this action."
+            if action == "remove":
+                ok = await _db_delete_camera(user_id, int(cam_id))
+                return "Camera removed." if ok else "Camera not found."
+            flag_map = {"enable": {"enabled": True}, "disable": {"enabled": False}, "privacy_on": {"privacy": True}, "privacy_off": {"privacy": False}}
+            if action in flag_map:
+                ok = await _db_update_camera(user_id, int(cam_id), **flag_map[action])
+                return "Camera updated." if ok else "Camera not found."
+            return f"Unknown action '{action}'."
         if name == "get_garage_status":
             return await _myq_get_status(config)
         if name == "set_garage_door":
@@ -3280,6 +3640,12 @@ def _get_phase5_tools(config: dict, provider: str) -> list:
     return tools
 
 
+def _get_vision_tools(provider: str) -> list:
+    if not _VISION_OK:
+        return []
+    return VISION_TOOLS_ANTHROPIC if provider == "anthropic" else VISION_TOOLS_OPENAI
+
+
 async def _run_routine(user_id: str, config: dict, steps: list) -> None:
     sids = _sids_for_user(user_id)
     for i, step in enumerate(steps):
@@ -3450,6 +3816,84 @@ async def _device_alert_loop():
             print(f"[ALERT] {e}", flush=True)
 
 
+# ─── VISION BACKGROUND LOOP ───────────────────────────────────────────────────
+async def _vision_loop():
+    await asyncio.sleep(15)  # let startup finish
+    while True:
+        await asyncio.sleep(VISION_POLL_INTERVAL)
+        if not _db_pool or not _VISION_OK:
+            continue
+        try:
+            await _refresh_face_cache()
+            async with _pool().acquire() as conn:
+                cam_rows = await conn.fetch(
+                    "SELECT c.id, c.user_id, c.name, c.room, c.source_type, c.source, "
+                    "u.ha_url, u.ha_token FROM cameras c "
+                    "JOIN user_configs u ON u.user_id = c.user_id "
+                    "WHERE c.enabled = TRUE AND c.privacy = FALSE"
+                )
+            for cam in cam_rows:
+                cam_id = cam["id"]
+                user_id = cam["user_id"]
+                room = cam["room"]
+                if cam["source_type"] == "ha":
+                    snapshot = await _get_ha_camera_snapshot(cam["ha_url"], cam["ha_token"], cam["source"])
+                else:
+                    snapshot = await asyncio.to_thread(_capture_rtsp_frame, cam["source"])
+                if not snapshot:
+                    continue
+
+                detections = await asyncio.to_thread(_identify_faces_in_image, snapshot)
+                if not detections:
+                    continue
+
+                now = datetime.datetime.now(datetime.timezone.utc)
+                hour = now.hour
+                for det in detections:
+                    await _db_record_detection(user_id, cam_id, det["detected_user_id"], det["confidence"], room)
+                    if det["detected_user_id"]:
+                        prev_home = False
+                        async with _pool().acquire() as conn:
+                            row = await conn.fetchrow("SELECT is_home FROM user_configs WHERE user_id=$1", det["detected_user_id"])
+                            if row:
+                                prev_home = row["is_home"]
+                        await _db_update_presence(det["detected_user_id"], True)
+                        if not prev_home:
+                            for sid in _sids_for_user(user_id):
+                                await sio.emit("presence_update", {"user_id": det["detected_user_id"], "name": det["name"], "is_home": True, "room": room}, to=sid)
+                    else:
+                        # Unknown person — alert if away mode or night hours
+                        async with _pool().acquire() as conn:
+                            cutoff = datetime.timedelta(seconds=VISION_AWAY_TIMEOUT)
+                            home_count = await conn.fetchval(
+                                "SELECT COUNT(*) FROM user_configs WHERE face_embedding IS NOT NULL AND is_home=TRUE AND last_seen_at > NOW()-$1",
+                                cutoff,
+                            )
+                        away_mode = home_count == 0
+                        night = hour >= 22 or hour < 6
+                        if away_mode or night:
+                            await _db_record_security_event(user_id, cam_id, "unknown_person", room)
+                            speak = f"Unknown person detected{' at ' + cam['name'] if cam['name'] else ''}."
+                            for sid in _sids_for_user(user_id):
+                                await sio.emit("security_alert", {"event_type": "unknown_person", "camera": cam["name"], "room": room, "speak": speak}, to=sid)
+
+            # Mark known users as away if unseen past timeout
+            async with _pool().acquire() as conn:
+                cutoff = datetime.timedelta(seconds=VISION_AWAY_TIMEOUT)
+                stale = await conn.fetch(
+                    "SELECT user_id FROM user_configs WHERE is_home=TRUE AND (last_seen_at IS NULL OR last_seen_at < NOW()-$1)",
+                    cutoff,
+                )
+            for row in stale:
+                uid = row["user_id"]
+                await _db_update_presence(uid, False)
+                for sid in _sids_for_user(uid):
+                    await sio.emit("presence_update", {"user_id": uid, "name": uid, "is_home": False, "room": ""}, to=sid)
+
+        except Exception as e:
+            print(f"[VISION] {e}", flush=True)
+
+
 # ─── CONFIG VALIDATION ────────────────────────────────────────────────────────
 def _openai_create_sync(client, model, messages, stream, max_out=500):
     last = None
@@ -3578,12 +4022,14 @@ async def lifespan(application: FastAPI):
     t3 = asyncio.create_task(_meeting_cleanup_loop())
     t4 = asyncio.create_task(_timer_reminder_loop())
     t5 = asyncio.create_task(_device_alert_loop())
+    t6 = asyncio.create_task(_vision_loop())
     yield
     t1.cancel()
     t2.cancel()
     t3.cancel()
     t4.cancel()
     t5.cancel()
+    t6.cancel()
     if _db_pool:
         await _db_pool.close()
 
@@ -3819,6 +4265,114 @@ async def api_save_config(request: Request):
         state["client"] = _build_client(provider, key, base_url)
         state["provider"] = provider
 
+    return {"ok": True}
+
+
+# ─── VISION API ───────────────────────────────────────────────────────────────
+@fast_app.get("/api/cameras")
+async def api_list_cameras(request: Request):
+    user_id = _get_current_user(request)
+    if not user_id:
+        raise HTTPException(401)
+    return {"cameras": await _db_list_cameras(user_id)}
+
+
+@fast_app.post("/api/cameras")
+async def api_add_camera(request: Request):
+    user_id = _get_current_user(request)
+    if not user_id:
+        raise HTTPException(401)
+    data = await request.json()
+    name = (data.get("name") or "").strip()[:100]
+    room = (data.get("room") or "").strip()[:100]
+    source_type = (data.get("source_type") or "ha").strip()
+    source = (data.get("source") or "").strip()[:500]
+    if not name or not source or source_type not in ("ha", "rtsp"):
+        raise HTTPException(400, "name, source, and source_type ('ha'|'rtsp') are required")
+    cam_id = await _db_add_camera(user_id, name, room, source_type, source)
+    return {"ok": True, "id": cam_id}
+
+
+@fast_app.delete("/api/cameras/{camera_id}")
+async def api_delete_camera(camera_id: int, request: Request):
+    user_id = _get_current_user(request)
+    if not user_id:
+        raise HTTPException(401)
+    ok = await _db_delete_camera(user_id, camera_id)
+    if not ok:
+        raise HTTPException(404, "Camera not found")
+    return {"ok": True}
+
+
+@fast_app.patch("/api/cameras/{camera_id}")
+async def api_update_camera(camera_id: int, request: Request):
+    user_id = _get_current_user(request)
+    if not user_id:
+        raise HTTPException(401)
+    data = await request.json()
+    allowed = {k: v for k, v in data.items() if k in {"enabled", "privacy", "name", "room"}}
+    if not allowed:
+        raise HTTPException(400, "No valid fields to update")
+    ok = await _db_update_camera(user_id, camera_id, **allowed)
+    if not ok:
+        raise HTTPException(404, "Camera not found")
+    return {"ok": True}
+
+
+@fast_app.get("/api/presence")
+async def api_presence(request: Request):
+    if not _get_current_user(request):
+        raise HTTPException(401)
+    return {"members": await _db_get_who_is_home()}
+
+
+@fast_app.get("/api/security-events")
+async def api_security_events(request: Request):
+    user_id = _get_current_user(request)
+    if not user_id:
+        raise HTTPException(401)
+    hours = float(request.query_params.get("hours", "24"))
+    return {"events": await _db_get_recent_security_events(user_id, hours)}
+
+
+@fast_app.post("/api/face/enroll-sample")
+async def api_face_enroll_sample(request: Request, image: UploadFile = File(...)):
+    if not _get_current_user(request):
+        raise HTTPException(401)
+    if not _VISION_OK:
+        return {"ok": False, "error": "Vision unavailable — install opencv-python-headless and insightface."}
+    data = await image.read()
+    embedding = await asyncio.to_thread(_extract_face_embedding, data)
+    if embedding is None:
+        return {"ok": False, "error": "No face detected in image."}
+    return {"ok": True, "embedding": embedding}
+
+
+@fast_app.post("/api/face/enroll-finish")
+async def api_face_enroll_finish(request: Request):
+    user_id = _get_current_user(request)
+    if not user_id:
+        raise HTTPException(401)
+    if not _VISION_OK:
+        raise HTTPException(400, "Vision unavailable.")
+    data = await request.json()
+    embeddings = data.get("embeddings", [])
+    if not embeddings or len(embeddings) < 1:
+        raise HTTPException(400, "At least 1 face sample required.")
+    import numpy as _npf
+    avg = _npf.mean([_npf.array(e) for e in embeddings], axis=0).tolist()
+    await _db_save_face_embedding(user_id, avg)
+    await _refresh_face_cache()
+    return {"ok": True}
+
+
+@fast_app.delete("/api/face/enrollment")
+async def api_face_enroll_delete(request: Request):
+    user_id = _get_current_user(request)
+    if not user_id:
+        raise HTTPException(401)
+    await _db_clear_face_embedding(user_id)
+    await _refresh_face_cache()
     return {"ok": True}
 
 
@@ -4834,6 +5388,7 @@ async def _stream_reply(state: dict, on_text):
         + _get_shared_list_tools(provider)
         + _get_phase1_tools(config, provider)
         + _get_phase5_tools(config, provider)
+        + _get_vision_tools(provider)
     )
     local_msgs = list(state["conversation"])
 
