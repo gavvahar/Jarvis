@@ -46,10 +46,10 @@ schema.sql  ← already extracted
 | `integrations/music/spotify.py`     | Spotify tool schemas + OAuth + execution                     | ✅ Done    |
 | `integrations/music/apple_music.py` | Apple Music tool schemas + execution                         | ✅ Done    |
 | `integrations/vision.py`            | Face recognition + camera snapshots + `_vision_loop` + tools | ✅ Done    |
-| `integrations/dav.py`               | Shared WebDAV client helpers used by calendar + contacts     | ⏳ Pending |
-| `integrations/calendar.py`          | iCal parsing, `_calendar_events_between`, `_execute_calendar_tool`, tool schema | ⏳ Pending |
-| `integrations/contacts.py`          | vCard parsing, `_lookup_contacts`, `_execute_contact_lookup_tool`, tool schema  | ⏳ Pending |
-| `integrations/timers.py`            | Timers, reminders, news tool schemas + execution + `_get_phase1_tools`          | ⏳ Pending |
+| `integrations/phase1/dav.py`        | Shared WebDAV client helpers used by calendar + contacts     | ⏳ Pending |
+| `integrations/phase1/calendar.py`   | iCal parsing, `_calendar_events_between`, `_execute_calendar_tool`, tool schema | ⏳ Pending |
+| `integrations/phase1/contacts.py`   | vCard parsing, `_lookup_contacts`, `_execute_contact_lookup_tool`, tool schema  | ⏳ Pending |
+| `integrations/phase1/timers.py`     | Timers, reminders, news tool schemas + execution + `_get_phase1_tools`          | ⏳ Pending |
 | `integrations/phase5.py`            | Routines, device alerts, Zigbee tools                        | ✅ Done    |
 | `integrations/shared_lists.py`      | Shared list tools                                            | ✅ Done    |
 | `llm.py`                            | Client builders + `_stream_reply` + `_build_system_prompt`   | ⏳ Pending |
