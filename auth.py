@@ -50,6 +50,8 @@ def _verify_session(value: str) -> str | None:
 
 
 def _get_current_user(request: Request) -> str | None:
+    if _oidc_config is None:
+        return "local"
     cookie = request.cookies.get("jarvis_session")
     if not cookie:
         return None
@@ -58,6 +60,8 @@ def _get_current_user(request: Request) -> str | None:
 
 def _get_user_from_environ(environ: dict) -> str | None:
     """Extract and verify the session cookie from a Socket.IO ASGI environ."""
+    if _oidc_config is None:
+        return "local"
     headers = dict(environ.get("headers", []))
     cookie_str = headers.get(b"cookie", b"").decode()
     for part in cookie_str.split(";"):
