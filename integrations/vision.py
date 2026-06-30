@@ -370,7 +370,7 @@ async def _vision_loop():
             async with _pool().acquire() as conn:
                 cutoff = datetime.timedelta(seconds=VISION_AWAY_TIMEOUT)
                 stale = await conn.fetch(
-                    "SELECT user_id FROM user_configs WHERE is_home=TRUE AND (last_seen_at IS NULL OR last_seen_at < NOW()-$1)",
+                    "SELECT user_id FROM user_configs WHERE is_home=TRUE AND (last_seen_at IS NULL OR last_seen_at < NOW()-$1::interval)",
                     cutoff,
                 )
             for row in stale:

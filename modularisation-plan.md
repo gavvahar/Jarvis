@@ -35,25 +35,25 @@ schema.sql  ← already extracted
 
 ## Status
 
-| File                                | Contents                                                                        | Status     |
-| ----------------------------------- | ------------------------------------------------------------------------------- | ---------- |
-| `config.py`                         | ENV vars, constants                                                             | ✅ Done    |
-| `db.py`                             | DB pool + all `_db_*` functions                                                 | ✅ Done    |
-| `auth.py`                           | OIDC, session, `_get_current_user`, `_require_admin`                            | ✅ Done    |
-| `integrations/ha.py`                | HA tool schemas + `_ha_call_service` + `_execute_ha_tool`                       | ✅ Done    |
-| `integrations/myq.py`               | MyQ tool schemas + execution                                                    | ✅ Done    |
-| `integrations/tesla.py`             | Tesla tool schemas + token management + execution                               | ✅ Done    |
-| `integrations/music/spotify.py`     | Spotify tool schemas + OAuth + execution                                        | ✅ Done    |
-| `integrations/music/apple_music.py` | Apple Music tool schemas + execution                                            | ✅ Done    |
-| `integrations/vision.py`            | Face recognition + camera snapshots + `_vision_loop` + tools                    | ✅ Done    |
-| `integrations/phase1/dav.py`        | Shared WebDAV client helpers used by calendar + contacts                        | ⏳ Pending |
-| `integrations/phase1/calendar.py`   | iCal parsing, `_calendar_events_between`, `_execute_calendar_tool`, tool schema | ⏳ Pending |
-| `integrations/phase1/contacts.py`   | vCard parsing, `_lookup_contacts`, `_execute_contact_lookup_tool`, tool schema  | ⏳ Pending |
-| `integrations/phase1/timers.py`     | Timers, reminders, news tool schemas + execution + `_get_phase1_tools`          | ⏳ Pending |
-| `integrations/phase5.py`            | Routines, device alerts, Zigbee tools                                           | ✅ Done    |
-| `integrations/shared_lists.py`      | Shared list tools                                                               | ✅ Done    |
-| `llm.py`                            | Client builders + `_stream_reply` + `_build_system_prompt`                      | ⏳ Pending |
-| `app.py`                            | FastAPI app + lifespan + routes + Socket.IO handlers                            | ⏳ Pending |
+| File                                | Contents                                                                        | Status  |
+| ----------------------------------- | ------------------------------------------------------------------------------- | ------- |
+| `config.py`                         | ENV vars, constants                                                             | ✅ Done |
+| `db.py`                             | DB pool + all `_db_*` functions                                                 | ✅ Done |
+| `auth.py`                           | OIDC, session, `_get_current_user`, `_require_admin`                            | ✅ Done |
+| `integrations/ha.py`                | HA tool schemas + `_ha_call_service` + `_execute_ha_tool`                       | ✅ Done |
+| `integrations/myq.py`               | MyQ tool schemas + execution                                                    | ✅ Done |
+| `integrations/tesla.py`             | Tesla tool schemas + token management + execution                               | ✅ Done |
+| `integrations/music/spotify.py`     | Spotify tool schemas + OAuth + execution                                        | ✅ Done |
+| `integrations/music/apple_music.py` | Apple Music tool schemas + execution                                            | ✅ Done |
+| `integrations/vision.py`            | Face recognition + camera snapshots + `_vision_loop` + tools                    | ✅ Done |
+| `integrations/phase1/dav.py`        | Shared WebDAV client helpers used by calendar + contacts                        | ✅ Done |
+| `integrations/phase1/calendar.py`   | iCal parsing, `_calendar_events_between`, `_execute_calendar_tool`, tool schema | ✅ Done |
+| `integrations/phase1/contacts.py`   | vCard parsing, `_lookup_contacts`, `_execute_contact_lookup_tool`, tool schema  | ✅ Done |
+| `integrations/phase1/timers.py`     | Timers, reminders, news tool schemas + execution + `_get_phase1_tools`          | ✅ Done |
+| `integrations/phase5.py`            | Routines, device alerts, Zigbee tools                                           | ✅ Done |
+| `integrations/shared_lists.py`      | Shared list tools                                                               | ✅ Done |
+| `llm.py`                            | Client builders + `_stream_reply` + `_build_system_prompt`                      | ✅ Done |
+| `app.py`                            | FastAPI app + lifespan + routes + Socket.IO handlers                            | ✅ Done |
 
 ## Dependency Order (build bottom-up to avoid circular imports)
 
