@@ -4,21 +4,21 @@
 
 ## Build Order
 
-| Priority | Phase                                        | Status      |
-| -------- | -------------------------------------------- | ----------- |
-| 1        | Phase 2 — Always-On Wake Word                | In Progress |
-| 2        | Phase 7 — Multi-User & Household             | Complete    |
-| 3        | Phase 1 — Foundation & Parity                | Complete    |
-| 4        | GitHub Actions & CI/CD                       | Complete    |
-| 5        | Phase 4 — Smart Speaker & Local Hardware     | Planned     |
-| 6        | Phase 5 — Deeper Smart Home                  | In Progress |
-| 7        | Phase 6 — Proactive & Ambient Intelligence   | Planned     |
-| 8        | Phase 8 — Developer & Extensibility Platform | In Progress |
-| 9        | Phase 9 — Financial Intelligence             | Planned     |
-| 10       | Phase 10 — Computer Vision & Spatial Awareness | Planned   |
-| 11       | Phase 11 — Accessibility & Hearing Assistance | Planned    |
-| 12       | Phase 12 — Mental Wellness & Social Assistance | Planned   |
-| 13       | Phase 3 — Mobile PWA                         | Last        |
+| Priority | Phase                                          | Status      |
+| -------- | ---------------------------------------------- | ----------- |
+| 1        | Phase 2 — Always-On Wake Word                  | In Progress |
+| 2        | Phase 7 — Multi-User & Household               | Complete    |
+| 3        | Phase 1 — Foundation & Parity                  | Complete    |
+| 4        | GitHub Actions & CI/CD                         | Complete    |
+| 5        | Phase 4 — Smart Speaker & Local Hardware       | Planned     |
+| 6        | Phase 5 — Deeper Smart Home                    | In Progress |
+| 7        | Phase 6 — Proactive & Ambient Intelligence     | Planned     |
+| 8        | Phase 8 — Developer & Extensibility Platform   | In Progress |
+| 9        | Phase 9 — Financial Intelligence               | Planned     |
+| 10       | Phase 10 — Computer Vision & Spatial Awareness | Planned     |
+| 11       | Phase 11 — Accessibility & Hearing Assistance  | Planned     |
+| 12       | Phase 12 — Mental Wellness & Social Assistance | Planned     |
+| 13       | Phase 3 — Mobile PWA                           | Last        |
 
 ---
 
