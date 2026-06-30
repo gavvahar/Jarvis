@@ -20,7 +20,7 @@ Run as a service:
   See systemd/jarvis-wake.service
 
 Install dependencies:
-  pip install -r requirements-daemon.txt
+  pip install -r requirements/daemon/requirements.txt
 """
 
 import os, socket, time, sys, signal, logging, numpy as np, httpx, sounddevice as sd
