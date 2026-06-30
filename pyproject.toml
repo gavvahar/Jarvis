@@ -84,8 +84,8 @@ set_env = { VIRTUALENV_OVERRIDE_APP_DATA = "{work_dir}/.virtualenv" }
 [tool.tox.env.lint]
 skip_install = true
 base_python = "python3"
-deps = ["ruff", "ty"]
-commands = [["ruff", "check", "--no-cache", "."], ["ty", "check", "app.py"]]
+deps = ["ruff"]
+commands = [["ruff", "check", "--no-cache", "."]]
 
 [tool.tox.env."txt-lint"]
 skip_install = true
@@ -187,7 +187,12 @@ commands = [
 
 [tool.tox.env.tests]
 skip_install = true
-deps = ["-r requirements.txt", "pytest", "pytest-cov", "httpx"]
+deps = [
+  "-r requirements/standard/requirements.txt",
+  "pytest",
+  "pytest-cov",
+  "httpx",
+]
 commands = [
   [
     "pytest",

@@ -20,19 +20,10 @@ Run as a service:
   See systemd/jarvis-wake.service
 
 Install dependencies:
-  pip install -r requirements-daemon.txt
+  pip install -r requirements/daemon/requirements.txt
 """
 
-import os
-import socket
-import time
-import sys
-import signal
-import logging
-
-import numpy as np
-import httpx
-import sounddevice as sd
+import os, socket, time, sys, signal, logging, numpy as np, httpx, sounddevice as sd
 from openwakeword.model import Model
 
 logging.basicConfig(

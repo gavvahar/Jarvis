@@ -8,7 +8,7 @@
 | -------- | -------------------------------------------- | ----------- |
 | 1        | Phase 2 — Always-On Wake Word                | In Progress |
 | 2        | Phase 7 — Multi-User & Household             | Complete    |
-| 3        | Phase 1 — Foundation & Parity                | In Progress |
+| 3        | Phase 1 — Foundation & Parity                | Complete    |
 | 4        | Phase 4 — Smart Speaker & Local Hardware     | Planned     |
 | 5        | Phase 5 — Deeper Smart Home                  | In Progress |
 | 6        | Phase 6 — Proactive & Ambient Intelligence   | Planned     |
@@ -23,8 +23,8 @@ Get Jarvis to feature parity with Siri/Google Assistant/Alexa on core everyday t
 
 - [x] **Timers & alarms** — set, list, cancel; spoken countdown alerts
 - [x] **Reminders** — one-time and recurring; stored in DB, surfaced via voice
-- [ ] **Calendar integration** — read/create events (Google Calendar, Apple Calendar via CalDAV)
-- [ ] **Contacts lookup** — "call Mom", "text John" via Google/iCloud contacts
+- [x] **Calendar integration** — read/create events (Google Calendar, Apple Calendar via CalDAV)
+- [x] **Contacts lookup** — "call Mom", "text John" via Google/iCloud contacts
 - [x] **Music & media control** — Spotify, Apple Music, YouTube Music (play, pause, skip, volume)
 - [x] **Shopping & to-do lists** — add items, read back, mark done (local + Todoist/OmniFocus sync)
 - [x] **Unit conversion & calculations** — handled natively by the LLM, no tool needed
@@ -37,6 +37,7 @@ Get Jarvis to feature parity with Siri/Google Assistant/Alexa on core everyday t
 Move from browser/spacebar activation to always-listening hardware-grade detection.
 
 - [x] **Local wake word engine** — openWakeWord with custom "hey_jarvis" model; threshold tunable via env
+- [ ] **Replace openwakeword with direct onnxruntime** — openwakeword pulls in tflite-runtime which blocks Python 3.14; call onnxruntime directly with the same HuggingFace ONNX models (onnxruntime + huggingface-hub already installed)
 - [x] **Microphone daemon** — `wake_daemon.py` runs as a systemd service (`jarvis-wake.service`)
 - [x] **Low-power standby mode** — noise gate skips inference on silence; CPU-only via systemd idle priority
 - [ ] **Multi-room wake word** — simultaneous detection across devices, first responder wins
@@ -119,6 +120,78 @@ Make Jarvis a platform others can build on, like Alexa Skills or Google Actions.
 - [ ] **MCP server** — expose Jarvis as a Model Context Protocol server for Claude Desktop etc.
 - [ ] **IFTTT / Zapier / Make connectors** — no-code integration layer
 - [ ] **CLI client** — `jarvis "turn off the lights"` from terminal
+
+---
+
+## Phase 12 — Mental Wellness & Social Assistance
+
+Reduce social friction for introverts and provide grounding, calm, and pattern awareness for anxiety.
+
+- [ ] **Calm mode** — on request or detected distress, switch to a slower, quieter, softer Jarvis voice and suppress non-essential notifications
+- [ ] **Breathing & grounding exercises** — guided box breathing, 4-7-8, and 5-4-3-2-1 sensory grounding by voice; hands-free, no screen required
+- [ ] **Worry dump** — "Jarvis, I need to vent" opens a low-pressure voice journal; Jarvis acknowledges without judgment and stores the entry privately
+- [ ] **Overthinking interrupt** — detect rumination loops in conversation and gently offer a reframe, a distraction, or a grounding exercise
+- [ ] **Mood check-ins** — optional daily voice check-in ("how are you feeling?"); track mood over time and surface patterns (time of day, day of week, recent events)
+- [ ] **Anxiety pattern detection** — identify recurring triggers from journal and mood data; surface insights privately ("you tend to feel anxious on Sunday evenings")
+- [ ] **Call screening & voicemail** — intercept unknown calls, transcribe voicemails to text, and suggest a text reply instead of calling back
+- [ ] **Social reply drafting** — "help me respond to this" — draft replies to messages, emails, or invitations in your voice so you don't have to start from scratch
+- [ ] **Social energy tracker** — log social commitments; warn when the week is overloaded and suggest blocking recovery time
+- [ ] **Polite decline generator** — given an event or request, draft a kind, non-awkward way to say no
+- [ ] **Therapist mode** — dedicated conversational mode that uses active listening, reflective questioning, and CBT-influenced techniques; Jarvis listens without rushing to fix, tracks session history for continuity, and escalates to real emergency resources if crisis language is detected
+
+---
+
+## Phase 11 — Accessibility & Hearing Assistance
+
+Compensate for single-sided hearing loss with visual alerts, real-time captions, and a more forgiving voice UX.
+
+- [ ] **Sound event detection** — continuously monitor mic for non-speech sounds (doorbell, smoke alarm, phone ring, knocking, baby cry); flash smart lights and push a phone notification so nothing is missed
+- [ ] **Visual TTS output** — display Jarvis's spoken response as text on screen simultaneously; never lose a reply because it was too quiet or came from the wrong direction
+- [ ] **Wake word visual confirmation** — flash a light or show an on-screen indicator when the wake word fires, so it's clear Jarvis heard you
+- [ ] **Conversation transcription** — on demand, use Whisper (already installed) to caption live in-person conversation and display it on screen or phone
+- [ ] **Media & TV captions** — capture room audio via mic and display rolling captions for TV or media playing nearby; no HDMI tap required
+- [ ] **Call transcription** — transcribe phone and video calls in real time; surface as scrollable text alongside the conversation
+- [ ] **Adjustable TTS clarity** — per-user controls for Jarvis voice speed, volume, and EQ; default to slower and louder for the hearing-impaired profile
+
+---
+
+## Phase 10 — Computer Vision & Spatial Awareness
+
+Give Jarvis eyes — know who is home, where they are, what they're doing, and flag anything unusual.
+
+- [ ] **Camera ingestion** — pull RTSP/ONVIF streams from IP cameras and USB webcams; integrate with Home Assistant camera entities
+- [ ] **Room presence detection** — identify which room each person is in; feed into response routing so audio plays from the nearest device (extends Phase 4 room presence)
+- [ ] **Person identification** — recognize household members by face; tie detections to existing user profiles for personalized responses without voice input
+- [ ] **Activity recognition** — classify what someone is doing (cooking, sleeping, exercising, watching TV) and use it to shape Jarvis behavior (e.g. don't interrupt during sleep)
+- [ ] **Security alerts** — detect unfamiliar faces, motion during night/away mode, or unexpected presence; push notification + optional camera snapshot
+- [ ] **Away mode** — automatically detect when the house is empty and arm alerts; disarm when a known face returns
+- [ ] **Privacy controls** — per-camera opt-in, all inference runs locally (no video leaves the network), configurable retention window
+
+---
+
+## Phase 9 — Financial Intelligence
+
+Give Jarvis full visibility and control over money — balances, spending, budgets, goals, and payments.
+
+- [ ] **Account aggregation** — Plaid Link for banks and credit cards; direct bank APIs (Chase, Amex, etc.) where available; unified account view in DB
+- [ ] **Balance & transaction lookup** — "what's my Chase balance?", "show my last 10 transactions" answered by voice
+- [ ] **Spending categorization** — auto-categorize transactions (food, transport, utilities, etc.); override via voice
+- [ ] **Budget tracking** — set monthly budgets by category; alert when approaching or over limit
+- [ ] **Bill & subscription detection** — surface recurring charges automatically; alert before due dates
+- [ ] **Savings goals** — "save $5k for vacation by December"; track progress and surface weekly
+- [ ] **Net worth dashboard** — aggregate all accounts (checking, savings, credit, investments) into a single number
+- [ ] **Spending alerts** — flag large, unusual, or out-of-category transactions in real time via webhook
+- [ ] **Transfer & payment initiation** — initiate bank transfers via Plaid Transfer API or direct bank APIs; confirm by voice before executing
+- [ ] **Financial briefing** — daily/weekly money summary: net cash flow, top spending categories, upcoming bills, goal progress
+
+---
+
+## GitHub Actions & CI/CD
+
+Automated workflows to keep the repo healthy and branches in sync.
+
+- [x] **Auto-merge staging → main** — nightly cron merges staging into main if clean
+- [x] **Cascade merge on push** — when `staging` or `main` receives a push, automatically attempt to merge it into every other open branch; on conflict, open a detailed issue describing the conflicting files and assign it to whoever made the last commit on that branch
 
 ---
 
