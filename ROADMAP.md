@@ -206,7 +206,7 @@ Automated workflows to keep the repo healthy and branches in sync.
 Split the monolithic `app.py` (~5,900 lines) into focused modules so each integration and layer can be found, edited, and tested in isolation.
 
 - [ ] **`config.py`** — all ENV vars and constants; no local imports
-- [ ] **`db.py`** — DB pool, `_pool()`, schema loading, and all `_db_*` helper functions
+- [x] **`db.py`** — DB pool, `_pool()`, schema loading, and all `_db_*` helper functions
 - [ ] **`auth.py`** — OIDC discovery, session signing/verification, `_get_current_user`, `_require_admin`
 - [ ] **`integrations/ha.py`** — Home Assistant tool schemas, `_ha_call_service`, `_ha_get_states`, `_execute_ha_tool`
 - [ ] **`integrations/myq.py`** — MyQ/Chamberlain tool schemas and execution
