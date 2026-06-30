@@ -319,7 +319,7 @@ async def _refresh_session(request: Request, call_next):
 @fast_app.get("/login")
 async def login(request: Request):
     if not _auth._oidc_config:
-        raise HTTPException(503, "OIDC not configured — set OIDC_DISCOVERY_URL in .env")
+        return RedirectResponse("/", status_code=302)
     state = secrets.token_urlsafe(32)
     params = {
         "client_id": OIDC_CLIENT_ID,
