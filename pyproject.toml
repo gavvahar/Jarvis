@@ -126,6 +126,7 @@ commands = [
     "ruff",
     "format",
     "--no-cache",
+    "--verbose",
     ".",
   ],
   [
@@ -133,12 +134,15 @@ commands = [
     "check",
     "--no-cache",
     "--fix",
+    "--verbose",
     ".",
   ],
   [
     "npx",
     "prettier",
     "--write",
+    "--log-level",
+    "log",
     "**/*.{css,js,html,json,yml,yaml,md}",
   ],
   [
