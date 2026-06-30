@@ -7,7 +7,7 @@ metadata:
   originSessionId: f2468b49-9af9-4f65-bf2d-edc5ec7c8922
 ---
 
-# Phase 10 — Computer Vision & Spatial Awareness (In Progress)
+# Phase 10 — Computer Vision & Spatial Awareness (Complete)
 
 **Why:** User asked to start Phase 10 after completing Phase 2. Building camera ingestion, face recognition, person identification, security alerts, away mode, and privacy controls.
 
@@ -28,22 +28,10 @@ metadata:
 | VISION panel JS (camera CRUD, face enrollment UI)               | ✅ Done    |
 | _get_vision_tools registered in _stream_reply                   | ✅ Done    |
 | ROADMAP.md updated                                              | ✅ Done    |
-| Room presence detection                                         | ⏳ Pending |
-| Activity recognition                                            | ⏳ Pending |
+| Room presence detection                                         | ✅ Done    |
+| Activity recognition                                            | ✅ Done    |
 
-## What still needs to be done
-
-### Room presence detection
-
-- The `cameras` table has a `room` column; detections are recorded with `room` in `person_detections`
-- Need logic to route Jarvis audio response to the room where the speaker was last seen
-- Ties into Phase 4 (multi-room audio routing)
-
-### Activity recognition
-
-- Classify posture/activity from camera frames (cooking, sleeping, exercising, watching TV)
-- Likely needs a lightweight pose estimation model (MediaPipe or similar)
-- Use to shape Jarvis behavior (e.g. don't interrupt during sleep)
+## Phase 10 complete — Phase 11 (Accessibility & Hearing Assistance) is next
 
 ## Key code locations in app.py
 

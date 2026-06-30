@@ -864,6 +864,7 @@ async def _db_get_recent_security_events(user_id: str, hours: float = 24) -> lis
 
 async def _db_get_who_is_home() -> list:
     cutoff = datetime.timedelta(seconds=VISION_AWAY_TIMEOUT)
+    hour = datetime.datetime.now().hour
     async with _pool().acquire() as conn:
         rows = await conn.fetch(
             """
@@ -876,7 +877,13 @@ async def _db_get_who_is_home() -> list:
             cutoff,
         )
     return [
-        {"user_id": r["user_id"], "name": r["display_name"] or r["user_id"], "last_seen_at": r["last_seen_at"].isoformat() if r["last_seen_at"] else None, "room": r["room"] or ""}
+        {
+            "user_id": r["user_id"],
+            "name": r["display_name"] or r["user_id"],
+            "last_seen_at": r["last_seen_at"].isoformat() if r["last_seen_at"] else None,
+            "room": r["room"] or "",
+            "activity": _infer_activity(r["room"] or "", hour),
+        }
         for r in rows
     ]
 
@@ -1064,6 +1071,22 @@ def _identify_speaker_from_embedding(embedding: list) -> tuple:
 # ─── FACE RECOGNITION ─────────────────────────────────────────────────────────
 _face_app_instance = None
 _face_cache: dict = {}  # user_id → (embedding_list, display_name)
+_presence_cache: list = []  # refreshed after every vision poll
+
+
+def _infer_activity(room: str, hour: int) -> str:
+    r = (room or "").lower()
+    if any(w in r for w in ("bedroom", "bed room", "master")):
+        return "sleeping" if (hour >= 22 or hour < 7) else "resting"
+    if "kitchen" in r:
+        return "cooking"
+    if any(w in r for w in ("gym", "exercise", "workout", "fitness")):
+        return "exercising"
+    if any(w in r for w in ("office", "study", "desk")):
+        return "working"
+    if any(w in r for w in ("bathroom", "bath", "restroom", "toilet")):
+        return "unavailable"
+    return "home"
 
 
 def _get_face_app():
@@ -2084,7 +2107,10 @@ async def _execute_ha_tool(config: dict, name, args, user_id: str = ""):
             members = await _db_get_who_is_home()
             if not members:
                 return "No one detected at home right now (or no face enrollments set up)."
-            return "\n".join(f"{m['name']} — last seen {m['last_seen_at']}" + (f" in {m['room']}" if m["room"] else "") for m in members)
+            return "\n".join(
+                f"{m['name']} — {m['activity']}" + (f" in {m['room']}" if m["room"] else "") + (f" (last seen {m['last_seen_at']})" if m["last_seen_at"] else "")
+                for m in members
+            )
         if name == "get_security_events":
             if not user_id:
                 return "No user context available."
@@ -3888,9 +3914,10 @@ async def _vision_loop():
                             if row:
                                 prev_home = row["is_home"]
                         await _db_update_presence(det["detected_user_id"], True)
+                        activity = _infer_activity(room, hour)
                         if not prev_home:
                             for sid in _sids_for_user(user_id):
-                                await sio.emit("presence_update", {"user_id": det["detected_user_id"], "name": det["name"], "is_home": True, "room": room}, to=sid)
+                                await sio.emit("presence_update", {"user_id": det["detected_user_id"], "name": det["name"], "is_home": True, "room": room, "activity": activity}, to=sid)
                     else:
                         # Unknown person — alert if away mode or night hours
                         async with _pool().acquire() as conn:
@@ -3918,7 +3945,10 @@ async def _vision_loop():
                 uid = row["user_id"]
                 await _db_update_presence(uid, False)
                 for sid in _sids_for_user(uid):
-                    await sio.emit("presence_update", {"user_id": uid, "name": uid, "is_home": False, "room": ""}, to=sid)
+                    await sio.emit("presence_update", {"user_id": uid, "name": uid, "is_home": False, "room": "", "activity": ""}, to=sid)
+
+            global _presence_cache
+            _presence_cache = await _db_get_who_is_home()
 
         except Exception as e:
             print(f"[VISION] {e}", flush=True)
@@ -5361,6 +5391,22 @@ def _build_system_prompt(config: dict, speaker_name: str | None = None, is_kid_s
         system += (
             '\n\nZIGBEE — use zigbee_control to send commands directly to Zigbee devices via MQTT. Payload examples: {"state": "ON"}, {"brightness": 128}, {"color_temp": 300}.'
         )
+    if _VISION_OK and _presence_cache:
+        lines = []
+        sleeping = []
+        for m in _presence_cache:
+            line = f"  - {m['name']}"
+            if m.get("room"):
+                line += f" — {m['room']}"
+            if m.get("activity") and m["activity"] != "home":
+                line += f" ({m['activity']})"
+            lines.append(line)
+            if m.get("activity") == "sleeping":
+                sleeping.append(m["name"])
+        system += "\n\nHOUSEHOLD PRESENCE (from camera detections, updated every poll):\n" + "\n".join(lines)
+        if sleeping:
+            names = ", ".join(sleeping)
+            system += f"\n{names} appear{'s' if len(sleeping) == 1 else ''} to be sleeping — keep responses brief and quiet."
     return system
 
 

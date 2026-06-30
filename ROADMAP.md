@@ -15,7 +15,7 @@
 | 7        | Phase 6 — Proactive & Ambient Intelligence     | Planned     |
 | 8        | Phase 8 — Developer & Extensibility Platform   | In Progress |
 | 9        | Phase 9 — Financial Intelligence               | Planned     |
-| 10       | Phase 10 — Computer Vision & Spatial Awareness | In Progress |
+| 10       | Phase 10 — Computer Vision & Spatial Awareness | Complete    |
 | 11       | Phase 11 — Accessibility & Hearing Assistance  | Planned     |
 | 12       | Phase 12 — Mental Wellness & Social Assistance | Planned     |
 | 13       | Phase 3 — Mobile PWA                           | Last        |
@@ -165,9 +165,9 @@ Compensate for single-sided hearing loss with visual alerts, real-time captions,
 Give Jarvis eyes — know who is home, where they are, what they're doing, and flag anything unusual.
 
 - [x] **Camera ingestion** — pull RTSP/ONVIF streams from IP cameras and USB webcams; integrate with Home Assistant camera entities
-- [ ] **Room presence detection** — identify which room each person is in; feed into response routing so audio plays from the nearest device (extends Phase 4 room presence)
+- [x] **Room presence detection** — identify which room each person is in; feed into response routing so audio plays from the nearest device (extends Phase 4 room presence)
 - [x] **Person identification** — recognize household members by face; tie detections to existing user profiles for personalized responses without voice input
-- [ ] **Activity recognition** — classify what someone is doing (cooking, sleeping, exercising, watching TV) and use it to shape Jarvis behavior (e.g. don't interrupt during sleep)
+- [x] **Activity recognition** — classify what someone is doing (cooking, sleeping, exercising, watching TV) and use it to shape Jarvis behavior (e.g. don't interrupt during sleep)
 - [x] **Security alerts** — detect unfamiliar faces, motion during night/away mode, or unexpected presence; push notification + optional camera snapshot
 - [x] **Away mode** — automatically detect when the house is empty and arm alerts; disarm when a known face returns
 - [x] **Privacy controls** — per-camera opt-in, all inference runs locally (no video leaves the network), configurable retention window

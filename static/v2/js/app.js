@@ -1212,6 +1212,7 @@
     const action = is_home ? "arrived" : "left";
     const where = room ? ` (${room})` : "";
     console.log(`[presence] ${name} ${action}${where}`);
+    loadPresence();
   });
 
   socket.on("doorbell_alert", ({ event_type, speak: speakText }) => {
@@ -1387,6 +1388,7 @@
   const visionBtn = $("vision-btn");
   const visionClose = $("vision-settings-close");
   const visionCameraList = $("vision-camera-list");
+  const visionPresenceList = $("vision-presence-list");
   const visionAddForm = $("vision-add-camera-form");
   const visionEnrollBtn = $("vision-enroll-btn");
   const visionEnrollClear = $("vision-enroll-clear-btn");
@@ -1426,10 +1428,32 @@
     }
   }
 
+  async function loadPresence() {
+    if (!visionPresenceList) return;
+    try {
+      const r = await fetch("/api/presence");
+      const { members } = await r.json();
+      if (!members || !members.length) {
+        visionPresenceList.innerHTML = "<em>No one detected home.</em>";
+        return;
+      }
+      visionPresenceList.innerHTML = members
+        .map((m) => {
+          const where = m.room ? ` &mdash; ${m.room}` : "";
+          const activity = m.activity && m.activity !== "home" ? ` <small>(${m.activity})</small>` : "";
+          return `<div class="vision-presence-row"><span class="vision-presence-dot"></span><span>${m.name}${where}${activity}</span></div>`;
+        })
+        .join("");
+    } catch {
+      visionPresenceList.innerHTML = "<em>Could not load presence.</em>";
+    }
+  }
+
   if (visionBtn) {
     visionBtn.addEventListener("click", () => {
       if (visionSettingsEl) {
         visionSettingsEl.classList.remove("setup-hidden");
+        loadPresence();
         loadCameras();
       }
     });
