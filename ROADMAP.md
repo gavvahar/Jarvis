@@ -137,6 +137,7 @@ Reduce social friction for introverts and provide grounding, calm, and pattern a
 - [ ] **Social reply drafting** — "help me respond to this" — draft replies to messages, emails, or invitations in your voice so you don't have to start from scratch
 - [ ] **Social energy tracker** — log social commitments; warn when the week is overloaded and suggest blocking recovery time
 - [ ] **Polite decline generator** — given an event or request, draft a kind, non-awkward way to say no
+- [ ] **Therapist mode** — dedicated conversational mode that uses active listening, reflective questioning, and CBT-influenced techniques; Jarvis listens without rushing to fix, tracks session history for continuity, and escalates to real emergency resources if crisis language is detected
 
 ---
 
