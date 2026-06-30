@@ -33,22 +33,22 @@ schema.sql  ← already extracted
 
 ## Status
 
-| File | Contents | Status |
-|---|---|---|
-| `config.py` | ENV vars, constants | ⏳ Pending |
-| `db.py` | DB pool + all `_db_*` functions | ⏳ Pending |
-| `auth.py` | OIDC, session, `_get_current_user`, `_require_admin` | ⏳ Pending |
-| `integrations/ha.py` | HA tool schemas + `_ha_call_service` + `_execute_ha_tool` | ⏳ Pending |
-| `integrations/myq.py` | MyQ tool schemas + execution | ⏳ Pending |
-| `integrations/tesla.py` | Tesla tool schemas + token management + execution | ⏳ Pending |
-| `integrations/spotify.py` | Spotify tool schemas + OAuth + execution | ⏳ Pending |
-| `integrations/apple_music.py` | Apple Music tool schemas + execution | ⏳ Pending |
-| `integrations/vision.py` | Face recognition + camera snapshots + `_vision_loop` + tools | ⏳ Pending |
-| `integrations/phase1.py` | Timers, reminders, news, calendar, contacts tools | ⏳ Pending |
-| `integrations/phase5.py` | Routines, device alerts, Zigbee tools | ⏳ Pending |
-| `integrations/shared_lists.py` | Shared list tools | ⏳ Pending |
-| `llm.py` | Client builders + `_stream_reply` + `_build_system_prompt` | ⏳ Pending |
-| `app.py` | FastAPI app + lifespan + routes + Socket.IO handlers | ⏳ Pending |
+| File                           | Contents                                                     | Status     |
+| ------------------------------ | ------------------------------------------------------------ | ---------- |
+| `config.py`                    | ENV vars, constants                                          | ⏳ Pending |
+| `db.py`                        | DB pool + all `_db_*` functions                              | ⏳ Pending |
+| `auth.py`                      | OIDC, session, `_get_current_user`, `_require_admin`         | ⏳ Pending |
+| `integrations/ha.py`           | HA tool schemas + `_ha_call_service` + `_execute_ha_tool`    | ⏳ Pending |
+| `integrations/myq.py`          | MyQ tool schemas + execution                                 | ⏳ Pending |
+| `integrations/tesla.py`        | Tesla tool schemas + token management + execution            | ⏳ Pending |
+| `integrations/spotify.py`      | Spotify tool schemas + OAuth + execution                     | ⏳ Pending |
+| `integrations/apple_music.py`  | Apple Music tool schemas + execution                         | ⏳ Pending |
+| `integrations/vision.py`       | Face recognition + camera snapshots + `_vision_loop` + tools | ⏳ Pending |
+| `integrations/phase1.py`       | Timers, reminders, news, calendar, contacts tools            | ⏳ Pending |
+| `integrations/phase5.py`       | Routines, device alerts, Zigbee tools                        | ⏳ Pending |
+| `integrations/shared_lists.py` | Shared list tools                                            | ⏳ Pending |
+| `llm.py`                       | Client builders + `_stream_reply` + `_build_system_prompt`   | ⏳ Pending |
+| `app.py`                       | FastAPI app + lifespan + routes + Socket.IO handlers         | ⏳ Pending |
 
 ## Dependency Order (build bottom-up to avoid circular imports)
 
@@ -83,6 +83,7 @@ def init(sio, sids_fn):
 ```
 
 Called once from lifespan in `app.py`:
+
 ```python
 import integrations.vision as vision_mod
 vision_mod.init(sio, _sids_for_user)
@@ -109,29 +110,29 @@ The same pattern applies to any other background task that needs `sio`
 
 ## Key Line Ranges in current app.py (before split)
 
-| Section | Lines |
-|---|---|
-| Imports + conditionals | 1–48 |
-| Constants + ENV | 47–79 |
-| DB pool + `_db_*` | 80–731 |
-| Auth | 732–790 |
-| Per-user state + voice | 791–882 |
-| Face recognition + vision helpers | 883–995 |
-| LLM clients | 1037–1075 |
-| HA tools + execution | 1076–1833 |
-| Tesla tools + execution | 1402–1820 |
-| Spotify tools + execution | ~1835–2050 |
-| Apple Music tools + execution | ~2050–2200 |
+| Section                                            | Lines      |
+| -------------------------------------------------- | ---------- |
+| Imports + conditionals                             | 1–48       |
+| Constants + ENV                                    | 47–79      |
+| DB pool + `_db_*`                                  | 80–731     |
+| Auth                                               | 732–790    |
+| Per-user state + voice                             | 791–882    |
+| Face recognition + vision helpers                  | 883–995    |
+| LLM clients                                        | 1037–1075  |
+| HA tools + execution                               | 1076–1833  |
+| Tesla tools + execution                            | 1402–1820  |
+| Spotify tools + execution                          | ~1835–2050 |
+| Apple Music tools + execution                      | ~2050–2200 |
 | Phase 1 tools (timers/reminders/news/cal/contacts) | ~2800–3370 |
-| Phase 5 tools (routines/alerts/zigbee) | ~3370–3650 |
-| Vision background loop | 3686–3769 |
-| Config validation + meeting notes | 3770–3880 |
-| Lifespan + middleware | 3877–3933 |
-| HTTP routes | 3934–5110 |
-| LLM streaming (`_stream_reply`) | 5110–5490 |
-| Socket.IO handlers | 5487–5690 |
-| Party guest routes | 5690–5810 |
-| Background tasks (telemetry/weather/timer/meeting) | 5807–end |
+| Phase 5 tools (routines/alerts/zigbee)             | ~3370–3650 |
+| Vision background loop                             | 3686–3769  |
+| Config validation + meeting notes                  | 3770–3880  |
+| Lifespan + middleware                              | 3877–3933  |
+| HTTP routes                                        | 3934–5110  |
+| LLM streaming (`_stream_reply`)                    | 5110–5490  |
+| Socket.IO handlers                                 | 5487–5690  |
+| Party guest routes                                 | 5690–5810  |
+| Background tasks (telemetry/weather/timer/meeting) | 5807–end   |
 
 ## How to Resume
 
