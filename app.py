@@ -20,23 +20,27 @@ from personality import JARVIS_SYSTEM
 import auth as _auth
 from auth import (
     init_signer,
-    _get_signer,
     _get_oidc_config,
     _fetch_oidc_config,
     _sign_session,
-    _verify_session,
     _get_current_user,
     _get_user_from_environ,
 )
 from integrations.shared_lists import _get_shared_list_tools, _execute_shared_list_tool
 from integrations.myq import _myq_configured, _get_myq_tools, _myq_get_status, _myq_set_door
 from integrations.ha import (
-    _ha_configured, _get_ha_tools, _validate_ha,
-    _ha_get_entity_state, _ha_get_states, _ha_call_service,
+    _ha_configured,
+    _get_ha_tools,
+    _validate_ha,
+    _ha_get_entity_state,
+    _ha_get_states,
+    _ha_call_service,
 )
 import integrations.tesla as _tesla_mod
 from integrations.tesla import (
-    _tesla_configured, _get_tesla_tools, _execute_tesla_tool,
+    _tesla_configured,
+    _get_tesla_tools,
+    _execute_tesla_tool,
     _TESLA_TOOL_NAMES,
 )
 from config import (
@@ -145,7 +149,6 @@ from db import (
     _db_clear_face_embedding,
     _db_update_presence,
 )
-
 
 
 # ─── PER-USER STATE ───────────────────────────────────────────────────────────
@@ -485,6 +488,7 @@ VISION_TOOLS_OPENAI = [
         },
     },
 ]
+
 
 # ─── TESLA (implementation in integrations/tesla.py) ─────────────────────────
 async def _execute_ha_tool(config: dict, name, args, user_id: str = ""):

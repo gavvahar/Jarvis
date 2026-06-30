@@ -2,7 +2,7 @@ import httpx
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 from starlette.requests import Request
 
-from config import OIDC_DISCOVERY_URL, SECRET_KEY
+from config import OIDC_DISCOVERY_URL
 
 _signer: URLSafeTimedSerializer | None = None
 _oidc_config: dict | None = None
