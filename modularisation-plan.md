@@ -37,16 +37,16 @@ schema.sql  ← already extracted
 | ------------------------------ | ------------------------------------------------------------ | ---------- |
 | `config.py`                    | ENV vars, constants                                          | ✅ Done    |
 | `db.py`                        | DB pool + all `_db_*` functions                              | ✅ Done    |
-| `auth.py`                      | OIDC, session, `_get_current_user`, `_require_admin`         | ⏳ Pending |
-| `integrations/ha.py`           | HA tool schemas + `_ha_call_service` + `_execute_ha_tool`    | ⏳ Pending |
-| `integrations/myq.py`          | MyQ tool schemas + execution                                 | ⏳ Pending |
-| `integrations/tesla.py`        | Tesla tool schemas + token management + execution            | ⏳ Pending |
+| `auth.py`                      | OIDC, session, `_get_current_user`, `_require_admin`         | ✅ Done    |
+| `integrations/ha.py`           | HA tool schemas + `_ha_call_service` + `_execute_ha_tool`    | ✅ Done    |
+| `integrations/myq.py`          | MyQ tool schemas + execution                                 | ✅ Done    |
+| `integrations/tesla.py`        | Tesla tool schemas + token management + execution            | ✅ Done    |
 | `integrations/spotify.py`      | Spotify tool schemas + OAuth + execution                     | ⏳ Pending |
 | `integrations/apple_music.py`  | Apple Music tool schemas + execution                         | ⏳ Pending |
 | `integrations/vision.py`       | Face recognition + camera snapshots + `_vision_loop` + tools | ⏳ Pending |
 | `integrations/phase1.py`       | Timers, reminders, news, calendar, contacts tools            | ⏳ Pending |
 | `integrations/phase5.py`       | Routines, device alerts, Zigbee tools                        | ⏳ Pending |
-| `integrations/shared_lists.py` | Shared list tools                                            | ⏳ Pending |
+| `integrations/shared_lists.py` | Shared list tools                                            | ✅ Done    |
 | `llm.py`                       | Client builders + `_stream_reply` + `_build_system_prompt`   | ⏳ Pending |
 | `app.py`                       | FastAPI app + lifespan + routes + Socket.IO handlers         | ⏳ Pending |
 
