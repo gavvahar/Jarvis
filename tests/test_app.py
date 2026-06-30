@@ -15,7 +15,6 @@ from app import (
     _build_client,
     _build_system_prompt,
     _calendar_configured,
-    _c_to_f,
     _contacts_configured,
     _duration_str,
     _evaluate_alert_condition,
@@ -35,7 +34,6 @@ from app import (
     _get_tesla_tools,
     _get_user_lock,
     _ha_configured,
-    _ha_headers,
     _myq_configured,
     _myq_get_status,
     _myq_set_door,
@@ -48,6 +46,8 @@ from app import (
     _tesla_configured,
     _user_configured,
 )
+from integrations.ha import _ha_headers
+from integrations.tesla import _c_to_f
 
 # ── Pure function tests ────────────────────────────────────────────────────────
 
@@ -964,35 +964,35 @@ class TestExecuteReminderToolMocked:
 
 class TestExecuteSharedListToolMocked:
     def test_read_empty(self):
-        with patch.object(jarvis, "_db_get_shared_list", new=AsyncMock(return_value=[])):
+        with patch("integrations.shared_lists._db_get_shared_list", new=AsyncMock(return_value=[])):
             result = asyncio.run(_execute_shared_list_tool({"action": "read", "list_name": "shopping"}))
         assert "empty" in result.lower()
 
     def test_add_item(self):
         with (
-            patch.object(jarvis, "_db_get_shared_list", new=AsyncMock(return_value=[])),
-            patch.object(jarvis, "_db_update_shared_list", new=AsyncMock()),
+            patch("integrations.shared_lists._db_get_shared_list", new=AsyncMock(return_value=[])),
+            patch("integrations.shared_lists._db_update_shared_list", new=AsyncMock()),
         ):
             result = asyncio.run(_execute_shared_list_tool({"action": "add", "list_name": "shopping", "item": "Milk"}))
         assert "Milk" in result
 
     def test_remove_item(self):
         with (
-            patch.object(jarvis, "_db_get_shared_list", new=AsyncMock(return_value=["Milk", "Eggs"])),
-            patch.object(jarvis, "_db_update_shared_list", new=AsyncMock()),
+            patch("integrations.shared_lists._db_get_shared_list", new=AsyncMock(return_value=["Milk", "Eggs"])),
+            patch("integrations.shared_lists._db_update_shared_list", new=AsyncMock()),
         ):
             result = asyncio.run(_execute_shared_list_tool({"action": "remove", "list_name": "shopping", "item": "Milk"}))
         assert "Removed" in result
 
     def test_remove_not_found(self):
-        with patch.object(jarvis, "_db_get_shared_list", new=AsyncMock(return_value=["Eggs"])):
+        with patch("integrations.shared_lists._db_get_shared_list", new=AsyncMock(return_value=["Eggs"])):
             result = asyncio.run(_execute_shared_list_tool({"action": "remove", "list_name": "shopping", "item": "Milk"}))
         assert "not found" in result.lower()
 
     def test_clear_list(self):
         with (
-            patch.object(jarvis, "_db_get_shared_list", new=AsyncMock(return_value=["Milk"])),
-            patch.object(jarvis, "_db_update_shared_list", new=AsyncMock()),
+            patch("integrations.shared_lists._db_get_shared_list", new=AsyncMock(return_value=["Milk"])),
+            patch("integrations.shared_lists._db_update_shared_list", new=AsyncMock()),
         ):
             result = asyncio.run(_execute_shared_list_tool({"action": "clear", "list_name": "shopping"}))
         assert "cleared" in result.lower()
