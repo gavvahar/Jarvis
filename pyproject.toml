@@ -187,7 +187,12 @@ commands = [
 
 [tool.tox.env.tests]
 skip_install = true
-deps = ["-r requirements/standard/requirements.txt", "pytest", "pytest-cov", "httpx"]
+deps = [
+  "-r requirements/standard/requirements.txt",
+  "pytest",
+  "pytest-cov",
+  "httpx",
+]
 commands = [
   [
     "pytest",
