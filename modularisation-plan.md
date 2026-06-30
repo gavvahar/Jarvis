@@ -21,8 +21,10 @@ integrations/
   ha.py
   myq.py
   tesla.py
-  spotify.py
-  apple_music.py
+  music/
+    __init__.py
+    spotify.py
+    apple_music.py
   vision.py
   phase1.py
   phase5.py
@@ -41,8 +43,8 @@ schema.sql  ← already extracted
 | `integrations/ha.py`           | HA tool schemas + `_ha_call_service` + `_execute_ha_tool`    | ✅ Done    |
 | `integrations/myq.py`          | MyQ tool schemas + execution                                 | ✅ Done    |
 | `integrations/tesla.py`        | Tesla tool schemas + token management + execution            | ✅ Done    |
-| `integrations/spotify.py`      | Spotify tool schemas + OAuth + execution                     | ⏳ Pending |
-| `integrations/apple_music.py`  | Apple Music tool schemas + execution                         | ⏳ Pending |
+| `integrations/music/spotify.py`      | Spotify tool schemas + OAuth + execution                     | ✅ Done    |
+| `integrations/music/apple_music.py`  | Apple Music tool schemas + execution                         | ✅ Done    |
 | `integrations/vision.py`       | Face recognition + camera snapshots + `_vision_loop` + tools | ⏳ Pending |
 | `integrations/phase1.py`       | Timers, reminders, news, calendar, contacts tools            | ⏳ Pending |
 | `integrations/phase5.py`       | Routines, device alerts, Zigbee tools                        | ⏳ Pending |

@@ -427,44 +427,44 @@ class TestExecuteSpotifyTool:
         return r
 
     def test_now_playing_nothing(self):
-        with patch("app._spotify_req", new=AsyncMock(return_value=self._mock_resp(204, ""))):
+        with patch("integrations.music.spotify._spotify_req", new=AsyncMock(return_value=self._mock_resp(204, ""))):
             result = asyncio.run(_execute_spotify_tool("spotify_now_playing", {}, "u1", self._cfg))
         assert "Nothing" in result
 
     def test_now_playing_track(self):
         data = {"is_playing": True, "item": {"name": "Get Lucky", "artists": [{"name": "Daft Punk"}]}}
-        with patch("app._spotify_req", new=AsyncMock(return_value=self._mock_resp(200, "x", data))):
+        with patch("integrations.music.spotify._spotify_req", new=AsyncMock(return_value=self._mock_resp(200, "x", data))):
             result = asyncio.run(_execute_spotify_tool("spotify_now_playing", {}, "u1", self._cfg))
         assert "Get Lucky" in result
         assert "Daft Punk" in result
 
     def test_play_success(self):
-        with patch("app._spotify_req", new=AsyncMock(return_value=self._mock_resp(204))):
+        with patch("integrations.music.spotify._spotify_req", new=AsyncMock(return_value=self._mock_resp(204))):
             result = asyncio.run(_execute_spotify_tool("spotify_play", {}, "u1", self._cfg))
         assert "playback" in result.lower()
 
     def test_pause_success(self):
-        with patch("app._spotify_req", new=AsyncMock(return_value=self._mock_resp(204))):
+        with patch("integrations.music.spotify._spotify_req", new=AsyncMock(return_value=self._mock_resp(204))):
             result = asyncio.run(_execute_spotify_tool("spotify_pause", {}, "u1", self._cfg))
         assert "paused" in result.lower()
 
     def test_next_success(self):
-        with patch("app._spotify_req", new=AsyncMock(return_value=self._mock_resp(204))):
+        with patch("integrations.music.spotify._spotify_req", new=AsyncMock(return_value=self._mock_resp(204))):
             result = asyncio.run(_execute_spotify_tool("spotify_next", {}, "u1", self._cfg))
         assert "next" in result.lower() or "skipped" in result.lower()
 
     def test_previous_success(self):
-        with patch("app._spotify_req", new=AsyncMock(return_value=self._mock_resp(204))):
+        with patch("integrations.music.spotify._spotify_req", new=AsyncMock(return_value=self._mock_resp(204))):
             result = asyncio.run(_execute_spotify_tool("spotify_previous", {}, "u1", self._cfg))
         assert "previous" in result.lower() or "back" in result.lower()
 
     def test_volume_clamped_and_set(self):
-        with patch("app._spotify_req", new=AsyncMock(return_value=self._mock_resp(204))):
+        with patch("integrations.music.spotify._spotify_req", new=AsyncMock(return_value=self._mock_resp(204))):
             result = asyncio.run(_execute_spotify_tool("spotify_volume", {"volume_percent": 70}, "u1", self._cfg))
         assert "70" in result
 
     def test_volume_clamped_above_100(self):
-        with patch("app._spotify_req", new=AsyncMock(return_value=self._mock_resp(204))):
+        with patch("integrations.music.spotify._spotify_req", new=AsyncMock(return_value=self._mock_resp(204))):
             result = asyncio.run(_execute_spotify_tool("spotify_volume", {"volume_percent": 150}, "u1", self._cfg))
         assert "100" in result
 
@@ -480,13 +480,13 @@ class TestExecuteSpotifyTool:
                 return self._mock_resp(200, "x", search_data)
             return play_resp
 
-        with patch("app._spotify_req", new=mock_req):
+        with patch("integrations.music.spotify._spotify_req", new=mock_req):
             result = asyncio.run(_execute_spotify_tool("spotify_search_and_play", {"query": "Around the World", "type": "track"}, "u1", self._cfg))
         assert "Around the World" in result
 
     def test_search_and_play_not_found(self):
         search_data = {"tracks": {"items": []}}
-        with patch("app._spotify_req", new=AsyncMock(return_value=self._mock_resp(200, "x", search_data))):
+        with patch("integrations.music.spotify._spotify_req", new=AsyncMock(return_value=self._mock_resp(200, "x", search_data))):
             result = asyncio.run(_execute_spotify_tool("spotify_search_and_play", {"query": "xyzzy", "type": "track"}, "u1", self._cfg))
         assert "Could not find" in result
 
