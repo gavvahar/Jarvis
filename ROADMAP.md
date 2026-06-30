@@ -10,15 +10,16 @@
 | 2        | Phase 7 — Multi-User & Household               | Complete    |
 | 3        | Phase 1 — Foundation & Parity                  | Complete    |
 | 4        | GitHub Actions & CI/CD                         | Complete    |
-| 5        | Phase 4 — Smart Speaker & Local Hardware       | Planned     |
-| 6        | Phase 5 — Deeper Smart Home                    | In Progress |
-| 7        | Phase 6 — Proactive & Ambient Intelligence     | Planned     |
-| 8        | Phase 8 — Developer & Extensibility Platform   | In Progress |
-| 9        | Phase 9 — Financial Intelligence               | Planned     |
-| 10       | Phase 10 — Computer Vision & Spatial Awareness | Complete    |
-| 11       | Phase 11 — Accessibility & Hearing Assistance  | Planned     |
-| 12       | Phase 12 — Mental Wellness & Social Assistance | Planned     |
-| 13       | Phase 3 — Mobile PWA                           | Last        |
+| 5        | app.py Modularisation                          | Planned     |
+| 6        | Phase 4 — Smart Speaker & Local Hardware       | Planned     |
+| 7        | Phase 5 — Deeper Smart Home                    | In Progress |
+| 8        | Phase 6 — Proactive & Ambient Intelligence     | Planned     |
+| 9        | Phase 8 — Developer & Extensibility Platform   | In Progress |
+| 10       | Phase 9 — Financial Intelligence               | Planned     |
+| 11       | Phase 10 — Computer Vision & Spatial Awareness | Complete    |
+| 12       | Phase 11 — Accessibility & Hearing Assistance  | Planned     |
+| 13       | Phase 12 — Mental Wellness & Social Assistance | Planned     |
+| 14       | Phase 3 — Mobile PWA                           | Last        |
 
 ---
 
@@ -197,6 +198,27 @@ Automated workflows to keep the repo healthy and branches in sync.
 
 - [x] **Auto-merge staging → main** — nightly cron merges staging into main if clean
 - [x] **Cascade merge on push** — when `staging` or `main` receives a push, automatically attempt to merge it into every other open branch; on conflict, open a detailed issue describing the conflicting files and assign it to whoever made the last commit on that branch
+
+---
+
+## app.py Modularisation
+
+Split the monolithic `app.py` (~5,900 lines) into focused modules so each integration and layer can be found, edited, and tested in isolation.
+
+- [ ] **`config.py`** — all ENV vars and constants; no local imports
+- [ ] **`db.py`** — DB pool, `_pool()`, schema loading, and all `_db_*` helper functions
+- [ ] **`auth.py`** — OIDC discovery, session signing/verification, `_get_current_user`, `_require_admin`
+- [ ] **`integrations/ha.py`** — Home Assistant tool schemas, `_ha_call_service`, `_ha_get_states`, `_execute_ha_tool`
+- [ ] **`integrations/myq.py`** — MyQ/Chamberlain tool schemas and execution
+- [ ] **`integrations/tesla.py`** — Tesla tool schemas, token management, and execution
+- [ ] **`integrations/spotify.py`** — Spotify tool schemas, OAuth helpers, and execution
+- [ ] **`integrations/apple_music.py`** — Apple Music tool schemas and execution
+- [ ] **`integrations/vision.py`** — face recognition, camera snapshots, `_vision_loop`, vision tool schemas
+- [ ] **`integrations/phase1.py`** — timers, reminders, news, calendar, contacts tool schemas and execution
+- [ ] **`integrations/phase5.py`** — routines, device alerts, Zigbee tool schemas and execution
+- [ ] **`integrations/shared_lists.py`** — shared list tool schemas and execution
+- [ ] **`llm.py`** — LLM client builders, `_stream_reply`, `_build_system_prompt`
+- [ ] **`app.py`** — FastAPI app, lifespan, Socket.IO handlers, and HTTP routes only (glue layer)
 
 ---
 
