@@ -123,6 +123,23 @@ Make Jarvis a platform others can build on, like Alexa Skills or Google Actions.
 
 ---
 
+## Phase 12 — Mental Wellness & Social Assistance
+
+Reduce social friction for introverts and provide grounding, calm, and pattern awareness for anxiety.
+
+- [ ] **Calm mode** — on request or detected distress, switch to a slower, quieter, softer Jarvis voice and suppress non-essential notifications
+- [ ] **Breathing & grounding exercises** — guided box breathing, 4-7-8, and 5-4-3-2-1 sensory grounding by voice; hands-free, no screen required
+- [ ] **Worry dump** — "Jarvis, I need to vent" opens a low-pressure voice journal; Jarvis acknowledges without judgment and stores the entry privately
+- [ ] **Overthinking interrupt** — detect rumination loops in conversation and gently offer a reframe, a distraction, or a grounding exercise
+- [ ] **Mood check-ins** — optional daily voice check-in ("how are you feeling?"); track mood over time and surface patterns (time of day, day of week, recent events)
+- [ ] **Anxiety pattern detection** — identify recurring triggers from journal and mood data; surface insights privately ("you tend to feel anxious on Sunday evenings")
+- [ ] **Call screening & voicemail** — intercept unknown calls, transcribe voicemails to text, and suggest a text reply instead of calling back
+- [ ] **Social reply drafting** — "help me respond to this" — draft replies to messages, emails, or invitations in your voice so you don't have to start from scratch
+- [ ] **Social energy tracker** — log social commitments; warn when the week is overloaded and suggest blocking recovery time
+- [ ] **Polite decline generator** — given an event or request, draft a kind, non-awkward way to say no
+
+---
+
 ## Phase 11 — Accessibility & Hearing Assistance
 
 Compensate for single-sided hearing loss with visual alerts, real-time captions, and a more forgiving voice UX.
