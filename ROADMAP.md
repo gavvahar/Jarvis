@@ -123,6 +123,20 @@ Make Jarvis a platform others can build on, like Alexa Skills or Google Actions.
 
 ---
 
+## Phase 11 — Accessibility & Hearing Assistance
+
+Compensate for single-sided hearing loss with visual alerts, real-time captions, and a more forgiving voice UX.
+
+- [ ] **Sound event detection** — continuously monitor mic for non-speech sounds (doorbell, smoke alarm, phone ring, knocking, baby cry); flash smart lights and push a phone notification so nothing is missed
+- [ ] **Visual TTS output** — display Jarvis's spoken response as text on screen simultaneously; never lose a reply because it was too quiet or came from the wrong direction
+- [ ] **Wake word visual confirmation** — flash a light or show an on-screen indicator when the wake word fires, so it's clear Jarvis heard you
+- [ ] **Conversation transcription** — on demand, use Whisper (already installed) to caption live in-person conversation and display it on screen or phone
+- [ ] **Media & TV captions** — capture room audio via mic and display rolling captions for TV or media playing nearby; no HDMI tap required
+- [ ] **Call transcription** — transcribe phone and video calls in real time; surface as scrollable text alongside the conversation
+- [ ] **Adjustable TTS clarity** — per-user controls for Jarvis voice speed, volume, and EQ; default to slower and louder for the hearing-impaired profile
+
+---
+
 ## Phase 10 — Computer Vision & Spatial Awareness
 
 Give Jarvis eyes — know who is home, where they are, what they're doing, and flag anything unusual.
