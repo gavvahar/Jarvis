@@ -10,7 +10,7 @@
 | 2        | Phase 7 — Multi-User & Household               | Complete    |
 | 3        | Phase 1 — Foundation & Parity                  | Complete    |
 | 4        | GitHub Actions & CI/CD                         | Complete    |
-| 5        | app.py Modularisation                          | Planned     |
+| 5        | app.py Modularisation                          | In Progress |
 | 6        | Phase 4 — Smart Speaker & Local Hardware       | Planned     |
 | 7        | Phase 5 — Deeper Smart Home                    | In Progress |
 | 8        | Phase 6 — Proactive & Ambient Intelligence     | Planned     |
@@ -207,16 +207,16 @@ Split the monolithic `app.py` (~5,900 lines) into focused modules so each integr
 
 - [ ] **`config.py`** — all ENV vars and constants; no local imports
 - [x] **`db.py`** — DB pool, `_pool()`, schema loading, and all `_db_*` helper functions
-- [ ] **`auth.py`** — OIDC discovery, session signing/verification, `_get_current_user`, `_require_admin`
-- [ ] **`integrations/ha.py`** — Home Assistant tool schemas, `_ha_call_service`, `_ha_get_states`, `_execute_ha_tool`
-- [ ] **`integrations/myq.py`** — MyQ/Chamberlain tool schemas and execution
-- [ ] **`integrations/tesla.py`** — Tesla tool schemas, token management, and execution
+- [x] **`auth.py`** — OIDC discovery, session signing/verification, `_get_current_user`, `_require_admin`
+- [x] **`integrations/ha.py`** — Home Assistant tool schemas, `_ha_call_service`, `_ha_get_states`, `_execute_ha_tool`
+- [x] **`integrations/myq.py`** — MyQ/Chamberlain tool schemas and execution
+- [x] **`integrations/tesla.py`** — Tesla tool schemas, token management, and execution
 - [ ] **`integrations/spotify.py`** — Spotify tool schemas, OAuth helpers, and execution
 - [ ] **`integrations/apple_music.py`** — Apple Music tool schemas and execution
 - [ ] **`integrations/vision.py`** — face recognition, camera snapshots, `_vision_loop`, vision tool schemas
 - [ ] **`integrations/phase1.py`** — timers, reminders, news, calendar, contacts tool schemas and execution
 - [ ] **`integrations/phase5.py`** — routines, device alerts, Zigbee tool schemas and execution
-- [ ] **`integrations/shared_lists.py`** — shared list tool schemas and execution
+- [x] **`integrations/shared_lists.py`** — shared list tool schemas and execution
 - [ ] **`llm.py`** — LLM client builders, `_stream_reply`, `_build_system_prompt`
 - [ ] **`app.py`** — FastAPI app, lifespan, Socket.IO handlers, and HTTP routes only (glue layer)
 
