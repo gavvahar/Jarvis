@@ -1418,6 +1418,65 @@ body.mode-workspace #workspace-surface {
   animation: scanpulse 1.6s ease-in-out infinite;
 }
 
+/* ═══ VISION SETTINGS PANEL ════════════════════════════════════════════════════ */
+.vision-section-label {
+  font-size: 0.65rem;
+  letter-spacing: 0.12em;
+  color: rgba(127, 233, 255, 0.55);
+  text-transform: uppercase;
+  margin: 0.6rem 0 0.35rem;
+  text-align: left;
+}
+.vision-cam-row,
+.vision-presence-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.78rem;
+  padding: 0.28rem 0;
+  border-bottom: 1px solid rgba(127, 233, 255, 0.08);
+  text-align: left;
+}
+.vision-cam-row span:first-child,
+.vision-presence-row span:last-child {
+  flex: 1;
+  word-break: break-all;
+}
+.vision-cam-badges {
+  display: flex;
+  gap: 0.25rem;
+}
+.vision-badge {
+  font-size: 0.6rem;
+  padding: 1px 5px;
+  border: 1px solid rgba(127, 233, 255, 0.4);
+  border-radius: 3px;
+  letter-spacing: 0.06em;
+}
+.vision-badge-priv {
+  border-color: #f59e0b;
+  color: #f59e0b;
+}
+.vision-cam-del {
+  background: none;
+  border: none;
+  color: rgba(239, 68, 68, 0.7);
+  cursor: pointer;
+  padding: 0 4px;
+  font-size: 0.85rem;
+}
+.vision-cam-del:hover {
+  color: #ef4444;
+}
+.vision-presence-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #22c55e;
+  flex-shrink: 0;
+  box-shadow: 0 0 6px #22c55e;
+}
+
 /* ═══ CAMERA SURFACE — live vision feed (troubleshooting HUD) ═══════════════════
    Reuses the Workspace tab: shown only in mode-workspace when camera mode is active.
    The feed's edges dissolve into the background grid via a radial mask. */

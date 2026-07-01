@@ -4,16 +4,22 @@
 
 ## Build Order
 
-| Priority | Phase                                        | Status      |
-| -------- | -------------------------------------------- | ----------- |
-| 1        | Phase 2 — Always-On Wake Word                | In Progress |
-| 2        | Phase 7 — Multi-User & Household             | Complete    |
-| 3        | Phase 1 — Foundation & Parity                | Complete    |
-| 4        | Phase 4 — Smart Speaker & Local Hardware     | Planned     |
-| 5        | Phase 5 — Deeper Smart Home                  | In Progress |
-| 6        | Phase 6 — Proactive & Ambient Intelligence   | Planned     |
-| 7        | Phase 8 — Developer & Extensibility Platform | In Progress |
-| 8        | Phase 3 — Mobile PWA                         | Last        |
+| Priority | Phase                                          | Status      |
+| -------- | ---------------------------------------------- | ----------- |
+| 1        | Phase 2 — Always-On Wake Word                  | Complete    |
+| 2        | Phase 7 — Multi-User & Household               | Complete    |
+| 3        | Phase 1 — Foundation & Parity                  | Complete    |
+| 4        | GitHub Actions & CI/CD                         | Complete    |
+| 5        | app.py Modularisation                          | In Progress |
+| 6        | Phase 4 — Smart Speaker & Local Hardware       | Planned     |
+| 7        | Phase 5 — Deeper Smart Home                    | In Progress |
+| 8        | Phase 6 — Proactive & Ambient Intelligence     | Planned     |
+| 9        | Phase 8 — Developer & Extensibility Platform   | In Progress |
+| 10       | Phase 9 — Financial Intelligence               | Planned     |
+| 11       | Phase 10 — Computer Vision & Spatial Awareness | Complete    |
+| 12       | Phase 11 — Accessibility & Hearing Assistance  | Planned     |
+| 13       | Phase 12 — Mental Wellness & Social Assistance | Planned     |
+| 14       | Phase 3 — Mobile PWA                           | Last        |
 
 ---
 
@@ -32,14 +38,15 @@ Get Jarvis to feature parity with Siri/Google Assistant/Alexa on core everyday t
 
 ---
 
-## Phase 2 — Always-On Wake Word ← Starting Here
+## Phase 2 — Always-On Wake Word
 
 Move from browser/spacebar activation to always-listening hardware-grade detection.
 
 - [x] **Local wake word engine** — openWakeWord with custom "hey_jarvis" model; threshold tunable via env
+- [x] **Replace openwakeword with direct onnxruntime** — openwakeword pulls in tflite-runtime which blocks Python 3.14; call onnxruntime directly with the same HuggingFace ONNX models (onnxruntime + huggingface-hub already installed)
 - [x] **Microphone daemon** — `wake_daemon.py` runs as a systemd service (`jarvis-wake.service`)
 - [x] **Low-power standby mode** — noise gate skips inference on silence; CPU-only via systemd idle priority
-- [ ] **Multi-room wake word** — simultaneous detection across devices, first responder wins
+- [x] **Multi-room wake word** — simultaneous detection across devices, first responder wins
 - [x] **False-positive suppression** — noise gate (RMS), confidence threshold, and cooldown all implemented
 
 ---
@@ -97,7 +104,7 @@ Move from reactive (answer questions) to proactive (anticipate needs).
 
 ---
 
-## Phase 7 — Multi-User & Household ← Up Next After Phase 2
+## Phase 7 — Multi-User & Household
 
 Scale from single-user to full household with voice recognition.
 
@@ -119,6 +126,99 @@ Make Jarvis a platform others can build on, like Alexa Skills or Google Actions.
 - [ ] **MCP server** — expose Jarvis as a Model Context Protocol server for Claude Desktop etc.
 - [ ] **IFTTT / Zapier / Make connectors** — no-code integration layer
 - [ ] **CLI client** — `jarvis "turn off the lights"` from terminal
+
+---
+
+## Phase 12 — Mental Wellness & Social Assistance
+
+Reduce social friction for introverts and provide grounding, calm, and pattern awareness for anxiety.
+
+- [ ] **Calm mode** — on request or detected distress, switch to a slower, quieter, softer Jarvis voice and suppress non-essential notifications
+- [ ] **Breathing & grounding exercises** — guided box breathing, 4-7-8, and 5-4-3-2-1 sensory grounding by voice; hands-free, no screen required
+- [ ] **Worry dump** — "Jarvis, I need to vent" opens a low-pressure voice journal; Jarvis acknowledges without judgment and stores the entry privately
+- [ ] **Overthinking interrupt** — detect rumination loops in conversation and gently offer a reframe, a distraction, or a grounding exercise
+- [ ] **Mood check-ins** — optional daily voice check-in ("how are you feeling?"); track mood over time and surface patterns (time of day, day of week, recent events)
+- [ ] **Anxiety pattern detection** — identify recurring triggers from journal and mood data; surface insights privately ("you tend to feel anxious on Sunday evenings")
+- [ ] **Call screening & voicemail** — intercept unknown calls, transcribe voicemails to text, and suggest a text reply instead of calling back
+- [ ] **Social reply drafting** — "help me respond to this" — draft replies to messages, emails, or invitations in your voice so you don't have to start from scratch
+- [ ] **Social energy tracker** — log social commitments; warn when the week is overloaded and suggest blocking recovery time
+- [ ] **Polite decline generator** — given an event or request, draft a kind, non-awkward way to say no
+- [ ] **Therapist mode** — dedicated conversational mode that uses active listening, reflective questioning, and CBT-influenced techniques; Jarvis listens without rushing to fix, tracks session history for continuity, and escalates to real emergency resources if crisis language is detected
+
+---
+
+## Phase 11 — Accessibility & Hearing Assistance
+
+Compensate for single-sided hearing loss with visual alerts, real-time captions, and a more forgiving voice UX.
+
+- [ ] **Sound event detection** — continuously monitor mic for non-speech sounds (doorbell, smoke alarm, phone ring, knocking, baby cry); flash smart lights and push a phone notification so nothing is missed
+- [ ] **Visual TTS output** — display Jarvis's spoken response as text on screen simultaneously; never lose a reply because it was too quiet or came from the wrong direction
+- [ ] **Wake word visual confirmation** — flash a light or show an on-screen indicator when the wake word fires, so it's clear Jarvis heard you
+- [ ] **Conversation transcription** — on demand, use Whisper (already installed) to caption live in-person conversation and display it on screen or phone
+- [ ] **Media & TV captions** — capture room audio via mic and display rolling captions for TV or media playing nearby; no HDMI tap required
+- [ ] **Call transcription** — transcribe phone and video calls in real time; surface as scrollable text alongside the conversation
+- [ ] **Adjustable TTS clarity** — per-user controls for Jarvis voice speed, volume, and EQ; default to slower and louder for the hearing-impaired profile
+
+---
+
+## Phase 10 — Computer Vision & Spatial Awareness
+
+Give Jarvis eyes — know who is home, where they are, what they're doing, and flag anything unusual.
+
+- [x] **Camera ingestion** — pull RTSP/ONVIF streams from IP cameras and USB webcams; integrate with Home Assistant camera entities
+- [x] **Room presence detection** — identify which room each person is in; feed into response routing so audio plays from the nearest device (extends Phase 4 room presence)
+- [x] **Person identification** — recognize household members by face; tie detections to existing user profiles for personalized responses without voice input
+- [x] **Activity recognition** — classify what someone is doing (cooking, sleeping, exercising, watching TV) and use it to shape Jarvis behavior (e.g. don't interrupt during sleep)
+- [x] **Security alerts** — detect unfamiliar faces, motion during night/away mode, or unexpected presence; push notification + optional camera snapshot
+- [x] **Away mode** — automatically detect when the house is empty and arm alerts; disarm when a known face returns
+- [x] **Privacy controls** — per-camera opt-in, all inference runs locally (no video leaves the network), configurable retention window
+
+---
+
+## Phase 9 — Financial Intelligence
+
+Give Jarvis full visibility and control over money — balances, spending, budgets, goals, and payments.
+
+- [ ] **Account aggregation** — Plaid Link for banks and credit cards; direct bank APIs (Chase, Amex, etc.) where available; unified account view in DB
+- [ ] **Balance & transaction lookup** — "what's my Chase balance?", "show my last 10 transactions" answered by voice
+- [ ] **Spending categorization** — auto-categorize transactions (food, transport, utilities, etc.); override via voice
+- [ ] **Budget tracking** — set monthly budgets by category; alert when approaching or over limit
+- [ ] **Bill & subscription detection** — surface recurring charges automatically; alert before due dates
+- [ ] **Savings goals** — "save $5k for vacation by December"; track progress and surface weekly
+- [ ] **Net worth dashboard** — aggregate all accounts (checking, savings, credit, investments) into a single number
+- [ ] **Spending alerts** — flag large, unusual, or out-of-category transactions in real time via webhook
+- [ ] **Transfer & payment initiation** — initiate bank transfers via Plaid Transfer API or direct bank APIs; confirm by voice before executing
+- [ ] **Financial briefing** — daily/weekly money summary: net cash flow, top spending categories, upcoming bills, goal progress
+
+---
+
+## GitHub Actions & CI/CD
+
+Automated workflows to keep the repo healthy and branches in sync.
+
+- [x] **Auto-merge staging → main** — nightly cron merges staging into main if clean
+- [x] **Cascade merge on push** — when `staging` or `main` receives a push, automatically attempt to merge it into every other open branch; on conflict, open a detailed issue describing the conflicting files and assign it to whoever made the last commit on that branch
+
+---
+
+## app.py Modularisation
+
+Split the monolithic `app.py` (~5,900 lines) into focused modules so each integration and layer can be found, edited, and tested in isolation.
+
+- [ ] **`config.py`** — all ENV vars and constants; no local imports
+- [x] **`db.py`** — DB pool, `_pool()`, schema loading, and all `_db_*` helper functions
+- [x] **`auth.py`** — OIDC discovery, session signing/verification, `_get_current_user`, `_require_admin`
+- [x] **`integrations/ha.py`** — Home Assistant tool schemas, `_ha_call_service`, `_ha_get_states`, `_execute_ha_tool`
+- [x] **`integrations/myq.py`** — MyQ/Chamberlain tool schemas and execution
+- [x] **`integrations/tesla.py`** — Tesla tool schemas, token management, and execution
+- [x] **`integrations/music/spotify.py`** — Spotify tool schemas, OAuth helpers, and execution
+- [x] **`integrations/music/apple_music.py`** — Apple Music tool schemas and execution
+- [x] **`integrations/vision.py`** — face recognition, camera snapshots, `_vision_loop`, vision tool schemas
+- [ ] **`integrations/phase1.py`** — timers, reminders, news, calendar, contacts tool schemas and execution
+- [ ] **`integrations/phase5.py`** — routines, device alerts, Zigbee tool schemas and execution
+- [x] **`integrations/shared_lists.py`** — shared list tool schemas and execution
+- [ ] **`llm.py`** — LLM client builders, `_stream_reply`, `_build_system_prompt`
+- [ ] **`app.py`** — FastAPI app, lifespan, Socket.IO handlers, and HTTP routes only (glue layer)
 
 ---
 
