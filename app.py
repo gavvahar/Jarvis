@@ -88,6 +88,7 @@ from config import (
 try:
     import librosa as _librosa
     import numpy as _np
+
     _VOICE_ID_OK = True
 except ImportError:
     _VOICE_ID_OK = False
@@ -163,6 +164,7 @@ def _get_whisper():
     global _whisper
     if _whisper is None:
         from faster_whisper import WhisperModel
+
         _whisper = WhisperModel("tiny.en", device="cpu", compute_type="int8")
     return _whisper
 
@@ -494,35 +496,43 @@ async def api_save_config(request: Request):
 async def api_list_cameras(request: Request):
     return await _list_cameras(_require_user(request))
 
+
 @fast_app.post("/api/cameras")
 async def api_add_camera(request: Request):
     return await _add_camera(_require_user(request), await request.json())
+
 
 @fast_app.delete("/api/cameras/{camera_id}")
 async def api_delete_camera(camera_id: int, request: Request):
     return await _delete_camera(camera_id, _require_user(request))
 
+
 @fast_app.patch("/api/cameras/{camera_id}")
 async def api_update_camera(camera_id: int, request: Request):
     return await _update_camera(camera_id, await request.json(), _require_user(request))
+
 
 @fast_app.get("/api/presence")
 async def api_presence(request: Request):
     _require_user(request)
     return await _get_presence_members()
 
+
 @fast_app.get("/api/security-events")
 async def api_security_events(request: Request):
     return await _get_security_events(_require_user(request), float(request.query_params.get("hours", "24")))
+
 
 @fast_app.post("/api/face/enroll-sample")
 async def api_face_enroll_sample(request: Request, image: UploadFile = File(...)):
     _require_user(request)
     return await _face_enroll_sample(await image.read())
 
+
 @fast_app.post("/api/face/enroll-finish")
 async def api_face_enroll_finish(request: Request):
     return await _face_enroll_finish(_require_user(request), (await request.json()).get("embeddings", []))
+
 
 @fast_app.delete("/api/face/enrollment")
 async def api_face_enroll_delete(request: Request):
@@ -599,19 +609,33 @@ async def api_save_pim(request: Request):
         contacts_to_save = {"url": resolved["url"], "username": contacts_username, "password": eff_pw}
 
     async with _get_user_lock(user_id):
-        config.update({
-            "calendar_url": calendar_to_save["url"], "calendar_username": calendar_to_save["username"], "calendar_password": calendar_to_save["password"],
-            "contacts_url": contacts_to_save["url"], "contacts_username": contacts_to_save["username"], "contacts_password": contacts_to_save["password"],
-        })
+        config.update(
+            {
+                "calendar_url": calendar_to_save["url"],
+                "calendar_username": calendar_to_save["username"],
+                "calendar_password": calendar_to_save["password"],
+                "contacts_url": contacts_to_save["url"],
+                "contacts_username": contacts_to_save["username"],
+                "contacts_password": contacts_to_save["password"],
+            }
+        )
         await _db_save_pim_config(
             user_id,
-            config["calendar_url"], config["calendar_username"], config["calendar_password"],
-            config["contacts_url"], config["contacts_username"], config["contacts_password"],
+            config["calendar_url"],
+            config["calendar_username"],
+            config["calendar_password"],
+            config["contacts_url"],
+            config["contacts_username"],
+            config["contacts_password"],
         )
     return {
         "ok": True,
-        "calendar_configured": _calendar_configured(config), "calendar_url": config.get("calendar_url", ""), "calendar_username": config.get("calendar_username", ""),
-        "contacts_configured": _contacts_configured(config), "contacts_url": config.get("contacts_url", ""), "contacts_username": config.get("contacts_username", ""),
+        "calendar_configured": _calendar_configured(config),
+        "calendar_url": config.get("calendar_url", ""),
+        "calendar_username": config.get("calendar_username", ""),
+        "contacts_configured": _contacts_configured(config),
+        "contacts_url": config.get("contacts_url", ""),
+        "contacts_username": config.get("contacts_username", ""),
     }
 
 
@@ -642,7 +666,15 @@ async def api_meetings(request: Request):
             "SELECT id, started_at, ended_at, notes FROM meetings WHERE user_id = $1 ORDER BY started_at DESC LIMIT 20",
             user_id,
         )
-    return [{"id": r["id"], "started_at": r["started_at"].isoformat() if r["started_at"] else None, "ended_at": r["ended_at"].isoformat() if r["ended_at"] else None, "notes": r["notes"]} for r in rows]
+    return [
+        {
+            "id": r["id"],
+            "started_at": r["started_at"].isoformat() if r["started_at"] else None,
+            "ended_at": r["ended_at"].isoformat() if r["ended_at"] else None,
+            "notes": r["notes"],
+        }
+        for r in rows
+    ]
 
 
 @fast_app.get("/api/meetings/{meeting_id}")
@@ -651,11 +683,18 @@ async def api_meeting_detail(request: Request, meeting_id: int):
     async with _pool().acquire() as conn:
         row = await conn.fetchrow(
             "SELECT id, started_at, ended_at, transcript, notes FROM meetings WHERE id = $1 AND user_id = $2",
-            meeting_id, user_id,
+            meeting_id,
+            user_id,
         )
     if not row:
         raise HTTPException(404)
-    return {"id": row["id"], "started_at": row["started_at"].isoformat() if row["started_at"] else None, "ended_at": row["ended_at"].isoformat() if row["ended_at"] else None, "transcript": row["transcript"], "notes": row["notes"]}
+    return {
+        "id": row["id"],
+        "started_at": row["started_at"].isoformat() if row["started_at"] else None,
+        "ended_at": row["ended_at"].isoformat() if row["ended_at"] else None,
+        "transcript": row["transcript"],
+        "notes": row["notes"],
+    }
 
 
 # ─── PHONE MESSAGES ──────────────────────────────────────────────────────────
@@ -713,11 +752,13 @@ async def api_messages_token(request: Request):
     token = await _db_get_or_create_webhook_token(user_id)
     return {"token": token, "url": f"{APP_URL}/api/messages/ingest", "apk_url": f"{APP_URL}/download/jarvis-messages.apk"}
 
+
 @fast_app.post("/api/messages/token/regenerate")
 async def api_messages_token_regenerate(request: Request):
     user_id = _require_user(request)
     token = await _db_regenerate_webhook_token(user_id)
     return {"token": token, "url": f"{APP_URL}/api/messages/ingest", "apk_url": f"{APP_URL}/download/jarvis-messages.apk"}
+
 
 @fast_app.get("/download/jarvis-messages.apk")
 async def download_apk():
@@ -725,6 +766,7 @@ async def download_apk():
     if not apk_path.exists():
         raise HTTPException(404, detail="APK not yet available. Ask your admin to build it from the android/ folder.")
     return FileResponse(apk_path, media_type="application/vnd.android.package-archive", filename="jarvis-messages.apk")
+
 
 @fast_app.post("/api/messages/ingest")
 async def api_messages_ingest(request: Request):
@@ -740,6 +782,7 @@ async def api_messages_ingest(request: Request):
     else:
         await _db_store_phone_message(user_id, sender, body, False, "")
     return {"ok": True}
+
 
 @fast_app.post("/api/doorbell/event")
 async def api_doorbell_event(request: Request):
@@ -759,6 +802,7 @@ async def api_doorbell_event(request: Request):
         for sid in _sids_for_user(user_id):
             await sio.emit("doorbell_alert", {"event_type": event_type, "source": source, "speak": speak_map.get(event_type, "Doorbell alert.")}, to=sid)
     return {"ok": True}
+
 
 @fast_app.post("/api/wake")
 async def api_wake(request: Request):
@@ -797,6 +841,7 @@ async def api_voice_enroll_sample(request: Request, audio: UploadFile = File(...
             except OSError:
                 pass
 
+
 @fast_app.post("/api/voice/enroll-finish")
 async def api_voice_enroll_finish(request: Request):
     user_id = _require_user(request)
@@ -807,10 +852,12 @@ async def api_voice_enroll_finish(request: Request):
     if not embeddings or len(embeddings) < 2:
         raise HTTPException(400, "At least 2 samples required.")
     import numpy as _np2
+
     avg = _np2.mean([_np2.array(e) for e in embeddings], axis=0).tolist()
     await _db_save_voice_embedding(user_id, avg)
     await _refresh_voice_cache()
     return {"ok": True}
+
 
 @fast_app.delete("/api/voice/enrollment")
 async def api_voice_enrollment_delete(request: Request):
@@ -818,6 +865,7 @@ async def api_voice_enrollment_delete(request: Request):
     await _db_clear_voice_embedding(user_id)
     await _refresh_voice_cache()
     return {"ok": True}
+
 
 @fast_app.patch("/api/user/profile")
 async def api_user_profile(request: Request):
@@ -837,6 +885,7 @@ async def api_user_profile(request: Request):
         await _refresh_voice_cache()
     return {"ok": True}
 
+
 @fast_app.get("/api/household/members")
 async def api_household_members(request: Request):
     user_id = _require_user(request)
@@ -844,16 +893,19 @@ async def api_household_members(request: Request):
         raise HTTPException(403)
     return {"members": await _db_get_household_members()}
 
+
 @fast_app.get("/api/shared-lists")
 async def api_shared_lists(request: Request):
     _require_user(request)
     return {"lists": await _db_get_all_shared_lists()}
+
 
 @fast_app.get("/api/doorbell/token")
 async def api_doorbell_token(request: Request):
     user_id = _require_user(request)
     token = await _db_get_or_create_webhook_token(user_id)
     return {"token": token, "url": f"{APP_URL}/api/doorbell/event"}
+
 
 @fast_app.get("/api/doorbell/events")
 async def api_doorbell_events(request: Request):
@@ -872,6 +924,7 @@ async def api_tesla_status(request: Request):
     user_id = _require_user(request)
     config = (await _get_user_state(user_id))["config"]
     return {"tesla_configured": _tesla_configured(config), "tesla_method": config.get("tesla_method", ""), "tesla_fleet_enabled": bool(TESLA_CLIENT_ID)}
+
 
 @fast_app.post("/api/tesla/save_unofficial")
 async def api_tesla_save_unofficial(request: Request):
@@ -898,9 +951,12 @@ async def api_tesla_save_unofficial(request: Request):
         async with _pool().acquire() as conn:
             await conn.execute(
                 "UPDATE user_configs SET tesla_refresh_token = $2, tesla_method = $3 WHERE user_id = $1",
-                user_id, refresh_token, new_method,
+                user_id,
+                refresh_token,
+                new_method,
             )
     return {"ok": True, "tesla_configured": True, "tesla_method": new_method}
+
 
 @fast_app.get("/api/tesla/fleet/auth")
 async def api_tesla_fleet_auth(request: Request):
@@ -915,16 +971,19 @@ async def api_tesla_fleet_auth(request: Request):
     if len(_tesla_mod._tesla_auth_pending) > 200:
         for k in list(_tesla_mod._tesla_auth_pending.keys())[:100]:
             _tesla_mod._tesla_auth_pending.pop(k, None)
-    params = urllib.parse.urlencode({
-        "client_id": TESLA_CLIENT_ID,
-        "redirect_uri": f"{APP_URL}/auth/tesla/callback",
-        "response_type": "code",
-        "scope": "openid offline_access vehicle_device_data vehicle_cmds vehicle_charging_cmds",
-        "state": state_token,
-        "code_challenge": code_challenge,
-        "code_challenge_method": "S256",
-    })
+    params = urllib.parse.urlencode(
+        {
+            "client_id": TESLA_CLIENT_ID,
+            "redirect_uri": f"{APP_URL}/auth/tesla/callback",
+            "response_type": "code",
+            "scope": "openid offline_access vehicle_device_data vehicle_cmds vehicle_charging_cmds",
+            "state": state_token,
+            "code_challenge": code_challenge,
+            "code_challenge_method": "S256",
+        }
+    )
     return RedirectResponse(f"{_tesla_mod._TESLA_AUTH_BASE}/authorize?{params}")
+
 
 @fast_app.get("/auth/tesla/callback")
 async def auth_tesla_callback(request: Request):
@@ -960,10 +1019,13 @@ async def auth_tesla_callback(request: Request):
         async with _pool().acquire() as conn:
             await conn.execute(
                 "UPDATE user_configs SET tesla_fleet_refresh_token = $2, tesla_method = $3 WHERE user_id = $1",
-                pending["user_id"], fleet_refresh, new_method,
+                pending["user_id"],
+                fleet_refresh,
+                new_method,
             )
     _tesla_mod._tesla_tokens.pop(pending["user_id"], None)
     return RedirectResponse("/?tesla_connected=1", status_code=303)
+
 
 @fast_app.post("/api/tesla/disconnect")
 async def api_tesla_disconnect(request: Request):
@@ -982,7 +1044,10 @@ async def api_tesla_disconnect(request: Request):
         async with _pool().acquire() as conn:
             await conn.execute(
                 "UPDATE user_configs SET tesla_refresh_token = $2, tesla_fleet_refresh_token = $3, tesla_method = $4 WHERE user_id = $1",
-                user_id, config["tesla_refresh_token"], config["tesla_fleet_refresh_token"], config["tesla_method"],
+                user_id,
+                config["tesla_refresh_token"],
+                config["tesla_fleet_refresh_token"],
+                config["tesla_method"],
             )
     _tesla_mod._tesla_tokens.pop(user_id, None)
     return {"ok": True, "tesla_configured": _tesla_configured(config), "tesla_method": config.get("tesla_method", "")}
@@ -993,10 +1058,12 @@ async def api_tesla_disconnect(request: Request):
 async def api_spotify_auth(request: Request):
     return RedirectResponse(_spotify_auth_url(_require_user(request)))
 
+
 @fast_app.get("/auth/spotify/callback")
 async def auth_spotify_callback(request: Request):
     await _spotify_finish_auth(request.query_params.get("state"), request.query_params.get("code"), _get_user_state, _get_user_lock)
     return RedirectResponse("/?spotify_connected=1", status_code=303)
+
 
 @fast_app.post("/api/spotify/disconnect")
 async def api_spotify_disconnect(request: Request):
@@ -1012,6 +1079,7 @@ async def api_apple_music_token(request: Request):
         return {"token": None, "enabled": False}
     return {"token": _apple_music_dev_token(), "enabled": True}
 
+
 @fast_app.post("/api/apple_music/user_token")
 async def api_apple_music_user_token(request: Request):
     user_id = _require_user(request)
@@ -1019,10 +1087,12 @@ async def api_apple_music_user_token(request: Request):
     await _save_apple_music_user_token(user_id, (body.get("token") or "").strip(), (body.get("storefront") or "us").strip().lower(), _get_user_state, _get_user_lock)
     return {"ok": True}
 
+
 @fast_app.post("/api/apple_music/disconnect")
 async def api_apple_music_disconnect(request: Request):
     await _disconnect_apple_music_user_token(_require_user(request), _get_user_state, _get_user_lock)
     return {"ok": True}
+
 
 @sio.on("apple_music_callback")
 async def on_apple_music_callback(sid, data):
@@ -1037,7 +1107,9 @@ async def api_messages(request: Request):
             "SELECT id, sender, body, important, reason, received_at FROM phone_messages WHERE user_id = $1 ORDER BY received_at DESC LIMIT 50",
             user_id,
         )
-    return [{"id": r["id"], "sender": r["sender"], "body": r["body"], "important": r["important"], "reason": r["reason"], "received_at": r["received_at"].isoformat()} for r in rows]
+    return [
+        {"id": r["id"], "sender": r["sender"], "body": r["body"], "important": r["important"], "reason": r["reason"], "received_at": r["received_at"].isoformat()} for r in rows
+    ]
 
 
 _SENT_RE = re.compile(r'(.+?[.!?…]+["\')\]]?\s)', re.DOTALL)
@@ -1050,7 +1122,7 @@ def _split_sentences(buf):
         if not m:
             break
         out.append(m.group(1).strip())
-        buf = buf[m.end():]
+        buf = buf[m.end() :]
     return out, buf
 
 
@@ -1134,9 +1206,11 @@ async def on_connect(sid, environ, auth=None):
     await sio.emit("status", {"state": "idle"}, to=sid)
     await sio.emit("config_state", {"configured": _user_configured(state), "role": state.get("role", "user")}, to=sid)
 
+
 @sio.on("disconnect")
 async def on_disconnect(sid):
     _sid_to_user.pop(sid, None)
+
 
 @sio.on("user_message")
 async def on_user_message(sid, data):
@@ -1180,6 +1254,7 @@ async def on_user_message(sid, data):
         speaker_name = "guest"
     asyncio.create_task(_process_message(sid, text, speaker_name=speaker_name, speaker_kid_safe=speaker_kid_safe))
 
+
 @sio.on("start_meeting")
 async def on_start_meeting(sid, data=None):
     user_id = _sid_to_user.get(sid)
@@ -1191,6 +1266,7 @@ async def on_start_meeting(sid, data=None):
     meeting_id = await _db_create_meeting(user_id)
     _active_meetings[user_id] = {"meeting_id": meeting_id, "segments": []}
     await sio.emit("meeting_started", {"meeting_id": meeting_id}, to=sid)
+
 
 @sio.on("meeting_audio_chunk")
 async def on_meeting_audio_chunk(sid, data):
@@ -1227,6 +1303,7 @@ async def on_meeting_audio_chunk(sid, data):
             except OSError:
                 pass
 
+
 @sio.on("end_meeting")
 async def on_end_meeting(sid, data=None):
     user_id = _sid_to_user.get(sid)
@@ -1255,6 +1332,7 @@ async def on_end_meeting(sid, data=None):
     await _db_finalize_meeting(meeting_id, notes)
     await sio.emit("meeting_notes_ready", {"meeting_id": meeting_id, "transcript": transcript, "notes": notes}, to=sid)
 
+
 @sio.on("reset_chat")
 async def on_reset_chat(sid, data=None):
     user_id = _sid_to_user.get(sid)
@@ -1264,6 +1342,7 @@ async def on_reset_chat(sid, data=None):
     if state:
         state["conversation"] = []
     await _db_clear_conversation(user_id)
+
 
 @sio.on("start_party_music")
 async def on_start_party_music(sid, data=None):
@@ -1278,6 +1357,7 @@ async def on_start_party_music(sid, data=None):
         await _apple_music_start_party(user_id)
     await sio.emit("party_token", {"token": _create_party_token(user_id)}, to=sid)
 
+
 @sio.on("stop_party_music")
 async def on_stop_party_music(sid, data=None):
     user_id = _sid_to_user.get(sid)
@@ -1290,6 +1370,7 @@ def _get_party_base_url() -> str:
     base = os.getenv("JARVIS_PUBLIC_URL", "").rstrip("/")
     return base or f"http://{os.getenv('HOST_IP', 'localhost')}:5000"
 
+
 @fast_app.get("/api/party-token")
 async def get_party_token(request: Request):
     uid = _get_current_user(request)
@@ -1298,11 +1379,13 @@ async def get_party_token(request: Request):
     token = _create_party_token(uid)
     return JSONResponse({"token": token, "url": f"{_get_party_base_url()}/party/{token}"})
 
+
 @fast_app.get("/party/{token}", response_class=HTMLResponse)
 async def party_guest_page(token: str, request: Request):
     if token not in _party_tokens:
         return HTMLResponse("<html><body style='background:#08111e;color:#7fe9ff;font-family:monospace;padding:40px'><h2>Party has ended.</h2></body></html>", status_code=404)
     return templates.TemplateResponse(request, "party.html")
+
 
 @fast_app.get("/party/{token}/now_playing")
 async def party_now_playing(token: str):
@@ -1328,6 +1411,7 @@ async def party_now_playing(token: str):
             except Exception:
                 pass
     return {"title": None, "artist": None}
+
 
 @fast_app.get("/party/{token}/search")
 async def party_search(token: str, q: str = ""):
@@ -1361,6 +1445,7 @@ async def party_search(token: str, q: str = ""):
         except Exception:
             return {"results": []}
     return {"results": []}
+
 
 @fast_app.post("/party/{token}/add")
 async def party_add_to_queue(token: str, request: Request):
@@ -1412,15 +1497,18 @@ async def _telemetry_loop():
             up = (net.bytes_sent - last_net.bytes_sent) * 8 / 1e6 / dt
             pps = int(((net.packets_recv + net.packets_sent) - (last_net.packets_recv + last_net.packets_sent)) / dt)
             last_net, last_t = net, now
-            await sio.emit("hud_update", {
-                "cpu": round(psutil.cpu_percent(interval=None)),
-                "ram": round(psutil.virtual_memory().percent),
-                "uptime_h": round((time.time() - boot) / 3600, 2),
-                "net_down_mbps": round(max(down, 0), 1),
-                "net_up_mbps": round(max(up, 0), 1),
-                "net_pps": max(pps, 0),
-                "infer_active": False,
-            })
+            await sio.emit(
+                "hud_update",
+                {
+                    "cpu": round(psutil.cpu_percent(interval=None)),
+                    "ram": round(psutil.virtual_memory().percent),
+                    "uptime_h": round((time.time() - boot) / 3600, 2),
+                    "net_down_mbps": round(max(down, 0), 1),
+                    "net_up_mbps": round(max(up, 0), 1),
+                    "net_pps": max(pps, 0),
+                    "infer_active": False,
+                },
+            )
         except Exception:
             pass
 
@@ -1439,7 +1527,22 @@ async def _weather_loop():
                     )
                     cur = wx_r.json().get("current", {})
                     code = cur.get("weather_code", 0)
-                    cond = {0: "Clear", 1: "Mainly clear", 2: "Partly cloudy", 3: "Overcast", 45: "Fog", 48: "Fog", 51: "Drizzle", 61: "Rain", 63: "Rain", 65: "Heavy rain", 71: "Snow", 73: "Snow", 80: "Showers", 95: "Thunderstorm"}.get(code, "—")
+                    cond = {
+                        0: "Clear",
+                        1: "Mainly clear",
+                        2: "Partly cloudy",
+                        3: "Overcast",
+                        45: "Fog",
+                        48: "Fog",
+                        51: "Drizzle",
+                        61: "Rain",
+                        63: "Rain",
+                        65: "Heavy rain",
+                        71: "Snow",
+                        73: "Snow",
+                        80: "Showers",
+                        95: "Thunderstorm",
+                    }.get(code, "—")
                     weather_data = {
                         "temp_f": round(cur["temperature_2m"]) if cur.get("temperature_2m") is not None else None,
                         "pressure_kpa": round(cur["surface_pressure"] / 10, 1) if cur.get("surface_pressure") else None,
