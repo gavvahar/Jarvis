@@ -179,4 +179,59 @@ CREATE TABLE IF NOT EXISTS security_events (
     detected_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS plaid_items (
+    id               BIGSERIAL PRIMARY KEY,
+    user_id          TEXT NOT NULL REFERENCES user_configs(user_id) ON DELETE CASCADE,
+    item_id          TEXT NOT NULL UNIQUE,
+    access_token     TEXT NOT NULL,
+    institution_id   TEXT NOT NULL DEFAULT '',
+    institution_name TEXT NOT NULL DEFAULT '',
+    cursor           TEXT NOT NULL DEFAULT '',
+    status           TEXT NOT NULL DEFAULT 'active',
+    created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_plaid_items_user ON plaid_items (user_id);
+
+CREATE TABLE IF NOT EXISTS plaid_accounts (
+    id                 BIGSERIAL PRIMARY KEY,
+    user_id            TEXT NOT NULL REFERENCES user_configs(user_id) ON DELETE CASCADE,
+    item_id            BIGINT NOT NULL REFERENCES plaid_items(id) ON DELETE CASCADE,
+    account_id         TEXT NOT NULL UNIQUE,
+    name               TEXT NOT NULL DEFAULT '',
+    official_name      TEXT NOT NULL DEFAULT '',
+    mask               TEXT NOT NULL DEFAULT '',
+    type               TEXT NOT NULL DEFAULT '',
+    subtype            TEXT NOT NULL DEFAULT '',
+    balance_current    REAL,
+    balance_available  REAL,
+    balance_limit      REAL,
+    iso_currency       TEXT NOT NULL DEFAULT 'USD',
+    updated_at         TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_plaid_accounts_user ON plaid_accounts (user_id);
+CREATE INDEX IF NOT EXISTS idx_plaid_accounts_item ON plaid_accounts (item_id);
+
+CREATE TABLE IF NOT EXISTS plaid_transactions (
+    id                        BIGSERIAL PRIMARY KEY,
+    user_id                   TEXT NOT NULL REFERENCES user_configs(user_id) ON DELETE CASCADE,
+    account_id                TEXT NOT NULL REFERENCES plaid_accounts(account_id) ON DELETE CASCADE,
+    transaction_id            TEXT NOT NULL UNIQUE,
+    amount                    REAL NOT NULL DEFAULT 0.0,
+    iso_currency              TEXT NOT NULL DEFAULT 'USD',
+    date                      DATE NOT NULL,
+    merchant_name             TEXT NOT NULL DEFAULT '',
+    name                      TEXT NOT NULL DEFAULT '',
+    category                  TEXT NOT NULL DEFAULT '',
+    personal_finance_category TEXT NOT NULL DEFAULT '',
+    category_override         TEXT,
+    pending                   BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at                TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_plaid_transactions_user ON plaid_transactions (user_id, date DESC);
+CREATE INDEX IF NOT EXISTS idx_plaid_transactions_account ON plaid_transactions (account_id);
+
 CREATE INDEX IF NOT EXISTS idx_security_events_user ON security_events (user_id, detected_at DESC);

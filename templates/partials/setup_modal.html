@@ -1,0 +1,85 @@
+<div id="setup" class="setup-hidden">
+  <div id="setup-card">
+    <div class="setup-ring"></div>
+    <div class="setup-word">J.A.R.V.I.S.</div>
+    <div class="setup-sub">INITIAL CONFIGURATION</div>
+    <p class="setup-lead">
+      Good day, sir. Choose the intelligence you'd like me to run on, then
+      provide its key.
+    </p>
+    <form id="setup-form" autocomplete="off">
+      <label class="setup-label" for="setup-provider">PROVIDER</label>
+      <select id="setup-provider">
+        <option value="anthropic">Anthropic — Claude</option>
+        <option value="openai">OpenAI — GPT</option>
+        <option value="openai_compatible">
+          Other (OpenAI-compatible: OpenRouter, Groq, local…)
+        </option>
+      </select>
+
+      <label class="setup-label" for="setup-model">MODEL</label>
+      <select id="setup-model"></select>
+      <input
+        id="setup-model-custom"
+        class="setup-hidden-field"
+        type="text"
+        placeholder="model name (e.g. llama-3.3-70b)"
+        autocomplete="off"
+        spellcheck="false"
+      />
+
+      <input
+        id="setup-baseurl"
+        class="setup-hidden-field"
+        type="text"
+        placeholder="Base URL (e.g. https://openrouter.ai/api/v1)"
+        autocomplete="off"
+        spellcheck="false"
+      />
+
+      <label class="setup-label" for="setup-key">API KEY</label>
+      <div class="setup-keyrow">
+        <input
+          id="setup-key"
+          type="password"
+          placeholder="sk-..."
+          autocomplete="off"
+          spellcheck="false"
+        />
+        <button type="submit" id="setup-go">CONNECT</button>
+      </div>
+
+      <label class="setup-label" style="margin-top: 18px">
+        HOME AUTOMATION
+        <span style="opacity: 0.45; font-size: 0.78em; letter-spacing: 0.05em"
+          >— OPTIONAL</span
+        >
+      </label>
+      <input
+        id="setup-ha-url"
+        type="text"
+        placeholder="http://homeassistant.local:8123"
+        autocomplete="off"
+        spellcheck="false"
+      />
+      <input
+        id="setup-ha-token"
+        type="password"
+        placeholder="Long-Lived Access Token"
+        autocomplete="off"
+        spellcheck="false"
+        style="margin-top: 6px"
+      />
+    </form>
+    <div id="setup-msg"></div>
+    <a
+      class="setup-help"
+      id="setup-help"
+      href="https://console.anthropic.com/settings/keys"
+      target="_blank"
+      rel="noopener"
+    >
+      Get an Anthropic key →
+    </a>
+  </div>
+</div>
