@@ -11,6 +11,7 @@ jobs:
       pull-requests: write
       contents: read
       issues: write
+      repository-projects: write
 
     steps:
       - uses: actions/checkout@v4
@@ -87,6 +88,92 @@ jobs:
                   print(result.stderr[:200])
                   raise SystemExit(result.returncode)
           EOF
+
+      - name: Add PR to project
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+        run: |
+          python3 - <<'PYEOF'
+          import subprocess, json, sys
+
+          def gql(query, **variables):
+              args = ["gh", "api", "graphql", "-f", f"query={query}"]
+              for k, v in variables.items():
+                  args += ["-f", f"{k}={v}"]
+              r = subprocess.run(args, capture_output=True, text=True)
+              if r.returncode != 0:
+                  print(r.stderr[:300], file=sys.stderr)
+                  raise SystemExit(1)
+              return json.loads(r.stdout)
+
+          owner      = "${{ github.repository_owner }}"
+          pr_node_id = "${{ github.event.pull_request.node_id }}"
+
+          # Resolve project node ID from the known project number
+          data = gql("""
+            query($owner: String!, $number: Int!) {
+              user(login: $owner) {
+                projectV2(number: $number) { id title }
+              }
+            }
+          """, owner=owner, number="9")
+
+          project = data["data"]["user"]["projectV2"]
+          project_id = project["id"]
+          print(f"Project: {project['title']}")
+
+          # Add PR to the project
+          data = gql("""
+            mutation($pid: ID!, $cid: ID!) {
+              addProjectV2ItemById(input: {projectId: $pid, contentId: $cid}) {
+                item { id }
+              }
+            }
+          """, pid=project_id, cid=pr_node_id)
+          item_id = data["data"]["addProjectV2ItemById"]["item"]["id"]
+
+          # Find the Status field and pick the best option
+          data = gql("""
+            query($pid: ID!) {
+              node(id: $pid) {
+                ... on ProjectV2 {
+                  fields(first: 20) {
+                    nodes {
+                      ... on ProjectV2SingleSelectField { id name options { id name } }
+                    }
+                  }
+                }
+              }
+            }
+          """, pid=project_id)
+
+          PREFERRED = ["in review", "ready for review", "in progress", "todo", "backlog"]
+          status_field = best_option = None
+          for field in data["data"]["node"]["fields"]["nodes"]:
+              if field.get("name", "").lower() == "status":
+                  status_field = field
+                  opts = {o["name"].lower(): o for o in field.get("options", [])}
+                  best_option = next((opts[p] for p in PREFERRED if p in opts), None)
+                  if not best_option and field["options"]:
+                      best_option = field["options"][0]
+                  break
+
+          if not status_field or not best_option:
+              print("No status field found — item added without status")
+              raise SystemExit(0)
+
+          gql("""
+            mutation($pid: ID!, $iid: ID!, $fid: ID!, $oid: String!) {
+              updateProjectV2ItemFieldValue(input: {
+                projectId: $pid, itemId: $iid, fieldId: $fid,
+                value: { singleSelectOptionId: $oid }
+              }) { projectV2Item { id } }
+            }
+          """, pid=project_id, iid=item_id, fid=status_field["id"], oid=best_option["id"])
+
+          print(f"Status → {best_option['name']}")
+          PYEOF
 
       - name: Apply labels
         continue-on-error: true
