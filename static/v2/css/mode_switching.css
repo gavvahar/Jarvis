@@ -88,7 +88,7 @@ body.mode-awake #hud svg {
   transform-origin: center;
 }
 body.mode-awake #topbar {
-  animation: barIn 0.55s ease-out both 0.12s;
+  animation: barInTop 0.55s ease-out both 0.12s;
 }
 body.mode-awake #bottombar {
   animation: barIn 0.55s ease-out both 1.05s;
@@ -135,6 +135,16 @@ body.stats-open.mode-workspace .panel {
   to {
     opacity: 1;
     transform: translateX(-50%) translateY(0);
+  }
+}
+@keyframes barInTop {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
   }
 }
 @keyframes hudIn {
