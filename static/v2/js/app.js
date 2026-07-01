@@ -2486,7 +2486,8 @@
       }
       if (d.apple_music_server_enabled) initMusicKit();
       setFinanceStatus(!!d.finance_configured);
-      if (financeEnvLabel && d.plaid_env) financeEnvLabel.textContent = d.plaid_env;
+      if (financeEnvLabel && d.plaid_env)
+        financeEnvLabel.textContent = d.plaid_env;
       if (!d.plaid_client_enabled && financeLinkBtn) {
         financeLinkBtn.style.opacity = "0.4";
         financeLinkBtn.style.pointerEvents = "none";
