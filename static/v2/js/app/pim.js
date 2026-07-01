@@ -49,8 +49,7 @@ export function setCalendarStatus(configured, url, username) {
     calendarStatusText.textContent = configured
       ? "CALENDAR CONNECTED"
       : "CALENDAR NOT CONNECTED";
-  if (calendarUrlInput && typeof url === "string")
-    calendarUrlInput.value = url;
+  if (calendarUrlInput && typeof url === "string") calendarUrlInput.value = url;
   if (calendarUsernameInput && typeof username === "string")
     calendarUsernameInput.value = username;
   refreshAgendaButton();
@@ -63,8 +62,7 @@ export function setContactsStatus(configured, url, username) {
     contactsStatusText.textContent = configured
       ? "CONTACTS CONNECTED"
       : "CONTACTS NOT CONNECTED";
-  if (contactsUrlInput && typeof url === "string")
-    contactsUrlInput.value = url;
+  if (contactsUrlInput && typeof url === "string") contactsUrlInput.value = url;
   if (contactsUsernameInput && typeof username === "string")
     contactsUsernameInput.value = username;
   refreshAgendaButton();

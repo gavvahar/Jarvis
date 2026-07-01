@@ -23,9 +23,7 @@ export function setTeslaStatus(method) {
   const hasUnofficial = method === "unofficial" || method === "both";
   const hasFleet = method === "fleet" || method === "both";
   if (teslaUnofficialDot) {
-    teslaUnofficialDot.className = hasUnofficial
-      ? "connected"
-      : "disconnected";
+    teslaUnofficialDot.className = hasUnofficial ? "connected" : "disconnected";
   }
   if (teslaUnofficialText)
     teslaUnofficialText.textContent = hasUnofficial

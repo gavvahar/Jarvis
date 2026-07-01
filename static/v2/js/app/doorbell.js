@@ -119,10 +119,8 @@ const doorbellCopyToken = $("doorbell-copy-token");
 function buildDoorbellYaml(eventType, webhookUrl, token) {
   const entityHints = {
     doorbell_press: "event.YOUR_DOORBELL   # e.g. event.front_door_doorbell",
-    motion:
-      "binary_sensor.YOUR_MOTION  # e.g. binary_sensor.front_door_motion",
-    person:
-      "binary_sensor.YOUR_PERSON  # e.g. binary_sensor.front_door_person",
+    motion: "binary_sensor.YOUR_MOTION  # e.g. binary_sensor.front_door_motion",
+    person: "binary_sensor.YOUR_PERSON  # e.g. binary_sensor.front_door_person",
     package:
       "binary_sensor.YOUR_PACKAGE # e.g. binary_sensor.front_door_package",
   };
@@ -204,9 +202,7 @@ if (doorbellCopyUrl)
 if (doorbellCopyToken)
   doorbellCopyToken.addEventListener("click", () => {
     if (doorbellWebhookToken)
-      navigator.clipboard
-        .writeText(doorbellWebhookToken.value)
-        .catch(() => {});
+      navigator.clipboard.writeText(doorbellWebhookToken.value).catch(() => {});
   });
 
 document.querySelectorAll(".doorbell-tab").forEach((tab) => {
@@ -218,9 +214,7 @@ document.querySelectorAll(".doorbell-tab").forEach((tab) => {
       .querySelectorAll(".doorbell-tab-content")
       .forEach((c) => c.classList.add("doorbell-tab-hidden"));
     tab.classList.add("doorbell-tab-active");
-    const target = document.getElementById(
-      "doorbell-tab-" + tab.dataset.dtab,
-    );
+    const target = document.getElementById("doorbell-tab-" + tab.dataset.dtab);
     if (target) target.classList.remove("doorbell-tab-hidden");
   });
 });

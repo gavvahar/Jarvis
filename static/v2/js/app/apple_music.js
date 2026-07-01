@@ -19,8 +19,7 @@ export function setAppleMusicStatus(connected) {
     appleMusicDot.className = connected ? "connected" : "disconnected";
   if (appleMusicTextEl)
     appleMusicTextEl.textContent = connected ? "CONNECTED" : "NOT CONNECTED";
-  if (appleMusicBtn)
-    appleMusicBtn.classList.toggle("spotify-live", connected);
+  if (appleMusicBtn) appleMusicBtn.classList.toggle("spotify-live", connected);
 }
 
 function showAppleMusicSettings() {
@@ -29,8 +28,7 @@ function showAppleMusicSettings() {
 }
 
 function hideAppleMusicSettings() {
-  if (appleMusicSettingsEl)
-    appleMusicSettingsEl.classList.add("setup-hidden");
+  if (appleMusicSettingsEl) appleMusicSettingsEl.classList.add("setup-hidden");
 }
 
 export async function initMusicKit() {
