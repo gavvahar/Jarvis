@@ -205,7 +205,7 @@ Automated workflows to keep the repo healthy and branches in sync.
 
 Split the monolithic `app.py` (~5,900 lines) into focused modules so each integration and layer can be found, edited, and tested in isolation.
 
-- [ ] **`config.py`** — all ENV vars and constants; no local imports
+- [x] **`config.py`** — all ENV vars and constants; no local imports
 - [x] **`db.py`** — DB pool, `_pool()`, schema loading, and all `_db_*` helper functions
 - [x] **`auth.py`** — OIDC discovery, session signing/verification, `_get_current_user`, `_require_admin`
 - [x] **`integrations/ha.py`** — Home Assistant tool schemas, `_ha_call_service`, `_ha_get_states`, `_execute_ha_tool`
@@ -214,11 +214,11 @@ Split the monolithic `app.py` (~5,900 lines) into focused modules so each integr
 - [x] **`integrations/music/spotify.py`** — Spotify tool schemas, OAuth helpers, and execution
 - [x] **`integrations/music/apple_music.py`** — Apple Music tool schemas and execution
 - [x] **`integrations/vision.py`** — face recognition, camera snapshots, `_vision_loop`, vision tool schemas
-- [ ] **`integrations/phase1.py`** — timers, reminders, news, calendar, contacts tool schemas and execution
-- [ ] **`integrations/phase5.py`** — routines, device alerts, Zigbee tool schemas and execution
+- [x] **`integrations/phase1.py`** — timers, reminders, news, calendar, contacts tool schemas and execution
+- [x] **`integrations/phase5.py`** — routines, device alerts, Zigbee tool schemas and execution
 - [x] **`integrations/shared_lists.py`** — shared list tool schemas and execution
-- [ ] **`llm.py`** — LLM client builders, `_stream_reply`, `_build_system_prompt`
-- [ ] **`app.py`** — FastAPI app, lifespan, Socket.IO handlers, and HTTP routes only (glue layer)
+- [x] **`llm.py`** — LLM client builders, `_stream_reply`, `_build_system_prompt`
+- [x] **`app.py`** — FastAPI app, lifespan, Socket.IO handlers, and HTTP routes only (glue layer)
 
 ---
 
