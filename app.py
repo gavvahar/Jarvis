@@ -61,6 +61,8 @@ from integrations.music.apple_music import (
     _resolve_apple_music_callback,
 )
 import integrations.phase5 as _phase5_mod
+import integrations.phase4.presence as _presence_mod
+import integrations.phase4.snapcast as _snapcast_mod
 from integrations.phase1.dav import _resolve_dav_collection
 from integrations.phase1.calendar import _calendar_configured
 from integrations.phase1.contacts import _contacts_configured
@@ -126,17 +128,12 @@ from db import (
 
 
 # ─── PER-USER STATE ───────────────────────────────────────────────────────────
-# {user_id: {config, client, provider, conversation}}
 _user_states: dict[str, dict] = {}
 _user_locks: dict[str, asyncio.Lock] = {}
-
-# {user_id: {meeting_id, segments}}
 _active_meetings: dict[str, dict] = {}
-_party_tokens: dict[str, str] = {}  # token → user_id
-
-# Dedup map for wake triggers — prevents two devices firing simultaneously
+_party_tokens: dict[str, str] = {}
 _last_wake_time: dict[str, float] = {}
-_WAKE_DEDUP_WINDOW = 2.0  # seconds
+_WAKE_DEDUP_WINDOW = 2.0
 
 
 def _create_party_token(user_id: str) -> str:
@@ -154,16 +151,12 @@ def _clear_party_tokens(user_id: str):
             _party_tokens.pop(t, None)
 
 
-# socket sid → user_id
 _sid_to_user: dict[str, str] = {}
 
 
 def _sids_for_user(user_id: str) -> list[str]:
     return [sid for sid, uid in _sid_to_user.items() if uid == user_id]
 
-
-# {user_id: {unofficial_access, unofficial_expiry, fleet_access, fleet_expiry}}
-# {state_token: {user_id, code_verifier}}
 
 _whisper = None
 _whisper_lock = asyncio.Lock()
@@ -178,7 +171,6 @@ def _get_whisper():
     return _whisper
 
 
-# Voice embedding cache: user_id → (embedding, display_name, is_kid_safe)
 _voice_cache: dict = {}
 _VOICE_THRESHOLD = 0.82
 
@@ -205,7 +197,6 @@ async def _refresh_voice_cache() -> None:
 
 
 def _identify_speaker_from_embedding(embedding: list) -> tuple:
-    """Returns (user_id | None, display_name, is_kid_safe)."""
     if not _voice_cache or not embedding:
         return None, "", False
     best_uid, best_name, best_safe, best_score = None, "", False, 0.0
@@ -249,14 +240,28 @@ def _user_configured(state: dict) -> bool:
     return state["client"] is not None
 
 
-async def _require_admin(request: Request) -> str:
-    user_id = _get_current_user(request)
-    if not user_id:
+def _require_user(request: Request) -> str:
+    uid = _get_current_user(request)
+    if not uid:
         raise HTTPException(401)
-    state = await _get_user_state(user_id)
-    if state.get("role") != "admin":
+    return uid
+
+
+async def _require_bearer(request: Request) -> str:
+    auth = request.headers.get("Authorization", "")
+    if not auth.startswith("Bearer "):
+        raise HTTPException(401)
+    uid = await _db_find_user_by_token(auth[7:].strip())
+    if not uid:
+        raise HTTPException(401)
+    return uid
+
+
+async def _require_admin(request: Request) -> str:
+    uid = _require_user(request)
+    if (await _get_user_state(uid)).get("role") != "admin":
         raise HTTPException(403, "Admin access required")
-    return user_id
+    return uid
 
 
 # ─── SOCKET.IO + FASTAPI ─────────────────────────────────────────────────────
@@ -284,12 +289,8 @@ async def lifespan(application: FastAPI):
     t5 = asyncio.create_task(_phase5_mod._device_alert_loop())
     t6 = asyncio.create_task(_vision_mod._vision_loop())
     yield
-    t1.cancel()
-    t2.cancel()
-    t3.cancel()
-    t4.cancel()
-    t5.cancel()
-    t6.cancel()
+    for t in (t1, t2, t3, t4, t5, t6):
+        t.cancel()
     await _db_close()
 
 
@@ -305,13 +306,11 @@ app = socketio.ASGIApp(sio, other_asgi_app=fast_app)
 
 @fast_app.middleware("http")
 async def _refresh_session(request: Request, call_next):
-    """Re-issue the session cookie on every authenticated request so the
-    30-day expiry resets from last activity, not from login."""
     response = await call_next(request)
     if request.url.path not in _NO_REFRESH_PATHS and _auth._signer:
-        user_id = _get_current_user(request)
-        if user_id:
-            response.set_cookie("jarvis_session", _sign_session(user_id), **_SESSION_COOKIE_OPTS)
+        uid = _get_current_user(request)
+        if uid:
+            response.set_cookie("jarvis_session", _sign_session(uid), **_SESSION_COOKIE_OPTS)
     return response
 
 
@@ -338,10 +337,8 @@ async def login(request: Request):
 async def auth_callback(request: Request):
     code = request.query_params.get("code")
     state = request.query_params.get("state")
-    stored_state = request.cookies.get("oidc_state")
-    if not code or not state or state != stored_state:
+    if not code or not state or state != request.cookies.get("oidc_state"):
         raise HTTPException(400, "Invalid OAuth2 callback — state mismatch or missing code")
-
     try:
         async with httpx.AsyncClient(timeout=10) as c:
             r = await c.post(
@@ -356,7 +353,6 @@ async def auth_callback(request: Request):
             )
             r.raise_for_status()
             tokens = r.json()
-
             r = await c.get(
                 _get_oidc_config()["userinfo_endpoint"],
                 headers={"Authorization": f"Bearer {tokens['access_token']}"},
@@ -367,11 +363,8 @@ async def auth_callback(request: Request):
         raise HTTPException(502, f"OIDC token exchange failed: {e}") from e
 
     user_id = userinfo["sub"]
-    email = userinfo.get("email", "")
-    groups = userinfo.get("groups", [])
-    role = "admin" if OIDC_ADMIN_GROUP and OIDC_ADMIN_GROUP in groups else "user"
-    await _db_ensure_user(user_id, email, role)
-    # Invalidate cached state so role is reloaded on next request
+    role = "admin" if OIDC_ADMIN_GROUP and OIDC_ADMIN_GROUP in userinfo.get("groups", []) else "user"
+    await _db_ensure_user(user_id, userinfo.get("email", ""), role)
     _user_states.pop(user_id, None)
 
     response = RedirectResponse("/", status_code=303)
@@ -397,9 +390,7 @@ async def index(request: Request):
 
 @fast_app.get("/api/status")
 async def api_status(request: Request):
-    user_id = _get_current_user(request)
-    if not user_id:
-        raise HTTPException(401)
+    user_id = _require_user(request)
     state = await _get_user_state(user_id)
     config = state["config"]
     return {
@@ -428,8 +419,7 @@ async def api_status(request: Request):
 
 @fast_app.post("/api/transcribe")
 async def api_transcribe(request: Request, audio: UploadFile = File(...)):
-    if not _get_current_user(request):
-        raise HTTPException(401)
+    _require_user(request)
     data = await audio.read()
     if not data:
         return {"text": ""}
@@ -441,13 +431,7 @@ async def api_transcribe(request: Request, audio: UploadFile = File(...)):
 
         def _run():
             m = _get_whisper()
-            segs, _ = m.transcribe(
-                tmp,
-                language="en",
-                beam_size=1,
-                vad_filter=True,
-                no_speech_threshold=0.6,
-            )
+            segs, _ = m.transcribe(tmp, language="en", beam_size=1, vad_filter=True, no_speech_threshold=0.6)
             return " ".join(s.text for s in segs).strip()
 
         async with _whisper_lock:
@@ -459,12 +443,7 @@ async def api_transcribe(request: Request, audio: UploadFile = File(...)):
             if embedding:
                 speaker_id, speaker_name, speaker_kid_safe = _identify_speaker_from_embedding(embedding)
 
-        return {
-            "text": text,
-            "speaker_id": speaker_id,
-            "speaker_name": speaker_name,
-            "speaker_kid_safe": speaker_kid_safe,
-        }
+        return {"text": text, "speaker_id": speaker_id, "speaker_name": speaker_name, "speaker_kid_safe": speaker_kid_safe}
     except Exception as e:
         print(f"[STT] {e}", flush=True)
         return {"text": ""}
@@ -478,10 +457,7 @@ async def api_transcribe(request: Request, audio: UploadFile = File(...)):
 
 @fast_app.post("/api/save_config")
 async def api_save_config(request: Request):
-    user_id = _get_current_user(request)
-    if not user_id:
-        raise HTTPException(401)
-
+    user_id = _require_user(request)
     data = await request.json()
     provider = (data.get("provider") or "anthropic").strip()
     key = (data.get("key") or "").strip()
@@ -502,120 +478,80 @@ async def api_save_config(request: Request):
     ok, err = await asyncio.to_thread(_validate, provider, key, model, base_url)
     if not ok:
         return {"ok": False, "error": err}
-
     if ha_url and ha_token:
         ha_ok, ha_err = await _validate_ha(ha_url, ha_token)
         if not ha_ok:
             return {"ok": False, "error": f"Home Assistant: {ha_err}"}
 
-    new_config = {
-        "provider": provider,
-        "api_key": key,
-        "model": model,
-        "base_url": base_url,
-        "ha_url": ha_url,
-        "ha_token": ha_token,
-    }
-
+    new_config = {"provider": provider, "api_key": key, "model": model, "base_url": base_url, "ha_url": ha_url, "ha_token": ha_token}
     async with _get_user_lock(user_id):
         await _db_save_config(user_id, new_config)
         state = await _get_user_state(user_id)
         state["config"].update(new_config)
         state["client"] = _build_client(provider, key, base_url)
         state["provider"] = provider
-
     return {"ok": True}
 
 
 # ─── VISION API ───────────────────────────────────────────────────────────────
 @fast_app.get("/api/cameras")
 async def api_list_cameras(request: Request):
-    user_id = _get_current_user(request)
-    if not user_id:
-        raise HTTPException(401)
-    return await _list_cameras(user_id)
+    return await _list_cameras(_require_user(request))
 
 
 @fast_app.post("/api/cameras")
 async def api_add_camera(request: Request):
-    user_id = _get_current_user(request)
-    if not user_id:
-        raise HTTPException(401)
-    return await _add_camera(user_id, await request.json())
+    return await _add_camera(_require_user(request), await request.json())
 
 
 @fast_app.delete("/api/cameras/{camera_id}")
 async def api_delete_camera(camera_id: int, request: Request):
-    user_id = _get_current_user(request)
-    if not user_id:
-        raise HTTPException(401)
-    return await _delete_camera(camera_id, user_id)
+    return await _delete_camera(camera_id, _require_user(request))
 
 
 @fast_app.patch("/api/cameras/{camera_id}")
 async def api_update_camera(camera_id: int, request: Request):
-    user_id = _get_current_user(request)
-    if not user_id:
-        raise HTTPException(401)
-    return await _update_camera(camera_id, await request.json(), user_id)
+    return await _update_camera(camera_id, await request.json(), _require_user(request))
 
 
 @fast_app.get("/api/presence")
 async def api_presence(request: Request):
-    if not _get_current_user(request):
-        raise HTTPException(401)
+    _require_user(request)
     return await _get_presence_members()
 
 
 @fast_app.get("/api/security-events")
 async def api_security_events(request: Request):
-    user_id = _get_current_user(request)
-    if not user_id:
-        raise HTTPException(401)
-    hours = float(request.query_params.get("hours", "24"))
-    return await _get_security_events(user_id, hours)
+    return await _get_security_events(_require_user(request), float(request.query_params.get("hours", "24")))
 
 
 @fast_app.post("/api/face/enroll-sample")
 async def api_face_enroll_sample(request: Request, image: UploadFile = File(...)):
-    if not _get_current_user(request):
-        raise HTTPException(401)
+    _require_user(request)
     return await _face_enroll_sample(await image.read())
 
 
 @fast_app.post("/api/face/enroll-finish")
 async def api_face_enroll_finish(request: Request):
-    user_id = _get_current_user(request)
-    if not user_id:
-        raise HTTPException(401)
-    data = await request.json()
-    return await _face_enroll_finish(user_id, data.get("embeddings", []))
+    return await _face_enroll_finish(_require_user(request), (await request.json()).get("embeddings", []))
 
 
 @fast_app.delete("/api/face/enrollment")
 async def api_face_enroll_delete(request: Request):
-    user_id = _get_current_user(request)
-    if not user_id:
-        raise HTTPException(401)
-    return await _face_enroll_delete(user_id)
+    return await _face_enroll_delete(_require_user(request))
 
 
 @fast_app.post("/api/save_ha")
 async def api_save_ha(request: Request):
-    user_id = _get_current_user(request)
-    if not user_id:
-        raise HTTPException(401)
-
+    user_id = _require_user(request)
     data = await request.json()
     ha_url = (data.get("ha_url") or "").strip()
     ha_token = (data.get("ha_token") or "").strip()
 
     state = await _get_user_state(user_id)
     config = state["config"]
-    effective_token = ha_token or config.get("ha_token", "")
-
-    if ha_url and effective_token:
-        ha_ok, ha_err = await _validate_ha(ha_url, effective_token)
+    if ha_url and (ha_token or config.get("ha_token")):
+        ha_ok, ha_err = await _validate_ha(ha_url, ha_token or config.get("ha_token", ""))
         if not ha_ok:
             return {"ok": False, "error": ha_err}
 
@@ -626,16 +562,12 @@ async def api_save_ha(request: Request):
         elif not ha_url:
             config["ha_token"] = ""
         await _db_save_config(user_id, config)
-
     return {"ok": True, "ha_configured": _ha_configured(config)}
 
 
 @fast_app.post("/api/save_pim")
 async def api_save_pim(request: Request):
-    user_id = _get_current_user(request)
-    if not user_id:
-        raise HTTPException(401)
-
+    user_id = _require_user(request)
     data = await request.json()
     state = await _get_user_state(user_id)
     config = state["config"]
@@ -646,63 +578,49 @@ async def api_save_pim(request: Request):
     contacts_url = (data.get("contacts_url") or "").strip()
     contacts_username = (data.get("contacts_username") or "").strip()
     contacts_password = (data.get("contacts_password") or "").strip()
-    clear_calendar = bool(data.get("clear_calendar"))
-    clear_contacts = bool(data.get("clear_contacts"))
 
-    calendar_to_save = {
-        "url": config.get("calendar_url", ""),
-        "username": config.get("calendar_username", ""),
-        "password": config.get("calendar_password", ""),
-    }
-    contacts_to_save = {
-        "url": config.get("contacts_url", ""),
-        "username": config.get("contacts_username", ""),
-        "password": config.get("contacts_password", ""),
-    }
+    calendar_to_save = {"url": config.get("calendar_url", ""), "username": config.get("calendar_username", ""), "password": config.get("calendar_password", "")}
+    contacts_to_save = {"url": config.get("contacts_url", ""), "username": config.get("contacts_username", ""), "password": config.get("contacts_password", "")}
 
-    if clear_calendar:
+    if bool(data.get("clear_calendar")):
         calendar_to_save = {"url": "", "username": "", "password": ""}
     elif calendar_url or calendar_username:
         if not calendar_url or not calendar_username:
             return {"ok": False, "error": "Calendar needs both a server URL and username."}
-        effective_calendar_password = calendar_password or config.get("calendar_password", "")
-        if not effective_calendar_password:
+        eff_pw = calendar_password or config.get("calendar_password", "")
+        if not eff_pw:
             return {"ok": False, "error": "Calendar password is required."}
         try:
-            resolved = await _resolve_dav_collection(calendar_url, calendar_username, effective_calendar_password, "calendar")
+            resolved = await _resolve_dav_collection(calendar_url, calendar_username, eff_pw, "calendar")
         except ValueError as e:
             return {"ok": False, "error": f"Calendar: {e}"}
-        calendar_to_save = {
-            "url": resolved["url"],
-            "username": calendar_username,
-            "password": effective_calendar_password,
-        }
+        calendar_to_save = {"url": resolved["url"], "username": calendar_username, "password": eff_pw}
 
-    if clear_contacts:
+    if bool(data.get("clear_contacts")):
         contacts_to_save = {"url": "", "username": "", "password": ""}
     elif contacts_url or contacts_username:
         if not contacts_url or not contacts_username:
             return {"ok": False, "error": "Contacts needs both a server URL and username."}
-        effective_contacts_password = contacts_password or config.get("contacts_password", "")
-        if not effective_contacts_password:
+        eff_pw = contacts_password or config.get("contacts_password", "")
+        if not eff_pw:
             return {"ok": False, "error": "Contacts password is required."}
         try:
-            resolved = await _resolve_dav_collection(contacts_url, contacts_username, effective_contacts_password, "addressbook")
+            resolved = await _resolve_dav_collection(contacts_url, contacts_username, eff_pw, "addressbook")
         except ValueError as e:
             return {"ok": False, "error": f"Contacts: {e}"}
-        contacts_to_save = {
-            "url": resolved["url"],
-            "username": contacts_username,
-            "password": effective_contacts_password,
-        }
+        contacts_to_save = {"url": resolved["url"], "username": contacts_username, "password": eff_pw}
 
     async with _get_user_lock(user_id):
-        config["calendar_url"] = calendar_to_save["url"]
-        config["calendar_username"] = calendar_to_save["username"]
-        config["calendar_password"] = calendar_to_save["password"]
-        config["contacts_url"] = contacts_to_save["url"]
-        config["contacts_username"] = contacts_to_save["username"]
-        config["contacts_password"] = contacts_to_save["password"]
+        config.update(
+            {
+                "calendar_url": calendar_to_save["url"],
+                "calendar_username": calendar_to_save["username"],
+                "calendar_password": calendar_to_save["password"],
+                "contacts_url": contacts_to_save["url"],
+                "contacts_username": contacts_to_save["username"],
+                "contacts_password": contacts_to_save["password"],
+            }
+        )
         await _db_save_pim_config(
             user_id,
             config["calendar_url"],
@@ -712,7 +630,6 @@ async def api_save_pim(request: Request):
             config["contacts_username"],
             config["contacts_password"],
         )
-
     return {
         "ok": True,
         "calendar_configured": _calendar_configured(config),
@@ -726,35 +643,26 @@ async def api_save_pim(request: Request):
 
 @fast_app.post("/api/save_myq")
 async def api_save_myq(request: Request):
-    user_id = _get_current_user(request)
-    if not user_id:
-        raise HTTPException(401)
-
+    user_id = _require_user(request)
     data = await request.json()
     myq_email = (data.get("myq_email") or "").strip()
     myq_password = (data.get("myq_password") or "").strip()
-
     if myq_email and myq_password:
         result = await _myq_get_status({"myq_email": myq_email, "myq_password": myq_password})
         if result.startswith("Could not reach MyQ"):
             return {"ok": False, "error": result}
-
     state = await _get_user_state(user_id)
     config = state["config"]
-
     async with _get_user_lock(user_id):
         config["myq_email"] = myq_email
         config["myq_password"] = myq_password
         await _db_save_config(user_id, config)
-
     return {"ok": True, "myq_configured": _myq_configured(config)}
 
 
 @fast_app.get("/api/meetings")
 async def api_meetings(request: Request):
-    user_id = _get_current_user(request)
-    if not user_id:
-        raise HTTPException(401)
+    user_id = _require_user(request)
     async with _pool().acquire() as conn:
         rows = await conn.fetch(
             "SELECT id, started_at, ended_at, notes FROM meetings WHERE user_id = $1 ORDER BY started_at DESC LIMIT 20",
@@ -773,9 +681,7 @@ async def api_meetings(request: Request):
 
 @fast_app.get("/api/meetings/{meeting_id}")
 async def api_meeting_detail(request: Request, meeting_id: int):
-    user_id = _get_current_user(request)
-    if not user_id:
-        raise HTTPException(401)
+    user_id = _require_user(request)
     async with _pool().acquire() as conn:
         row = await conn.fetchrow(
             "SELECT id, started_at, ended_at, transcript, notes FROM meetings WHERE id = $1 AND user_id = $2",
@@ -795,41 +701,28 @@ async def api_meeting_detail(request: Request, meeting_id: int):
 
 # ─── PHONE MESSAGES ──────────────────────────────────────────────────────────
 async def _classify_message(state: dict, sender: str, body: str) -> tuple[bool, str]:
-    """Return (is_important, reason). Falls back to False on any error."""
     provider = state["provider"]
     config = state["config"]
     client = state["client"]
     model = config.get("model") or DEFAULT_MODELS.get(provider, "")
     prompt = (
         "You filter phone messages for importance. Reply with exactly:\n"
-        "  yes: <one-line reason>\n"
-        "or:\n"
-        "  no\n\n"
+        "  yes: <one-line reason>\nor:\n  no\n\n"
         "Flag as important if the message contains: an invitation, event, deadline, "
         "urgent request, meeting request, or time-sensitive ask. "
         "Routine greetings, spam, and casual chitchat are NOT important.\n\n"
-        f"Sender: {sender}\n"
-        f"Message: {body}"
+        f"Sender: {sender}\nMessage: {body}"
     )
     try:
         if provider == "anthropic":
-            msg = await client.messages.create(
-                model=model,
-                max_tokens=60,
-                messages=[{"role": "user", "content": prompt}],
-            )
+            msg = await client.messages.create(model=model, max_tokens=60, messages=[{"role": "user", "content": prompt}])
             reply = msg.content[0].text.strip().lower()
         else:
             last = None
             reply = "no"
             for extra in ({"max_tokens": 60}, {"max_completion_tokens": 60}, {}):
                 try:
-                    resp = await client.chat.completions.create(
-                        model=model,
-                        messages=[{"role": "user", "content": prompt}],
-                        stream=False,
-                        **extra,
-                    )
+                    resp = await client.chat.completions.create(model=model, messages=[{"role": "user", "content": prompt}], stream=False, **extra)
                     reply = resp.choices[0].message.content.strip().lower()
                     break
                 except Exception as e:
@@ -840,8 +733,7 @@ async def _classify_message(state: dict, sender: str, body: str) -> tuple[bool, 
             if last and not reply:
                 raise last
         if reply.startswith("yes"):
-            reason = reply[3:].lstrip(":").strip()
-            return True, reason or "flagged as important"
+            return True, reply[3:].lstrip(":").strip() or "flagged as important"
         return False, ""
     except Exception as e:
         print(f"[MESSAGES] classify error: {e}", flush=True)
@@ -853,37 +745,21 @@ async def _classify_and_notify(user_id: str, sender: str, body: str, state: dict
     await _db_store_phone_message(user_id, sender, body, important, reason)
     if important:
         for sid in _sids_for_user(user_id):
-            await sio.emit(
-                "message_alert",
-                {"sender": sender, "text": body[:300], "reason": reason},
-                to=sid,
-            )
+            await sio.emit("message_alert", {"sender": sender, "text": body[:300], "reason": reason}, to=sid)
 
 
 @fast_app.get("/api/messages/token")
 async def api_messages_token(request: Request):
-    user_id = _get_current_user(request)
-    if not user_id:
-        raise HTTPException(401)
+    user_id = _require_user(request)
     token = await _db_get_or_create_webhook_token(user_id)
-    return {
-        "token": token,
-        "url": f"{APP_URL}/api/messages/ingest",
-        "apk_url": f"{APP_URL}/download/jarvis-messages.apk",
-    }
+    return {"token": token, "url": f"{APP_URL}/api/messages/ingest", "apk_url": f"{APP_URL}/download/jarvis-messages.apk"}
 
 
 @fast_app.post("/api/messages/token/regenerate")
 async def api_messages_token_regenerate(request: Request):
-    user_id = _get_current_user(request)
-    if not user_id:
-        raise HTTPException(401)
+    user_id = _require_user(request)
     token = await _db_regenerate_webhook_token(user_id)
-    return {
-        "token": token,
-        "url": f"{APP_URL}/api/messages/ingest",
-        "apk_url": f"{APP_URL}/download/jarvis-messages.apk",
-    }
+    return {"token": token, "url": f"{APP_URL}/api/messages/ingest", "apk_url": f"{APP_URL}/download/jarvis-messages.apk"}
 
 
 @fast_app.get("/download/jarvis-messages.apk")
@@ -896,94 +772,59 @@ async def download_apk():
 
 @fast_app.post("/api/messages/ingest")
 async def api_messages_ingest(request: Request):
-    auth = request.headers.get("Authorization", "")
-    if not auth.startswith("Bearer "):
-        raise HTTPException(401)
-    token = auth[7:].strip()
-    user_id = await _db_find_user_by_token(token)
-    if not user_id:
-        raise HTTPException(401)
-
+    user_id = await _require_bearer(request)
     data = await request.json()
     sender = (data.get("sender") or "Unknown").strip()[:200]
     body = (data.get("text") or "").strip()[:2000]
     if not body:
         return {"ok": True}
-
     state = _user_states.get(user_id)
     if state and _user_configured(state):
         asyncio.create_task(_classify_and_notify(user_id, sender, body, state))
     else:
         await _db_store_phone_message(user_id, sender, body, False, "")
-
     return {"ok": True}
 
 
 @fast_app.post("/api/doorbell/event")
 async def api_doorbell_event(request: Request):
-    auth = request.headers.get("Authorization", "")
-    if not auth.startswith("Bearer "):
-        raise HTTPException(401)
-    token = auth[7:].strip()
-    user_id = await _db_find_user_by_token(token)
-    if not user_id:
-        raise HTTPException(401)
-
+    user_id = await _require_bearer(request)
     data = await request.json()
     event_type = (data.get("event_type") or "motion").strip()[:50]
     source = (data.get("source") or "").strip()[:200]
-
     await _db_store_doorbell_event(user_id, event_type, source)
-
     hour = datetime.datetime.now().hour
-    quiet = hour >= 23 or hour < 7
-    if not (event_type == "motion" and quiet):
+    if not (event_type == "motion" and (hour >= 23 or hour < 7)):
         speak_map = {
             "doorbell_press": "Someone is at the front door, sir.",
             "motion": "Motion detected at the front door.",
             "person": "A person has been detected at the front door, sir.",
             "package": "A package has been delivered to the front door, sir.",
         }
-        speak_text = speak_map.get(event_type, "Doorbell alert.")
         for sid in _sids_for_user(user_id):
-            await sio.emit(
-                "doorbell_alert",
-                {"event_type": event_type, "source": source, "speak": speak_text},
-                to=sid,
-            )
-
+            await sio.emit("doorbell_alert", {"event_type": event_type, "source": source, "speak": speak_map.get(event_type, "Doorbell alert.")}, to=sid)
     return {"ok": True}
 
 
 @fast_app.post("/api/wake")
 async def api_wake(request: Request):
-    auth = request.headers.get("Authorization", "")
-    if not auth.startswith("Bearer "):
-        raise HTTPException(401)
-    token = auth[7:].strip()
-    user_id = await _db_find_user_by_token(token)
-    if not user_id:
-        raise HTTPException(401)
-
-    data = await request.json()
-    device_id = (data.get("device_id") or "unknown").strip()[:100]
-
+    user_id = await _require_bearer(request)
+    body = await request.json()
+    device_id = (body.get("device_id") or "unknown").strip()[:100]
+    room = (body.get("room") or "").strip()[:100]
+    _presence_mod.update_user_room(user_id, device_id, room)
     now = __import__("time").time()
     if now - _last_wake_time.get(user_id, 0) < _WAKE_DEDUP_WINDOW:
         return {"status": "ignored"}
     _last_wake_time[user_id] = now
-
     for sid in _sids_for_user(user_id):
         await sio.emit("wake_trigger", {"device_id": device_id}, to=sid)
-
     return {"status": "ok"}
 
 
 @fast_app.post("/api/voice/enroll-sample")
 async def api_voice_enroll_sample(request: Request, audio: UploadFile = File(...)):
-    """Extract a voice embedding from an uploaded audio sample. Returns embedding (not saved)."""
-    if not _get_current_user(request):
-        raise HTTPException(401)
+    _require_user(request)
     if not _VOICE_ID_OK:
         return {"ok": False, "error": "Voice ID unavailable — install librosa on the server."}
     data = await audio.read()
@@ -1008,10 +849,7 @@ async def api_voice_enroll_sample(request: Request, audio: UploadFile = File(...
 
 @fast_app.post("/api/voice/enroll-finish")
 async def api_voice_enroll_finish(request: Request):
-    """Average provided embeddings and save as the user's voiceprint."""
-    user_id = _get_current_user(request)
-    if not user_id:
-        raise HTTPException(401)
+    user_id = _require_user(request)
     if not _VOICE_ID_OK:
         raise HTTPException(400, "Voice ID unavailable.")
     data = await request.json()
@@ -1028,9 +866,7 @@ async def api_voice_enroll_finish(request: Request):
 
 @fast_app.delete("/api/voice/enrollment")
 async def api_voice_enrollment_delete(request: Request):
-    user_id = _get_current_user(request)
-    if not user_id:
-        raise HTTPException(401)
+    user_id = _require_user(request)
     await _db_clear_voice_embedding(user_id)
     await _refresh_voice_cache()
     return {"ok": True}
@@ -1038,9 +874,7 @@ async def api_voice_enrollment_delete(request: Request):
 
 @fast_app.patch("/api/user/profile")
 async def api_user_profile(request: Request):
-    user_id = _get_current_user(request)
-    if not user_id:
-        raise HTTPException(401)
+    user_id = _require_user(request)
     data = await request.json()
     if "display_name" in data:
         name = str(data["display_name"]).strip()[:100]
@@ -1059,98 +893,72 @@ async def api_user_profile(request: Request):
 
 @fast_app.get("/api/household/members")
 async def api_household_members(request: Request):
-    user_id = _get_current_user(request)
-    if not user_id:
-        raise HTTPException(401)
-    state = await _get_user_state(user_id)
-    if state.get("role") != "admin":
+    user_id = _require_user(request)
+    if (await _get_user_state(user_id)).get("role") != "admin":
         raise HTTPException(403)
-    members = await _db_get_household_members()
-    return {"members": members}
+    return {"members": await _db_get_household_members()}
 
 
 @fast_app.get("/api/shared-lists")
 async def api_shared_lists(request: Request):
-    if not _get_current_user(request):
-        raise HTTPException(401)
+    _require_user(request)
     return {"lists": await _db_get_all_shared_lists()}
 
 
 @fast_app.get("/api/doorbell/token")
 async def api_doorbell_token(request: Request):
-    user_id = _get_current_user(request)
-    if not user_id:
-        raise HTTPException(401)
+    user_id = _require_user(request)
     token = await _db_get_or_create_webhook_token(user_id)
     return {"token": token, "url": f"{APP_URL}/api/doorbell/event"}
 
 
 @fast_app.get("/api/doorbell/events")
 async def api_doorbell_events(request: Request):
-    user_id = _get_current_user(request)
-    if not user_id:
-        raise HTTPException(401)
+    user_id = _require_user(request)
     async with _pool().acquire() as conn:
         rows = await conn.fetch(
             "SELECT id, event_type, source, received_at FROM doorbell_events WHERE user_id = $1 ORDER BY received_at DESC LIMIT 50",
             user_id,
         )
-    return [
-        {
-            "id": r["id"],
-            "event_type": r["event_type"],
-            "source": r["source"],
-            "received_at": r["received_at"].isoformat(),
-        }
-        for r in rows
-    ]
+    return [{"id": r["id"], "event_type": r["event_type"], "source": r["source"], "received_at": r["received_at"].isoformat()} for r in rows]
+
+
+# ─── SNAPCAST ROUTES ─────────────────────────────────────────────────────────
+@fast_app.get("/api/snapcast/status")
+async def api_snapcast_status(request: Request):
+    _require_user(request)
+    if not _snapcast_mod._snapcast_configured():
+        raise HTTPException(503, "Snapcast not configured — set SNAPCAST_URL in .env")
+    return JSONResponse({"status": await _snapcast_mod._snapcast_get_status()})
 
 
 # ─── TESLA ROUTES ────────────────────────────────────────────────────────────
 @fast_app.get("/api/tesla/status")
 async def api_tesla_status(request: Request):
-    user_id = _get_current_user(request)
-    if not user_id:
-        raise HTTPException(401)
-    state = await _get_user_state(user_id)
-    config = state["config"]
-    return {
-        "tesla_configured": _tesla_configured(config),
-        "tesla_method": config.get("tesla_method", ""),
-        "tesla_fleet_enabled": bool(TESLA_CLIENT_ID),
-    }
+    user_id = _require_user(request)
+    config = (await _get_user_state(user_id))["config"]
+    return {"tesla_configured": _tesla_configured(config), "tesla_method": config.get("tesla_method", ""), "tesla_fleet_enabled": bool(TESLA_CLIENT_ID)}
 
 
 @fast_app.post("/api/tesla/save_unofficial")
 async def api_tesla_save_unofficial(request: Request):
-    user_id = _get_current_user(request)
-    if not user_id:
-        raise HTTPException(401)
-
+    user_id = _require_user(request)
     data = await request.json()
     refresh_token = (data.get("refresh_token") or "").strip()
     if not refresh_token:
         return {"ok": False, "error": "No refresh token provided."}
-
     _tesla_mod._tesla_tokens.pop(user_id, None)
     try:
-        test_config = {"tesla_refresh_token": refresh_token}
-        token = await _tesla_unofficial_access_token(user_id, test_config)
+        token = await _tesla_unofficial_access_token(user_id, {"tesla_refresh_token": refresh_token})
         async with httpx.AsyncClient(timeout=10) as c:
-            r = await c.get(
-                f"{_tesla_mod._TESLA_OWNER_BASE}/api/1/vehicles",
-                headers={"Authorization": f"Bearer {token}"},
-            )
+            r = await c.get(f"{_tesla_mod._TESLA_OWNER_BASE}/api/1/vehicles", headers={"Authorization": f"Bearer {token}"})
             r.raise_for_status()
     except Exception as e:
         _tesla_mod._tesla_tokens.pop(user_id, None)
         return {"ok": False, "error": f"Could not connect to Tesla: {e}"}
-
     state = await _get_user_state(user_id)
     config = state["config"]
-    current_method = config.get("tesla_method", "")
-    new_method = "both" if current_method in ("fleet",) and config.get("tesla_fleet_refresh_token") else "unofficial"
-
+    new_method = "both" if config.get("tesla_method") in ("fleet",) and config.get("tesla_fleet_refresh_token") else "unofficial"
     async with _get_user_lock(user_id):
         config["tesla_refresh_token"] = refresh_token
         config["tesla_method"] = new_method
@@ -1161,28 +969,22 @@ async def api_tesla_save_unofficial(request: Request):
                 refresh_token,
                 new_method,
             )
-
     return {"ok": True, "tesla_configured": True, "tesla_method": new_method}
 
 
 @fast_app.get("/api/tesla/fleet/auth")
 async def api_tesla_fleet_auth(request: Request):
-    user_id = _get_current_user(request)
-    if not user_id:
-        raise HTTPException(401)
+    user_id = _require_user(request)
     if not TESLA_CLIENT_ID:
         raise HTTPException(503, "Tesla Fleet API not configured — set TESLA_CLIENT_ID and TESLA_CLIENT_SECRET in .env")
-
     state_token = secrets.token_urlsafe(32)
     code_verifier = secrets.token_urlsafe(64)
     digest = hashlib.sha256(code_verifier.encode()).digest()
     code_challenge = base64.urlsafe_b64encode(digest).rstrip(b"=").decode()
-
     _tesla_mod._tesla_auth_pending[state_token] = {"user_id": user_id, "code_verifier": code_verifier}
     if len(_tesla_mod._tesla_auth_pending) > 200:
         for k in list(_tesla_mod._tesla_auth_pending.keys())[:100]:
             _tesla_mod._tesla_auth_pending.pop(k, None)
-
     params = urllib.parse.urlencode(
         {
             "client_id": TESLA_CLIENT_ID,
@@ -1204,10 +1006,6 @@ async def auth_tesla_callback(request: Request):
     pending = _tesla_mod._tesla_auth_pending.pop(state_token, None) if state_token else None
     if not pending or not code:
         raise HTTPException(400, "Invalid Tesla OAuth callback — state mismatch or missing code")
-
-    user_id = pending["user_id"]
-    code_verifier = pending["code_verifier"]
-
     try:
         async with httpx.AsyncClient(timeout=15) as c:
             r = await c.post(
@@ -1218,64 +1016,45 @@ async def auth_tesla_callback(request: Request):
                     "client_secret": TESLA_CLIENT_SECRET,
                     "code": code,
                     "redirect_uri": f"{APP_URL}/auth/tesla/callback",
-                    "code_verifier": code_verifier,
+                    "code_verifier": pending["code_verifier"],
                 },
             )
             r.raise_for_status()
             tokens = r.json()
     except Exception as e:
         raise HTTPException(502, f"Tesla token exchange failed: {e}") from e
-
     fleet_refresh = tokens.get("refresh_token", "")
-    state = await _get_user_state(user_id)
+    state = await _get_user_state(pending["user_id"])
     config = state["config"]
-    current_method = config.get("tesla_method", "")
-    new_method = "both" if current_method == "unofficial" and config.get("tesla_refresh_token") else "fleet"
-
-    async with _get_user_lock(user_id):
+    new_method = "both" if config.get("tesla_method") == "unofficial" and config.get("tesla_refresh_token") else "fleet"
+    async with _get_user_lock(pending["user_id"]):
         config["tesla_fleet_refresh_token"] = fleet_refresh
         config["tesla_method"] = new_method
         async with _pool().acquire() as conn:
             await conn.execute(
                 "UPDATE user_configs SET tesla_fleet_refresh_token = $2, tesla_method = $3 WHERE user_id = $1",
-                user_id,
+                pending["user_id"],
                 fleet_refresh,
                 new_method,
             )
-    _tesla_mod._tesla_tokens.pop(user_id, None)
-
+    _tesla_mod._tesla_tokens.pop(pending["user_id"], None)
     return RedirectResponse("/?tesla_connected=1", status_code=303)
 
 
 @fast_app.post("/api/tesla/disconnect")
 async def api_tesla_disconnect(request: Request):
-    user_id = _get_current_user(request)
-    if not user_id:
-        raise HTTPException(401)
-
-    data = await request.json()
-    which = data.get("which", "all")
-
+    user_id = _require_user(request)
+    which = (await request.json()).get("which", "all")
     state = await _get_user_state(user_id)
     config = state["config"]
-
     async with _get_user_lock(user_id):
         if which in ("unofficial", "all"):
             config["tesla_refresh_token"] = ""
         if which in ("fleet", "all"):
             config["tesla_fleet_refresh_token"] = ""
-
-        has_unofficial = bool(config.get("tesla_refresh_token"))
-        has_fleet = bool(config.get("tesla_fleet_refresh_token"))
-        if has_unofficial and has_fleet:
-            config["tesla_method"] = "both"
-        elif has_unofficial:
-            config["tesla_method"] = "unofficial"
-        elif has_fleet:
-            config["tesla_method"] = "fleet"
-        else:
-            config["tesla_method"] = ""
-
+        has_u = bool(config.get("tesla_refresh_token"))
+        has_f = bool(config.get("tesla_fleet_refresh_token"))
+        config["tesla_method"] = "both" if has_u and has_f else "unofficial" if has_u else "fleet" if has_f else ""
         async with _pool().acquire() as conn:
             await conn.execute(
                 "UPDATE user_configs SET tesla_refresh_token = $2, tesla_fleet_refresh_token = $3, tesla_method = $4 WHERE user_id = $1",
@@ -1285,42 +1064,31 @@ async def api_tesla_disconnect(request: Request):
                 config["tesla_method"],
             )
     _tesla_mod._tesla_tokens.pop(user_id, None)
-
     return {"ok": True, "tesla_configured": _tesla_configured(config), "tesla_method": config.get("tesla_method", "")}
 
 
 # ─── SPOTIFY OAUTH ────────────────────────────────────────────────────────────
 @fast_app.get("/api/spotify/auth")
 async def api_spotify_auth(request: Request):
-    user_id = _get_current_user(request)
-    if not user_id:
-        raise HTTPException(401)
-    return RedirectResponse(_spotify_auth_url(user_id))
+    return RedirectResponse(_spotify_auth_url(_require_user(request)))
 
 
 @fast_app.get("/auth/spotify/callback")
 async def auth_spotify_callback(request: Request):
-    code = request.query_params.get("code")
-    state_token = request.query_params.get("state")
-    await _spotify_finish_auth(state_token, code, _get_user_state, _get_user_lock)
+    await _spotify_finish_auth(request.query_params.get("state"), request.query_params.get("code"), _get_user_state, _get_user_lock)
     return RedirectResponse("/?spotify_connected=1", status_code=303)
 
 
 @fast_app.post("/api/spotify/disconnect")
 async def api_spotify_disconnect(request: Request):
-    user_id = _get_current_user(request)
-    if not user_id:
-        raise HTTPException(401)
-    await _spotify_disconnect(user_id, _get_user_state, _get_user_lock)
+    await _spotify_disconnect(_require_user(request), _get_user_state, _get_user_lock)
     return {"ok": True}
 
 
 # ─── APPLE MUSIC API ──────────────────────────────────────────────────────────
 @fast_app.get("/api/apple_music/token")
 async def api_apple_music_token(request: Request):
-    user_id = _get_current_user(request)
-    if not user_id:
-        raise HTTPException(401)
+    _require_user(request)
     if not _apple_music_server_configured():
         return {"token": None, "enabled": False}
     return {"token": _apple_music_dev_token(), "enabled": True}
@@ -1328,22 +1096,15 @@ async def api_apple_music_token(request: Request):
 
 @fast_app.post("/api/apple_music/user_token")
 async def api_apple_music_user_token(request: Request):
-    user_id = _get_current_user(request)
-    if not user_id:
-        raise HTTPException(401)
+    user_id = _require_user(request)
     body = await request.json()
-    token = (body.get("token") or "").strip()
-    storefront = (body.get("storefront") or "us").strip().lower()
-    await _save_apple_music_user_token(user_id, token, storefront, _get_user_state, _get_user_lock)
+    await _save_apple_music_user_token(user_id, (body.get("token") or "").strip(), (body.get("storefront") or "us").strip().lower(), _get_user_state, _get_user_lock)
     return {"ok": True}
 
 
 @fast_app.post("/api/apple_music/disconnect")
 async def api_apple_music_disconnect(request: Request):
-    user_id = _get_current_user(request)
-    if not user_id:
-        raise HTTPException(401)
-    await _disconnect_apple_music_user_token(user_id, _get_user_state, _get_user_lock)
+    await _disconnect_apple_music_user_token(_require_user(request), _get_user_state, _get_user_lock)
     return {"ok": True}
 
 
@@ -1354,24 +1115,14 @@ async def on_apple_music_callback(sid, data):
 
 @fast_app.get("/api/messages")
 async def api_messages(request: Request):
-    user_id = _get_current_user(request)
-    if not user_id:
-        raise HTTPException(401)
+    user_id = _require_user(request)
     async with _pool().acquire() as conn:
         rows = await conn.fetch(
             "SELECT id, sender, body, important, reason, received_at FROM phone_messages WHERE user_id = $1 ORDER BY received_at DESC LIMIT 50",
             user_id,
         )
     return [
-        {
-            "id": r["id"],
-            "sender": r["sender"],
-            "body": r["body"],
-            "important": r["important"],
-            "reason": r["reason"],
-            "received_at": r["received_at"].isoformat(),
-        }
-        for r in rows
+        {"id": r["id"], "sender": r["sender"], "body": r["body"], "important": r["important"], "reason": r["reason"], "received_at": r["received_at"].isoformat()} for r in rows
     ]
 
 
@@ -1397,6 +1148,7 @@ async def _process_message(sid: str, text: str, speaker_name: str | None = None,
     state = await _get_user_state(user_id)
     state["_speaker_name"] = speaker_name
     state["_speaker_kid_safe"] = speaker_kid_safe
+    state["_room"] = _presence_mod.get_user_room(user_id)
 
     if not _user_configured(state):
         await sio.emit("need_setup", {}, to=sid)
@@ -1404,7 +1156,6 @@ async def _process_message(sid: str, text: str, speaker_name: str | None = None,
         return
 
     await sio.emit("status", {"state": "thinking"}, to=sid)
-
     state["conversation"].append({"role": "user", "content": text})
     await _db_append_message(user_id, "user", text)
     if len(state["conversation"]) > MAX_HISTORY:
@@ -1468,16 +1219,18 @@ async def on_connect(sid, environ, auth=None):
     _sid_to_user[sid] = user_id
     state = await _get_user_state(user_id)
     await sio.emit("status", {"state": "idle"}, to=sid)
-    await sio.emit(
-        "config_state",
-        {"configured": _user_configured(state), "role": state.get("role", "user")},
-        to=sid,
-    )
+    await sio.emit("config_state", {"configured": _user_configured(state), "role": state.get("role", "user")}, to=sid)
 
 
 @sio.on("disconnect")
 async def on_disconnect(sid):
     _sid_to_user.pop(sid, None)
+    _presence_mod.deregister_sid(sid)
+
+
+@sio.on("register_room")
+async def on_register_room(sid, data):
+    _presence_mod.register_sid_room(sid, ((data or {}).get("room") or "").strip()[:100])
 
 
 @sio.on("user_message")
@@ -1539,9 +1292,7 @@ async def on_start_meeting(sid, data=None):
 @sio.on("meeting_audio_chunk")
 async def on_meeting_audio_chunk(sid, data):
     user_id = _sid_to_user.get(sid)
-    if not user_id or user_id not in _active_meetings:
-        return
-    if not data:
+    if not user_id or user_id not in _active_meetings or not data:
         return
     tmp = None
     try:
@@ -1552,13 +1303,7 @@ async def on_meeting_audio_chunk(sid, data):
 
         def _run_meeting_stt():
             m = _get_whisper()
-            segs, _ = m.transcribe(
-                tmp,
-                language="en",
-                beam_size=1,
-                vad_filter=True,
-                no_speech_threshold=0.6,
-            )
+            segs, _ = m.transcribe(tmp, language="en", beam_size=1, vad_filter=True, no_speech_threshold=0.6)
             return " ".join(s.text for s in segs).strip()
 
         async with _whisper_lock:
@@ -1569,12 +1314,7 @@ async def on_meeting_audio_chunk(sid, data):
             if meeting:
                 meeting["segments"].append(text)
                 await _db_append_transcript_segment(meeting["meeting_id"], text)
-                full = " ".join(meeting["segments"])
-                await sio.emit(
-                    "meeting_transcript_update",
-                    {"segment": text, "full": full},
-                    to=sid,
-                )
+                await sio.emit("meeting_transcript_update", {"segment": text, "full": " ".join(meeting["segments"])}, to=sid)
     except Exception as e:
         print(f"[MEETING] chunk error: {e}", flush=True)
     finally:
@@ -1590,28 +1330,18 @@ async def on_end_meeting(sid, data=None):
     user_id = _sid_to_user.get(sid)
     if not user_id or user_id not in _active_meetings:
         return
-
-    # Wait for any in-flight chunk transcription to complete before finalizing
     async with _whisper_lock:
         pass
-
     meeting = _active_meetings.pop(user_id, None)
     if not meeting:
         return
-
     meeting_id = meeting["meeting_id"]
     transcript = " ".join(meeting["segments"]).strip()
-
     if not transcript:
         notes = "No speech was detected during this meeting."
         await _db_finalize_meeting(meeting_id, notes)
-        await sio.emit(
-            "meeting_notes_ready",
-            {"meeting_id": meeting_id, "transcript": "", "notes": notes},
-            to=sid,
-        )
+        await sio.emit("meeting_notes_ready", {"meeting_id": meeting_id, "transcript": "", "notes": notes}, to=sid)
         return
-
     state = _user_states.get(user_id)
     notes = "Notes unavailable — no LLM configured."
     if state and _user_configured(state):
@@ -1620,13 +1350,8 @@ async def on_end_meeting(sid, data=None):
         except Exception as e:
             print(f"[MEETING] notes generation error: {e}", flush=True)
             notes = f"Transcript captured but notes generation failed: {e}"
-
     await _db_finalize_meeting(meeting_id, notes)
-    await sio.emit(
-        "meeting_notes_ready",
-        {"meeting_id": meeting_id, "transcript": transcript, "notes": notes},
-        to=sid,
-    )
+    await sio.emit("meeting_notes_ready", {"meeting_id": meeting_id, "transcript": transcript, "notes": notes}, to=sid)
 
 
 @sio.on("reset_chat")
@@ -1651,8 +1376,7 @@ async def on_start_party_music(sid, data=None):
         await _spotify_start_party(user_id, config)
     elif _apple_music_configured(config):
         await _apple_music_start_party(user_id)
-    token = _create_party_token(user_id)
-    await sio.emit("party_token", {"token": token}, to=sid)
+    await sio.emit("party_token", {"token": _create_party_token(user_id)}, to=sid)
 
 
 @sio.on("stop_party_music")
@@ -1665,20 +1389,16 @@ async def on_stop_party_music(sid, data=None):
 # ─── PARTY GUEST QUEUE ───────────────────────────────────────────────────────
 def _get_party_base_url() -> str:
     base = os.getenv("JARVIS_PUBLIC_URL", "").rstrip("/")
-    if base:
-        return base
-    ip = os.getenv("HOST_IP", "localhost")
-    return f"http://{ip}:5000"
+    return base or f"http://{os.getenv('HOST_IP', 'localhost')}:5000"
 
 
 @fast_app.get("/api/party-token")
 async def get_party_token(request: Request):
-    user_id = _get_current_user(request)
-    if not user_id:
+    uid = _get_current_user(request)
+    if not uid:
         return JSONResponse({"error": "unauthorized"}, status_code=401)
-    token = _create_party_token(user_id)
-    url = f"{_get_party_base_url()}/party/{token}"
-    return JSONResponse({"token": token, "url": url})
+    token = _create_party_token(uid)
+    return JSONResponse({"token": token, "url": f"{_get_party_base_url()}/party/{token}"})
 
 
 @fast_app.get("/party/{token}", response_class=HTMLResponse)
@@ -1700,8 +1420,7 @@ async def party_now_playing(token: str):
             r = await _spotify_req("get", "/me/player/currently-playing", user_id, config)
             if r.status_code == 204 or not r.text:
                 return {"title": None, "artist": None}
-            d = r.json()
-            item = d.get("item") or {}
+            item = r.json().get("item") or {}
             return {"title": item.get("name"), "artist": ", ".join(a["name"] for a in item.get("artists", []))}
         except Exception:
             return {"title": None, "artist": None}
@@ -1709,8 +1428,7 @@ async def party_now_playing(token: str):
         sids = [sid for sid, uid in _sid_to_user.items() if uid == user_id]
         if sids:
             try:
-                raw = await _am_request_callback(sids[0], "now_playing_data", timeout=4.0)
-                return json.loads(raw)
+                return json.loads(await _am_request_callback(sids[0], "now_playing_data", timeout=4.0))
             except Exception:
                 pass
     return {"title": None, "artist": None}
@@ -1782,13 +1500,9 @@ async def party_add_to_queue(token: str, request: Request):
 # ─── BACKGROUND TASKS ────────────────────────────────────────────────────────
 async def _telemetry_loop():
     try:
-        import psutil
-        import time
+        import psutil, time
     except Exception:
-        print(
-            "[TELEMETRY] psutil not installed - HUD panels will show placeholders.",
-            flush=True,
-        )
+        print("[TELEMETRY] psutil not installed - HUD panels will show placeholders.", flush=True)
         return
     boot = psutil.boot_time()
     last_net = psutil.net_io_counters()
@@ -1824,10 +1538,7 @@ async def _weather_loop():
     while True:
         try:
             async with httpx.AsyncClient(timeout=8) as client:
-                loc_r = await client.get(
-                    "http://ip-api.com/json/",
-                    headers={"User-Agent": "JARVIS-Starter/1.0"},
-                )
+                loc_r = await client.get("http://ip-api.com/json/", headers={"User-Agent": "JARVIS-Starter/1.0"})
                 loc = loc_r.json()
                 lat, lon = loc.get("lat"), loc.get("lon")
                 if lat is not None and lon is not None:
@@ -1854,8 +1565,8 @@ async def _weather_loop():
                         95: "Thunderstorm",
                     }.get(code, "—")
                     weather_data = {
-                        "temp_f": (round(cur["temperature_2m"]) if cur.get("temperature_2m") is not None else None),
-                        "pressure_kpa": (round(cur["surface_pressure"] / 10, 1) if cur.get("surface_pressure") else None),
+                        "temp_f": round(cur["temperature_2m"]) if cur.get("temperature_2m") is not None else None,
+                        "pressure_kpa": round(cur["surface_pressure"] / 10, 1) if cur.get("surface_pressure") else None,
                         "city": loc.get("city", "—"),
                         "region": loc.get("region", ""),
                         "condition": cond,
@@ -1873,14 +1584,11 @@ async def _timer_reminder_loop():
         if not _db_ready():
             continue
         try:
-            fired_timers = await _db_fire_due_timers()
-            for t in fired_timers:
+            for t in await _db_fire_due_timers():
                 speak = f"Your {t['label']} timer is done, sir."
                 for sid in _sids_for_user(t["user_id"]):
                     await sio.emit("timer_fired", {"label": t["label"], "speak": speak}, to=sid)
-
-            fired_reminders = await _db_fire_due_reminders()
-            for r in fired_reminders:
+            for r in await _db_fire_due_reminders():
                 speak = f"Reminder, sir: {r['text']}."
                 for sid in _sids_for_user(r["user_id"]):
                     await sio.emit("reminder_fired", {"text": r["text"], "speak": speak}, to=sid)
@@ -1890,7 +1598,7 @@ async def _timer_reminder_loop():
 
 async def _meeting_cleanup_loop():
     while True:
-        await asyncio.sleep(3600)  # check every hour
+        await asyncio.sleep(3600)
         try:
             if _db_ready():
                 async with _pool().acquire() as conn:
