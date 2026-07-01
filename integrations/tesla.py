@@ -1,7 +1,4 @@
-import asyncio
-import datetime
-
-import httpx
+import asyncio, datetime, httpx
 
 from config import TESLA_CLIENT_ID, TESLA_CLIENT_SECRET
 from db import _pool
