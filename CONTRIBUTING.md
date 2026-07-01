@@ -10,6 +10,21 @@ uvicorn app:app --reload --port 5000
 
 You still need a running Postgres and a `.env` file — see the README.
 
+## Branch workflow
+
+Changes reach `main` through a two-stage pipeline:
+
+```
+feature branch → testing → staging → main (auto)
+```
+
+1. **Branch off `testing`** (not `main` or `staging`). Name branches `feature/...`, `fix/...`, or `chore/...`.
+2. Open a PR targeting **`testing`**. CI runs the full quality suite on every push and PR.
+3. Once the PR is merged and all checks on `testing` pass, promote to **`staging`** by opening a PR from `testing` → `staging`. The smoke-test suite runs against the live stack before the merge is allowed.
+4. **`main` is never pushed to directly.** The auto-merge workflow (`.github/workflows/auto-merge-staging.yml`) merges `staging` → `main` automatically on Mon/Wed/Fri at midnight EST once staging is green.
+
+Keep PRs focused — one feature or fix per PR.
+
 ## Hard rules
 
 **No Python classes.** This is enforced by `scripts/no_classes_check.py`. Use module-level functions instead. If you're tempted to reach for a class, reach for a plain dict or a function with closure state instead.
@@ -26,7 +41,7 @@ Or run steps individually:
 
 ```bash
 tox -e format          # ruff format + prettier (auto-fixes)
-tox -e lint            # ruff check + ty type check
+tox -e lint            # ruff check
 tox -e no-classes-check
 tox -e tests
 ```
@@ -42,12 +57,6 @@ tox -e tests
 ```
 
 Coverage must stay above 25%. Add tests for any new routes or logic.
-
-## Branch and PR workflow
-
-- Branch off `main`. Name branches `feature/...`, `fix/...`, or `chore/...`.
-- Keep PRs focused — one feature or fix per PR.
-- Update the README if you add a user-facing feature.
 
 ## Code style notes
 

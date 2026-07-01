@@ -1,6 +1,4 @@
-import asyncio
-import datetime
-import json
+import asyncio, datetime, json
 
 from config import MQTT_BROKER, MQTT_PASSWORD, MQTT_PORT, MQTT_USER, Z2M_BASE_TOPIC
 from db import (
@@ -171,6 +169,8 @@ def _get_phase5_tools(config: dict, provider: str) -> list:
 
 
 async def _run_routine(user_id: str, config: dict, steps: list) -> None:
+    if not _sids_fn:
+        return
     sids = _sids_fn(user_id)
     for i, step in enumerate(steps):
         step_type = (step.get("type") or "").lower()
@@ -185,7 +185,7 @@ async def _run_routine(user_id: str, config: dict, steps: list) -> None:
                 )
             elif step_type == "speak":
                 text = (step.get("text") or "").strip()
-                if text:
+                if text and _sio:
                     for sid in sids:
                         await _sio.emit("speak_sentence", {"text": text, "seq": i}, to=sid)
             elif step_type == "delay":
@@ -330,11 +330,13 @@ async def _device_alert_loop():
                 if _evaluate_alert_condition(entity_state, alert["condition"], alert["value"]):
                     await _db_update_alert_last_fired(alert["id"])
                     speak = alert["message"]
-                    for sid in _sids_fn(uid):
-                        await _sio.emit(
-                            "device_alert",
-                            {"name": alert["name"], "message": speak, "speak": speak},
-                            to=sid,
-                        )
+                    if _sids_fn is not None:
+                        for sid in _sids_fn(uid):
+                            if _sio is not None:
+                                await _sio.emit(
+                                    "device_alert",
+                                    {"name": alert["name"], "message": speak, "speak": speak},
+                                    to=sid,
+                                )
         except Exception as e:
             print(f"[ALERT] {e}", flush=True)

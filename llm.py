@@ -14,6 +14,7 @@ from integrations.phase5 import _execute_device_alert_tool, _execute_routine_too
 from integrations.shared_lists import _execute_shared_list_tool, _get_shared_list_tools
 from integrations.tesla import _TESLA_TOOL_NAMES, _execute_tesla_tool, _get_tesla_tools, _tesla_configured
 from integrations.vision import _VISION_TOOL_NAMES, _execute_vision_tool, _get_presence_prompt_context, _get_vision_tools
+from integrations.phase4.snapcast import _SNAPCAST_TOOL_NAMES, _execute_snapcast_tool, _get_snapcast_tools, _snapcast_configured
 from personality import JARVIS_SYSTEM
 
 _location_context: dict = {}
@@ -87,6 +88,8 @@ async def _execute_ha_tool(config: dict, name, args, user_id: str = ""):
             return "\n".join(lines)
         if name in _VISION_TOOL_NAMES:
             return await _execute_vision_tool(name, args, user_id)
+        if name in _SNAPCAST_TOOL_NAMES:
+            return await _execute_snapcast_tool(name, args)
         if name == "get_garage_status":
             return await _myq_get_status(config)
         if name == "set_garage_door":
@@ -210,7 +213,7 @@ async def _generate_meeting_notes(state: dict, transcript: str) -> str:
 
 
 # ─── LLM STREAMING ───────────────────────────────────────────────────────────
-def _build_system_prompt(config: dict, speaker_name: str | None = None, is_kid_safe: bool = False) -> str:
+def _build_system_prompt(config: dict, speaker_name: str | None = None, is_kid_safe: bool = False, room: str = "") -> str:
     system = JARVIS_SYSTEM
     now = datetime.datetime.now()
     system += f"\n\nCURRENT DATE AND TIME: {now.strftime('%A, %B %d, %Y, %I:%M %p')}."
@@ -306,6 +309,14 @@ def _build_system_prompt(config: dict, speaker_name: str | None = None, is_kid_s
         system += (
             '\n\nZIGBEE — use zigbee_control to send commands directly to Zigbee devices via MQTT. Payload examples: {"state": "ON"}, {"brightness": 128}, {"color_temp": 300}.'
         )
+    if _snapcast_configured():
+        system += (
+            "\n\nMULTI-ROOM AUDIO (Snapcast) — use snapcast_status to see all rooms and clients, "
+            "snapcast_set_volume to adjust per-room volume, snapcast_mute to mute/unmute a room, "
+            "and snapcast_set_stream to change which audio stream a room plays."
+        )
+    if room:
+        system += f"\n\nCURRENT ROOM: The user is in the '{room}' room. Default any room-specific Snapcast commands to that room."
     system += _get_presence_prompt_context()
     return system
 
@@ -341,6 +352,7 @@ async def _stream_reply(state: dict, on_text):
         config,
         speaker_name=state.get("_speaker_name"),
         is_kid_safe=state.get("_speaker_kid_safe", False),
+        room=state.get("_room", ""),
     )
     ha_tools = (
         _get_ha_tools(config, provider)
@@ -352,6 +364,7 @@ async def _stream_reply(state: dict, on_text):
         + _get_phase1_tools(config, provider)
         + _get_phase5_tools(config, provider)
         + _get_vision_tools(provider)
+        + _get_snapcast_tools(provider)
     )
     local_msgs = list(state["conversation"])
 
