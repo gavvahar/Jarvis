@@ -48,8 +48,7 @@ fetch("/api/status")
       if (haUrlEl) haUrlEl.value = d.ha_url;
     }
     setHaStatus(!!d.ha_configured, d.ha_url || "");
-    if (d.ha_configured && haTokenInput)
-      haTokenInput.dataset.hasExisting = "1";
+    if (d.ha_configured && haTokenInput) haTokenInput.dataset.hasExisting = "1";
     setCalendarStatus(
       !!d.calendar_configured,
       d.calendar_url || "",
