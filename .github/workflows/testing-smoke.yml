@@ -13,6 +13,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
+      - name: Require PR source branch to be testing
+        if: github.event_name == 'pull_request' && github.head_ref != 'testing'
+        run: |
+          echo "Only testing -> staging merges are allowed. This PR is from '${{ github.head_ref }}'."
+          exit 1
+
       - uses: actions/checkout@v4
 
       - name: Create .env
