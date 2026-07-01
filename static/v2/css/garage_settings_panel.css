@@ -1,0 +1,139 @@
+/* ── Garage settings modal ────────────────────────────────────────────────── */
+#garage-status-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+  font-family: "Share Tech Mono", monospace;
+  font-size: 10.5px;
+  letter-spacing: 0.18em;
+  color: rgba(127, 233, 255, 0.55);
+}
+#garage-status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: rgba(127, 233, 255, 0.3);
+  flex-shrink: 0;
+}
+#garage-status-dot.connected {
+  background: #7fffc4;
+  box-shadow: 0 0 6px #7fffc4;
+}
+#garage-status-dot.disconnected {
+  background: #ff9a7a;
+}
+#garage-settings {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: radial-gradient(
+    ellipse at center,
+    rgba(6, 18, 28, 0.86),
+    rgba(2, 6, 12, 0.97)
+  );
+  backdrop-filter: blur(6px);
+  transition: opacity 0.5s ease;
+}
+#garage-settings.setup-hidden {
+  opacity: 0;
+  pointer-events: none;
+}
+#garage-settings-card {
+  position: relative;
+  width: min(400px, 88vw);
+  padding: 36px 34px 28px;
+  text-align: center;
+  border: 1px solid rgba(127, 233, 255, 0.22);
+  border-radius: 14px;
+  background: linear-gradient(
+    160deg,
+    rgba(10, 26, 40, 0.72),
+    rgba(6, 16, 26, 0.82)
+  );
+  box-shadow:
+    0 0 60px rgba(20, 120, 180, 0.25),
+    inset 0 0 40px rgba(20, 120, 180, 0.06);
+  font-family: "Oxanium", system-ui, sans-serif;
+  color: #cfeffb;
+}
+#garage-settings-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  text-align: left;
+  margin-top: 20px;
+}
+#garage-settings-form input {
+  width: 100%;
+  padding: 11px 13px;
+  box-sizing: border-box;
+  background: rgba(2, 10, 18, 0.8);
+  border: 1px solid rgba(127, 233, 255, 0.28);
+  border-radius: 8px;
+  color: #eafcff;
+  font-family: "Share Tech Mono", monospace;
+  font-size: 13px;
+  outline: none;
+  letter-spacing: 0.04em;
+  transition:
+    border-color 0.2s,
+    box-shadow 0.2s;
+}
+#garage-settings-form input:focus {
+  border-color: var(--cyan-bright, #aef1ff);
+  box-shadow: 0 0 14px rgba(127, 233, 255, 0.3);
+}
+#garage-settings-form button {
+  flex: 1;
+  padding: 11px;
+  background: rgba(127, 233, 255, 0.12);
+  border: 1px solid rgba(127, 233, 255, 0.4);
+  border-radius: 8px;
+  color: #eafcff;
+  font-family: "Oxanium", sans-serif;
+  font-weight: 500;
+  letter-spacing: 0.12em;
+  font-size: 12px;
+  cursor: pointer;
+  transition:
+    background 0.2s,
+    box-shadow 0.2s;
+}
+#garage-settings-form button:hover {
+  background: rgba(127, 233, 255, 0.22);
+  box-shadow: 0 0 16px rgba(127, 233, 255, 0.3);
+}
+#garage-settings-form button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+#garage-cancel {
+  border-color: rgba(127, 233, 255, 0.2) !important;
+}
+#garage-msg {
+  min-height: 16px;
+  margin-top: 12px;
+  font-family: "Share Tech Mono", monospace;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  color: rgba(127, 233, 255, 0.7);
+}
+#garage-msg.ok {
+  color: #7fffc4;
+}
+#garage-msg.err {
+  color: #ff9a7a;
+}
+@media (max-width: 480px) {
+  #garage-settings-form input {
+    font-size: 16px;
+  }
+  #garage-settings-card {
+    padding: 24px 18px 20px;
+  }
+}
+
