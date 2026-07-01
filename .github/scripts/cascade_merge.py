@@ -9,7 +9,7 @@ On conflict: abort, then open a GitHub issue listing the conflicting files
 import json, os, subprocess, sys, urllib.error, urllib.request
 from datetime import datetime, timezone
 
-SKIP_BRANCHES = {"main", "staging", "HEAD"}
+SKIP_BRANCHES = {"main", "staging", "HEAD", "testing"}
 
 
 def run(cmd):
