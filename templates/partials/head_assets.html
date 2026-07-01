@@ -1,0 +1,20 @@
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Oxanium:wght@300;400;500&family=Share+Tech+Mono&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/static/v2/styles.css?v=1" />
+    <link rel="stylesheet" href="/static/v2/starter.css?v=1" />
+    <!-- vendored locally so the orb + comms work with no internet -->
+    <script src="/static/v2/vendor/three.min.js"></script>
+    <script src="/static/v2/vendor/socket.io.min.js"></script>
+    <!-- Tune the orb for the device: mobile gets fewer particles + a lower
+     frame cap to stay smooth on GPU-limited hardware. -->
+    <script>
+      var _mobile =
+        window.innerWidth <= 480 || /Mobi|Android/i.test(navigator.userAgent);
+      window.__orbCount = _mobile ? 5000 : 18000;
+      window.__orbMaxFps = _mobile ? 30 : 45;
+      window.__device = _mobile ? "mobile" : "pc";
+    </script>

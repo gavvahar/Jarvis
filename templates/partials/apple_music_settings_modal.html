@@ -1,0 +1,30 @@
+      <div id="apple-music-settings" class="setup-hidden">
+        <div id="apple-music-settings-card" class="setup-card-inner">
+          <div class="setup-ring"></div>
+          <div class="setup-word">SETTINGS</div>
+          <div class="setup-sub">APPLE MUSIC</div>
+          <p class="spotify-note">
+            Connect your Apple Music subscription to control music via voice.
+            Requires <code>APPLE_MUSIC_TEAM_ID</code>,
+            <code>APPLE_MUSIC_KEY_ID</code>, and
+            <code>APPLE_MUSIC_PRIVATE_KEY</code> in your server's
+            <code>.env</code>.
+          </p>
+          <div id="apple-music-status-row" style="margin-top: 12px">
+            <span id="apple-music-dot" class="disconnected"></span>
+            <span id="apple-music-text">NOT CONNECTED</span>
+          </div>
+          <div style="display: flex; gap: 8px; margin-top: 14px">
+            <button type="button" id="apple-music-connect-btn">
+              CONNECT WITH APPLE MUSIC
+            </button>
+            <button type="button" id="apple-music-disconnect-btn">
+              DISCONNECT
+            </button>
+          </div>
+          <div id="apple-music-msg"></div>
+          <div style="margin-top: 20px">
+            <button type="button" id="apple-music-settings-close">CLOSE</button>
+          </div>
+        </div>
+      </div>

@@ -1,0 +1,90 @@
+      <div id="pim-settings" class="setup-hidden">
+        <div id="pim-settings-card" class="setup-card-inner">
+          <div class="setup-ring"></div>
+          <div class="setup-word">SETTINGS</div>
+          <div class="setup-sub">CALENDAR &amp; CONTACTS</div>
+          <p class="pim-note">
+            Connect CalDAV and CardDAV accounts such as iCloud, Google,
+            Fastmail, or Nextcloud. Use app-specific passwords where your
+            provider requires them. Leave a password blank to keep the saved
+            one; clear a URL and username together to disconnect that section.
+          </p>
+          <form id="pim-settings-form" autocomplete="off">
+            <label class="setup-label" for="calendar-url">CALDAV URL</label>
+            <input
+              id="calendar-url"
+              type="text"
+              placeholder="https://caldav.icloud.com"
+              autocomplete="off"
+              spellcheck="false"
+            />
+            <label class="setup-label" for="calendar-username"
+              >CALDAV USERNAME</label
+            >
+            <input
+              id="calendar-username"
+              type="text"
+              placeholder="you@example.com"
+              autocomplete="off"
+              spellcheck="false"
+            />
+            <label class="setup-label" for="calendar-password"
+              >CALDAV PASSWORD</label
+            >
+            <input
+              id="calendar-password"
+              type="password"
+              placeholder="Leave blank to keep existing password"
+              autocomplete="off"
+              spellcheck="false"
+            />
+            <div id="calendar-status-row">
+              <span id="calendar-status-dot"></span>
+              <span id="calendar-status-text">—</span>
+            </div>
+
+            <label
+              class="setup-label"
+              for="contacts-url"
+              style="margin-top: 18px"
+              >CARDDAV URL</label
+            >
+            <input
+              id="contacts-url"
+              type="text"
+              placeholder="https://contacts.icloud.com"
+              autocomplete="off"
+              spellcheck="false"
+            />
+            <label class="setup-label" for="contacts-username"
+              >CARDDAV USERNAME</label
+            >
+            <input
+              id="contacts-username"
+              type="text"
+              placeholder="you@example.com"
+              autocomplete="off"
+              spellcheck="false"
+            />
+            <label class="setup-label" for="contacts-password"
+              >CARDDAV PASSWORD</label
+            >
+            <input
+              id="contacts-password"
+              type="password"
+              placeholder="Leave blank to keep existing password"
+              autocomplete="off"
+              spellcheck="false"
+            />
+            <div id="contacts-status-row">
+              <span id="contacts-status-dot"></span>
+              <span id="contacts-status-text">—</span>
+            </div>
+            <div style="display: flex; gap: 8px; margin-top: 14px">
+              <button type="submit" id="pim-save">SAVE</button>
+              <button type="button" id="pim-cancel">CANCEL</button>
+            </div>
+          </form>
+          <div id="pim-msg"></div>
+        </div>
+      </div>
