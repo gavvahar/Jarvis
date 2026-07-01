@@ -126,6 +126,7 @@ commands = [
     "ruff",
     "format",
     "--no-cache",
+    "--verbose",
     ".",
   ],
   [
@@ -133,12 +134,15 @@ commands = [
     "check",
     "--no-cache",
     "--fix",
+    "--verbose",
     ".",
   ],
   [
     "npx",
     "prettier",
     "--write",
+    "--log-level",
+    "log",
     "**/*.{css,js,html,json,yml,yaml,md}",
   ],
   [
@@ -187,13 +191,21 @@ commands = [
 
 [tool.tox.env.tests]
 skip_install = true
-deps = ["-r requirements.txt", "pytest", "pytest-cov", "httpx"]
+deps = [
+  "-r requirements/standard/requirements.txt",
+  "pytest",
+  "pytest-cov",
+  "httpx",
+]
 commands = [
   [
     "pytest",
     "tests/",
     "-v",
     "--cov=app",
+    "--cov=integrations",
+    "--cov=db",
+    "--cov=auth",
     "--cov-report=term-missing",
     "--cov-fail-under=25",
   ],

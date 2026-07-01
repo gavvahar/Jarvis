@@ -13,41 +13,30 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import app as jarvis
 from app import (
     _build_client,
-    _build_system_prompt,
     _calendar_configured,
-    _c_to_f,
     _contacts_configured,
-    _duration_str,
-    _evaluate_alert_condition,
-    _execute_calendar_tool,
-    _execute_contact_lookup_tool,
-    _execute_device_alert_tool,
-    _execute_news_tool,
-    _execute_reminder_tool,
-    _execute_routine_tool,
-    _execute_shared_list_tool,
-    _execute_spotify_tool,
-    _execute_timer_tool,
-    _get_phase1_tools,
-    _get_myq_tools,
-    _get_phase5_tools,
-    _get_spotify_tools,
-    _get_tesla_tools,
     _get_user_lock,
     _ha_configured,
-    _ha_headers,
     _myq_configured,
     _myq_get_status,
-    _myq_set_door,
-    _parse_ical_events,
-    _parse_vcards,
-    _pick_best_dav_collection,
     _sids_for_user,
     _split_sentences,
     _spotify_configured,
     _tesla_configured,
     _user_configured,
 )
+from integrations.ha import _ha_headers
+from integrations.music.spotify import _execute_spotify_tool, _get_spotify_tools
+from integrations.myq import _get_myq_tools, _myq_set_door
+from integrations.phase1.calendar import _execute_calendar_tool, _parse_ical_events
+from integrations.phase1.contacts import _execute_contact_lookup_tool, _parse_vcards
+from integrations.phase1.dav import _pick_best_dav_collection
+from integrations.phase1.timers import _duration_str, _execute_news_tool, _execute_reminder_tool, _execute_timer_tool, _get_phase1_tools
+from integrations.phase5 import _evaluate_alert_condition, _execute_device_alert_tool, _execute_routine_tool, _get_phase5_tools
+from integrations.shared_lists import _execute_shared_list_tool
+from integrations.tesla import _get_tesla_tools
+from llm import _build_system_prompt
+from integrations.tesla import _c_to_f
 
 # ── Pure function tests ────────────────────────────────────────────────────────
 
@@ -427,44 +416,44 @@ class TestExecuteSpotifyTool:
         return r
 
     def test_now_playing_nothing(self):
-        with patch("app._spotify_req", new=AsyncMock(return_value=self._mock_resp(204, ""))):
+        with patch("integrations.music.spotify._spotify_req", new=AsyncMock(return_value=self._mock_resp(204, ""))):
             result = asyncio.run(_execute_spotify_tool("spotify_now_playing", {}, "u1", self._cfg))
         assert "Nothing" in result
 
     def test_now_playing_track(self):
         data = {"is_playing": True, "item": {"name": "Get Lucky", "artists": [{"name": "Daft Punk"}]}}
-        with patch("app._spotify_req", new=AsyncMock(return_value=self._mock_resp(200, "x", data))):
+        with patch("integrations.music.spotify._spotify_req", new=AsyncMock(return_value=self._mock_resp(200, "x", data))):
             result = asyncio.run(_execute_spotify_tool("spotify_now_playing", {}, "u1", self._cfg))
         assert "Get Lucky" in result
         assert "Daft Punk" in result
 
     def test_play_success(self):
-        with patch("app._spotify_req", new=AsyncMock(return_value=self._mock_resp(204))):
+        with patch("integrations.music.spotify._spotify_req", new=AsyncMock(return_value=self._mock_resp(204))):
             result = asyncio.run(_execute_spotify_tool("spotify_play", {}, "u1", self._cfg))
         assert "playback" in result.lower()
 
     def test_pause_success(self):
-        with patch("app._spotify_req", new=AsyncMock(return_value=self._mock_resp(204))):
+        with patch("integrations.music.spotify._spotify_req", new=AsyncMock(return_value=self._mock_resp(204))):
             result = asyncio.run(_execute_spotify_tool("spotify_pause", {}, "u1", self._cfg))
         assert "paused" in result.lower()
 
     def test_next_success(self):
-        with patch("app._spotify_req", new=AsyncMock(return_value=self._mock_resp(204))):
+        with patch("integrations.music.spotify._spotify_req", new=AsyncMock(return_value=self._mock_resp(204))):
             result = asyncio.run(_execute_spotify_tool("spotify_next", {}, "u1", self._cfg))
         assert "next" in result.lower() or "skipped" in result.lower()
 
     def test_previous_success(self):
-        with patch("app._spotify_req", new=AsyncMock(return_value=self._mock_resp(204))):
+        with patch("integrations.music.spotify._spotify_req", new=AsyncMock(return_value=self._mock_resp(204))):
             result = asyncio.run(_execute_spotify_tool("spotify_previous", {}, "u1", self._cfg))
         assert "previous" in result.lower() or "back" in result.lower()
 
     def test_volume_clamped_and_set(self):
-        with patch("app._spotify_req", new=AsyncMock(return_value=self._mock_resp(204))):
+        with patch("integrations.music.spotify._spotify_req", new=AsyncMock(return_value=self._mock_resp(204))):
             result = asyncio.run(_execute_spotify_tool("spotify_volume", {"volume_percent": 70}, "u1", self._cfg))
         assert "70" in result
 
     def test_volume_clamped_above_100(self):
-        with patch("app._spotify_req", new=AsyncMock(return_value=self._mock_resp(204))):
+        with patch("integrations.music.spotify._spotify_req", new=AsyncMock(return_value=self._mock_resp(204))):
             result = asyncio.run(_execute_spotify_tool("spotify_volume", {"volume_percent": 150}, "u1", self._cfg))
         assert "100" in result
 
@@ -480,13 +469,13 @@ class TestExecuteSpotifyTool:
                 return self._mock_resp(200, "x", search_data)
             return play_resp
 
-        with patch("app._spotify_req", new=mock_req):
+        with patch("integrations.music.spotify._spotify_req", new=mock_req):
             result = asyncio.run(_execute_spotify_tool("spotify_search_and_play", {"query": "Around the World", "type": "track"}, "u1", self._cfg))
         assert "Around the World" in result
 
     def test_search_and_play_not_found(self):
         search_data = {"tracks": {"items": []}}
-        with patch("app._spotify_req", new=AsyncMock(return_value=self._mock_resp(200, "x", search_data))):
+        with patch("integrations.music.spotify._spotify_req", new=AsyncMock(return_value=self._mock_resp(200, "x", search_data))):
             result = asyncio.run(_execute_spotify_tool("spotify_search_and_play", {"query": "xyzzy", "type": "track"}, "u1", self._cfg))
         assert "Could not find" in result
 
@@ -598,14 +587,14 @@ class TestExecuteCalendarTool:
             "location": "Main Street",
             "all_day": False,
         }
-        with patch("app._calendar_events_between", new=AsyncMock(return_value=[event])):
+        with patch("integrations.phase1.calendar._calendar_events_between", new=AsyncMock(return_value=[event])):
             result = asyncio.run(_execute_calendar_tool(self._cfg, {"action": "list"}))
         assert "Dentist" in result
         assert "Main Street" in result
 
     def test_create_puts_event(self):
         mock_req = AsyncMock(return_value=self._mock_resp(status=201))
-        with patch("app._dav_request", new=mock_req):
+        with patch("integrations.phase1.calendar._dav_request", new=mock_req):
             result = asyncio.run(
                 _execute_calendar_tool(
                     self._cfg,
@@ -646,13 +635,13 @@ class TestExecuteContactLookupTool:
 
     def test_formats_contact_matches(self):
         match = {"name": "Mom", "phones": ["+15551234567"], "emails": ["mom@example.com"], "nicknames": []}
-        with patch("app._lookup_contacts", new=AsyncMock(return_value=[match])):
+        with patch("integrations.phase1.contacts._lookup_contacts", new=AsyncMock(return_value=[match])):
             result = asyncio.run(_execute_contact_lookup_tool(self._cfg, {"query": "Mom", "preferred_channel": "phone"}))
         assert "Mom" in result
         assert "+15551234567" in result
 
     def test_returns_not_found_message(self):
-        with patch("app._lookup_contacts", new=AsyncMock(return_value=[])):
+        with patch("integrations.phase1.contacts._lookup_contacts", new=AsyncMock(return_value=[])):
             result = asyncio.run(_execute_contact_lookup_tool(self._cfg, {"query": "Nobody"}))
         assert "No contacts matched" in result
 
@@ -842,24 +831,24 @@ class TestGetPhase5Tools:
     _no_ha = {"ha_url": "", "ha_token": ""}
 
     def test_empty_when_no_ha_and_no_mqtt(self):
-        with patch.object(jarvis, "MQTT_BROKER", ""):
+        with patch("integrations.phase5.MQTT_BROKER", ""):
             tools = _get_phase5_tools(self._no_ha, "anthropic")
         assert tools == []
 
     def test_ha_tools_included_when_configured(self):
-        with patch.object(jarvis, "MQTT_BROKER", ""):
+        with patch("integrations.phase5.MQTT_BROKER", ""):
             tools = _get_phase5_tools(self._ha_cfg, "anthropic")
         names = {t["name"] for t in tools}
         assert "manage_routine" in names
         assert "manage_device_alert" in names
 
     def test_openai_format_when_provider_openai(self):
-        with patch.object(jarvis, "MQTT_BROKER", ""):
+        with patch("integrations.phase5.MQTT_BROKER", ""):
             tools = _get_phase5_tools(self._ha_cfg, "openai")
         assert all(t["type"] == "function" for t in tools)
 
     def test_zigbee_tool_added_when_mqtt_configured(self):
-        with patch.object(jarvis, "MQTT_BROKER", "mqtt.local"):
+        with patch("integrations.phase5.MQTT_BROKER", "mqtt.local"):
             tools = _get_phase5_tools(self._no_ha, "anthropic")
         names = {t["name"] for t in tools}
         assert "zigbee_control" in names
@@ -902,7 +891,7 @@ class TestExecuteNewsToolMocked:
 
 class TestExecuteTimerToolMocked:
     def test_set_timer(self):
-        with patch.object(jarvis, "_db_set_timer", new=AsyncMock(return_value=42)):
+        with patch("integrations.phase1.timers._db_set_timer", new=AsyncMock(return_value=42)):
             result = asyncio.run(_execute_timer_tool("u1", {"action": "set", "label": "Pasta", "duration_seconds": 300}))
         assert "Pasta" in result
         assert "42" in result
@@ -912,19 +901,19 @@ class TestExecuteTimerToolMocked:
         assert "greater than zero" in result
 
     def test_list_no_timers(self):
-        with patch.object(jarvis, "_db_list_timers", new=AsyncMock(return_value=[])):
+        with patch("integrations.phase1.timers._db_list_timers", new=AsyncMock(return_value=[])):
             result = asyncio.run(_execute_timer_tool("u1", {"action": "list"}))
         assert "No active timers" in result
 
     def test_list_with_timers(self):
         fire_at = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None) + datetime.timedelta(minutes=5)
         timers = [{"id": 1, "label": "Laundry", "fire_at": fire_at}]
-        with patch.object(jarvis, "_db_list_timers", new=AsyncMock(return_value=timers)):
+        with patch("integrations.phase1.timers._db_list_timers", new=AsyncMock(return_value=timers)):
             result = asyncio.run(_execute_timer_tool("u1", {"action": "list"}))
         assert "Laundry" in result
 
     def test_cancel_timer(self):
-        with patch.object(jarvis, "_db_cancel_timer", new=AsyncMock(return_value=True)):
+        with patch("integrations.phase1.timers._db_cancel_timer", new=AsyncMock(return_value=True)):
             result = asyncio.run(_execute_timer_tool("u1", {"action": "cancel", "timer_id": 1}))
         assert "cancelled" in result.lower()
 
@@ -939,7 +928,7 @@ class TestExecuteTimerToolMocked:
 
 class TestExecuteReminderToolMocked:
     def test_set_reminder(self):
-        with patch.object(jarvis, "_db_set_reminder", new=AsyncMock(return_value=7)):
+        with patch("integrations.phase1.timers._db_set_reminder", new=AsyncMock(return_value=7)):
             result = asyncio.run(_execute_reminder_tool("u1", {"action": "set", "text": "Call Mom", "fire_at": "2030-01-01T09:00:00"}))
         assert "Call Mom" in result
 
@@ -952,47 +941,47 @@ class TestExecuteReminderToolMocked:
         assert "Specify" in result
 
     def test_list_no_reminders(self):
-        with patch.object(jarvis, "_db_list_reminders", new=AsyncMock(return_value=[])):
+        with patch("integrations.phase1.timers._db_list_reminders", new=AsyncMock(return_value=[])):
             result = asyncio.run(_execute_reminder_tool("u1", {"action": "list"}))
         assert "No upcoming" in result
 
     def test_cancel_reminder(self):
-        with patch.object(jarvis, "_db_cancel_reminder", new=AsyncMock(return_value=True)):
+        with patch("integrations.phase1.timers._db_cancel_reminder", new=AsyncMock(return_value=True)):
             result = asyncio.run(_execute_reminder_tool("u1", {"action": "cancel", "reminder_id": 3}))
         assert "cancelled" in result.lower()
 
 
 class TestExecuteSharedListToolMocked:
     def test_read_empty(self):
-        with patch.object(jarvis, "_db_get_shared_list", new=AsyncMock(return_value=[])):
+        with patch("integrations.shared_lists._db_get_shared_list", new=AsyncMock(return_value=[])):
             result = asyncio.run(_execute_shared_list_tool({"action": "read", "list_name": "shopping"}))
         assert "empty" in result.lower()
 
     def test_add_item(self):
         with (
-            patch.object(jarvis, "_db_get_shared_list", new=AsyncMock(return_value=[])),
-            patch.object(jarvis, "_db_update_shared_list", new=AsyncMock()),
+            patch("integrations.shared_lists._db_get_shared_list", new=AsyncMock(return_value=[])),
+            patch("integrations.shared_lists._db_update_shared_list", new=AsyncMock()),
         ):
             result = asyncio.run(_execute_shared_list_tool({"action": "add", "list_name": "shopping", "item": "Milk"}))
         assert "Milk" in result
 
     def test_remove_item(self):
         with (
-            patch.object(jarvis, "_db_get_shared_list", new=AsyncMock(return_value=["Milk", "Eggs"])),
-            patch.object(jarvis, "_db_update_shared_list", new=AsyncMock()),
+            patch("integrations.shared_lists._db_get_shared_list", new=AsyncMock(return_value=["Milk", "Eggs"])),
+            patch("integrations.shared_lists._db_update_shared_list", new=AsyncMock()),
         ):
             result = asyncio.run(_execute_shared_list_tool({"action": "remove", "list_name": "shopping", "item": "Milk"}))
         assert "Removed" in result
 
     def test_remove_not_found(self):
-        with patch.object(jarvis, "_db_get_shared_list", new=AsyncMock(return_value=["Eggs"])):
+        with patch("integrations.shared_lists._db_get_shared_list", new=AsyncMock(return_value=["Eggs"])):
             result = asyncio.run(_execute_shared_list_tool({"action": "remove", "list_name": "shopping", "item": "Milk"}))
         assert "not found" in result.lower()
 
     def test_clear_list(self):
         with (
-            patch.object(jarvis, "_db_get_shared_list", new=AsyncMock(return_value=["Milk"])),
-            patch.object(jarvis, "_db_update_shared_list", new=AsyncMock()),
+            patch("integrations.shared_lists._db_get_shared_list", new=AsyncMock(return_value=["Milk"])),
+            patch("integrations.shared_lists._db_update_shared_list", new=AsyncMock()),
         ):
             result = asyncio.run(_execute_shared_list_tool({"action": "clear", "list_name": "shopping"}))
         assert "cleared" in result.lower()
@@ -1002,7 +991,7 @@ class TestExecuteRoutineToolMocked:
     _cfg = {"ha_url": "http://ha.local", "ha_token": "tok"}
 
     def test_create_routine(self):
-        with patch.object(jarvis, "_db_create_routine", new=AsyncMock(return_value=5)):
+        with patch("integrations.phase5._db_create_routine", new=AsyncMock(return_value=5)):
             result = asyncio.run(
                 _execute_routine_tool(
                     "u1",
@@ -1022,24 +1011,24 @@ class TestExecuteRoutineToolMocked:
         assert "step" in result.lower()
 
     def test_list_no_routines(self):
-        with patch.object(jarvis, "_db_list_routines", new=AsyncMock(return_value=[])):
+        with patch("integrations.phase5._db_list_routines", new=AsyncMock(return_value=[])):
             result = asyncio.run(_execute_routine_tool("u1", {"action": "list"}, self._cfg))
         assert "No routines" in result
 
     def test_delete_routine(self):
-        with patch.object(jarvis, "_db_delete_routine", new=AsyncMock(return_value=True)):
+        with patch("integrations.phase5._db_delete_routine", new=AsyncMock(return_value=True)):
             result = asyncio.run(_execute_routine_tool("u1", {"action": "delete", "routine_id": 1}, self._cfg))
         assert "deleted" in result.lower()
 
     def test_run_routine_not_found(self):
-        with patch.object(jarvis, "_db_list_routines", new=AsyncMock(return_value=[])):
+        with patch("integrations.phase5._db_list_routines", new=AsyncMock(return_value=[])):
             result = asyncio.run(_execute_routine_tool("u1", {"action": "run", "name": "Nonexistent"}, self._cfg))
         assert "No routine" in result
 
 
 class TestExecuteDeviceAlertToolMocked:
     def test_create_alert(self):
-        with patch.object(jarvis, "_db_create_device_alert", new=AsyncMock(return_value=3)):
+        with patch("integrations.phase5._db_create_device_alert", new=AsyncMock(return_value=3)):
             result = asyncio.run(
                 _execute_device_alert_tool(
                     "u1",
@@ -1061,12 +1050,12 @@ class TestExecuteDeviceAlertToolMocked:
         assert "Specify" in result
 
     def test_list_no_alerts(self):
-        with patch.object(jarvis, "_db_list_device_alerts", new=AsyncMock(return_value=[])):
+        with patch("integrations.phase5._db_list_device_alerts", new=AsyncMock(return_value=[])):
             result = asyncio.run(_execute_device_alert_tool("u1", {"action": "list"}))
         assert "No alert" in result
 
     def test_delete_alert(self):
-        with patch.object(jarvis, "_db_delete_device_alert", new=AsyncMock(return_value=True)):
+        with patch("integrations.phase5._db_delete_device_alert", new=AsyncMock(return_value=True)):
             result = asyncio.run(_execute_device_alert_tool("u1", {"action": "delete", "alert_id": 2}))
         assert "deleted" in result.lower()
 

@@ -10,7 +10,7 @@ RUN apt-get update && apt-get upgrade -y \
     && apt-get purge -y --auto-remove perl \
     && rm -rf /var/lib/apt/lists/*
 
-COPY requirements.txt .
+COPY requirements/standard/requirements.txt requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt \
     && python -c "from faster_whisper import WhisperModel; WhisperModel('tiny.en', device='cpu', compute_type='int8')"
 

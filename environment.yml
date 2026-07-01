@@ -8,4 +8,4 @@ dependencies:
   - pip
   - gh
   - pip:
-      - -r requirements.txt
+      - -r requirements/local/requirements.txt
