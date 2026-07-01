@@ -1,0 +1,57 @@
+      <div id="vision-settings" class="setup-hidden">
+        <div id="vision-settings-card" class="setup-card-inner">
+          <div class="setup-ring"></div>
+          <div class="setup-word">SETTINGS</div>
+          <div class="setup-sub">VISION &amp; PRESENCE</div>
+
+          <div class="vision-section-label">WHO'S HOME</div>
+          <div id="vision-presence-list"><em>Loading…</em></div>
+
+          <div class="vision-section-label" style="margin-top: 1.2rem">
+            CAMERAS
+          </div>
+          <div id="vision-camera-list"><em>Loading…</em></div>
+
+          <form id="vision-add-camera-form" autocomplete="off">
+            <label class="setup-label" for="vision-cam-name">NAME</label>
+            <input id="vision-cam-name" type="text" placeholder="Front Door" />
+            <label class="setup-label" for="vision-cam-source-type"
+              >SOURCE TYPE</label
+            >
+            <select id="vision-cam-source-type">
+              <option value="ha">Home Assistant camera entity</option>
+              <option value="rtsp">RTSP stream URL</option>
+            </select>
+            <label class="setup-label" for="vision-cam-source">SOURCE</label>
+            <input
+              id="vision-cam-source"
+              type="text"
+              placeholder="camera.front_door or rtsp://…"
+            />
+            <label class="setup-label" for="vision-cam-room"
+              >ROOM (optional)</label
+            >
+            <input id="vision-cam-room" type="text" placeholder="Living Room" />
+            <button type="submit" id="vision-add-cam-btn">ADD CAMERA</button>
+          </form>
+
+          <div class="vision-section-label" style="margin-top: 1.2rem">
+            FACE ENROLLMENT
+          </div>
+          <p class="doorbell-settings-note">
+            Upload a clear photo of your face so Jarvis can recognise you on
+            camera. One sample is enough; more improves accuracy.
+          </p>
+          <div id="vision-enroll-status"></div>
+          <input
+            id="vision-face-file"
+            type="file"
+            accept="image/*"
+            style="display: none"
+          />
+          <button id="vision-enroll-btn">UPLOAD PHOTO</button>
+          <button id="vision-enroll-clear-btn">CLEAR FACE DATA</button>
+
+          <button id="vision-settings-close">CLOSE</button>
+        </div>
+      </div>

@@ -1,0 +1,66 @@
+      <div id="doorbell-settings">
+        <div id="doorbell-settings-card">
+          <h2>DOORBELL — SECURITY ALERTS</h2>
+          <p class="doorbell-settings-note">
+            Create Home Assistant automations that POST to Jarvis when your
+            doorbell fires. Jarvis announces it by voice and shows an alert.
+            Uses the same bearer token as Phone Messages.
+          </p>
+          <div class="msg-field-label">WEBHOOK URL</div>
+          <div class="msg-field-row">
+            <input id="doorbell-webhook-url" type="text" readonly />
+            <button id="doorbell-copy-url">COPY</button>
+          </div>
+          <div class="msg-field-label">BEARER TOKEN</div>
+          <div class="msg-field-row">
+            <input id="doorbell-webhook-token" type="text" readonly />
+            <button id="doorbell-copy-token">COPY</button>
+          </div>
+
+          <div class="doorbell-tab-bar">
+            <button class="doorbell-tab doorbell-tab-active" data-dtab="press">
+              DOORBELL
+            </button>
+            <button class="doorbell-tab" data-dtab="motion">MOTION</button>
+            <button class="doorbell-tab" data-dtab="person">PERSON</button>
+            <button class="doorbell-tab" data-dtab="package">PACKAGE</button>
+          </div>
+
+          <div class="doorbell-tab-content" id="doorbell-tab-press">
+            <p class="doorbell-settings-note">
+              Fires when the doorbell button is pressed.
+            </p>
+            <pre class="doorbell-yaml" id="yaml-press"></pre>
+          </div>
+          <div
+            class="doorbell-tab-content doorbell-tab-hidden"
+            id="doorbell-tab-motion"
+          >
+            <p class="doorbell-settings-note">
+              Fires on motion detection. Suppressed between
+              11&nbsp;pm–7&nbsp;am.
+            </p>
+            <pre class="doorbell-yaml" id="yaml-motion"></pre>
+          </div>
+          <div
+            class="doorbell-tab-content doorbell-tab-hidden"
+            id="doorbell-tab-person"
+          >
+            <p class="doorbell-settings-note">
+              Fires when a person is specifically detected.
+            </p>
+            <pre class="doorbell-yaml" id="yaml-person"></pre>
+          </div>
+          <div
+            class="doorbell-tab-content doorbell-tab-hidden"
+            id="doorbell-tab-package"
+          >
+            <p class="doorbell-settings-note">
+              Fires when a package delivery is detected.
+            </p>
+            <pre class="doorbell-yaml" id="yaml-package"></pre>
+          </div>
+
+          <button id="doorbell-settings-close">CLOSE</button>
+        </div>
+      </div>
