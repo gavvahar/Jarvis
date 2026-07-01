@@ -7,6 +7,8 @@ on:
 permissions:
   pull-requests: write
   contents: read
+  checks: read
+  statuses: read
 
 concurrency:
   group: auto-approve-${{ github.event.pull_request.number }}
