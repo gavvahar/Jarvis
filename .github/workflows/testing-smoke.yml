@@ -15,8 +15,10 @@ jobs:
     steps:
       - name: Require PR source branch to be testing
         if: github.event_name == 'pull_request' && github.head_ref != 'testing'
+        env:
+          HEAD_REF: ${{ github.head_ref }}
         run: |
-          echo "Only testing -> staging merges are allowed. This PR is from '${{ github.head_ref }}'."
+          echo "Only testing -> staging merges are allowed. This PR is from '$HEAD_REF'."
           exit 1
 
       - uses: actions/checkout@v4
