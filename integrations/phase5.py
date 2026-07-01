@@ -1,6 +1,4 @@
-import asyncio
-import datetime
-import json
+import asyncio, datetime, json
 
 from config import MQTT_BROKER, MQTT_PASSWORD, MQTT_PORT, MQTT_USER, Z2M_BASE_TOPIC
 from db import (
