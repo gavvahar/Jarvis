@@ -1,0 +1,33 @@
+/* ===========================================================
+   APPLE MUSIC BUTTON
+   =========================================================== */
+#apple-music-btn {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  background: rgba(252, 60, 68, 0.1);
+  border: 1px solid rgba(252, 60, 68, 0.5);
+  border-radius: 5px;
+  color: rgba(252, 120, 120, 0.9);
+  font-family: "Share Tech Mono", monospace;
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  cursor: pointer;
+  pointer-events: auto;
+  text-shadow: 0 0 8px rgba(252, 60, 68, 0.4);
+  box-shadow: 0 0 6px rgba(252, 60, 68, 0.1);
+  transition:
+    background 0.2s,
+    color 0.2s,
+    box-shadow 0.2s;
+}
+#apple-music-btn:hover {
+  background: rgba(252, 60, 68, 0.2);
+  box-shadow: 0 0 12px rgba(252, 60, 68, 0.3);
+}
+#apple-music-btn.spotify-live {
+  border-color: rgba(252, 60, 68, 0.8);
+  color: #fc6c6c;
+}
+

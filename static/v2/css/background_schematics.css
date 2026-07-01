@@ -1,0 +1,61 @@
+/* ============ BACKGROUND SCHEMATICS ============ */
+#schematics {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+.schem {
+  position: absolute;
+  stroke: var(--line-faint);
+  fill: none;
+  opacity: 0;
+}
+.fade-a {
+  animation: fadeSchem 17s ease-in-out infinite;
+}
+.fade-b {
+  animation: fadeSchem 21s ease-in-out infinite 4s;
+}
+.fade-c {
+  animation: fadeSchem 25s ease-in-out infinite 9s;
+}
+@keyframes fadeSchem {
+  0%,
+  100% {
+    opacity: 0;
+  }
+  12% {
+    opacity: 0.5;
+  }
+  40% {
+    opacity: 0.22;
+  }
+  60% {
+    opacity: 0.5;
+  }
+  82% {
+    opacity: 0.12;
+  }
+}
+
+#grid {
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(rgba(127, 233, 255, 0.045) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(127, 233, 255, 0.045) 1px, transparent 1px);
+  background-size: 54px 54px;
+  mask-image: radial-gradient(
+    circle at 50% 50%,
+    rgba(0, 0, 0, 0) 22%,
+    #000 70%
+  );
+  -webkit-mask-image: radial-gradient(
+    circle at 50% 50%,
+    rgba(0, 0, 0, 0) 22%,
+    #000 70%
+  );
+  pointer-events: none;
+}
+

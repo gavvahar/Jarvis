@@ -1,0 +1,233 @@
+/* ============ PANELS / TELEMETRY ============ */
+.panel {
+  position: absolute;
+  pointer-events: none;
+  opacity: 0; /* hidden by default — summoned with body.stats-open */
+  min-width: 208px;
+  font-family: var(--label);
+  color: var(--cyan);
+  text-shadow: 0 0 6px rgba(80, 200, 255, 0.35);
+}
+.panel .p-head {
+  font-size: 11px;
+  letter-spacing: 0.32em;
+  color: var(--cyan-bright);
+  opacity: 0.9;
+  margin-bottom: 7px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.panel .p-head::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  background: var(--cyan);
+  box-shadow: 0 0 8px var(--cyan);
+  transform: rotate(45deg);
+}
+.p-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 18px;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  line-height: 1.85;
+  color: rgba(180, 235, 255, 0.78);
+}
+.p-row > span {
+  white-space: nowrap;
+}
+.p-row .v {
+  color: var(--cyan-bright);
+  font-variant-numeric: tabular-nums;
+}
+.p-row .v.amber {
+  color: var(--amber);
+  text-shadow: 0 0 8px rgba(255, 182, 72, 0.5);
+}
+
+.bar {
+  height: 4px;
+  width: 100%;
+  background: rgba(127, 233, 255, 0.1);
+  margin: 4px 0 9px;
+  position: relative;
+  overflow: hidden;
+}
+.bar > i {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  background: linear-gradient(90deg, rgba(127, 233, 255, 0.35), var(--cyan));
+  box-shadow: 0 0 8px rgba(127, 233, 255, 0.6);
+  transition: width 0.6s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.divider {
+  height: 1px;
+  width: 100%;
+  background: linear-gradient(90deg, var(--line), transparent);
+  margin: 8px 0;
+}
+
+/* corner brackets framing the whole view */
+.bracket {
+  position: absolute;
+  width: 34px;
+  height: 34px;
+  border: 0 solid var(--line);
+}
+.bk-tl {
+  top: 22px;
+  left: 22px;
+  border-top-width: 1px;
+  border-left-width: 1px;
+}
+.bk-tr {
+  top: 22px;
+  right: 22px;
+  border-top-width: 1px;
+  border-right-width: 1px;
+}
+.bk-bl {
+  bottom: 22px;
+  left: 22px;
+  border-bottom-width: 1px;
+  border-left-width: 1px;
+}
+.bk-br {
+  bottom: 22px;
+  right: 22px;
+  border-bottom-width: 1px;
+  border-right-width: 1px;
+}
+
+/* top + bottom status strips */
+#topbar {
+  position: absolute;
+  top: 26px;
+  left: 20px;
+  right: 20px;
+  display: flex;
+  gap: 18px;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--label);
+  font-size: 11px;
+  letter-spacing: 0.3em;
+  color: rgba(170, 230, 255, 0.7);
+  pointer-events: none;
+}
+#topbar .sys-name {
+  color: var(--cyan-bright);
+  letter-spacing: 0.5em;
+  font-size: 13px;
+  text-shadow: 0 0 12px rgba(120, 220, 255, 0.6);
+}
+.dot-live {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--cyan);
+  box-shadow: 0 0 10px var(--cyan);
+  animation: scanpulse 1.6s ease-in-out infinite;
+  display: inline-block;
+}
+
+#bottombar {
+  position: absolute;
+  bottom: 30px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 14px;
+  align-items: center;
+  font-family: var(--label);
+  font-size: 10px;
+  letter-spacing: 0.22em;
+  color: rgba(150, 215, 255, 0.6);
+  pointer-events: none;
+  text-transform: uppercase;
+}
+#bottombar .seg {
+  padding: 5px 12px;
+  border: 1px solid var(--line-faint);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+#bottombar .seg.on {
+  border-color: var(--line);
+  color: var(--cyan-bright);
+}
+
+/* voice waveform */
+#voice {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 26px;
+}
+#voice i {
+  width: 2px;
+  background: var(--cyan);
+  box-shadow: 0 0 6px rgba(127, 233, 255, 0.7);
+  height: 4px;
+}
+
+/* scanline + vignette overlays */
+#fx {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+#fx::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(
+    0deg,
+    rgba(0, 0, 0, 0) 0px,
+    rgba(0, 0, 0, 0) 2px,
+    rgba(0, 0, 0, 0.16) 3px,
+    rgba(0, 0, 0, 0) 4px
+  );
+  mix-blend-mode: multiply;
+  opacity: 0.5;
+}
+#fx::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(
+    circle at 50% 50%,
+    rgba(0, 0, 0, 0) 55%,
+    rgba(0, 0, 0, 0.72) 100%
+  );
+}
+
+/* entrance is driven by the mode-awake staggered animations (see MODE SWITCHING) */
+@keyframes bootIn {
+  from {
+    opacity: 0;
+    filter: blur(6px);
+  }
+  to {
+    opacity: 1;
+    filter: blur(0);
+  }
+}
+
+/* responsive: shrink panels on small screens */
+@media (max-width: 900px) {
+  .panel {
+    transform: scale(0.82);
+    transform-origin: top left;
+  }
+  .panel.right {
+    transform-origin: top right;
+  }
+}
+
