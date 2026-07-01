@@ -441,6 +441,10 @@ uvicorn app:app --reload --port 5000
 
 Note: you'll still need a running Postgres and `.env` set up.
 
+The frontend (`templates/`, `static/v2/`) is split into one file per feature
+panel — see [CONTRIBUTING.md](CONTRIBUTING.md#frontend-structure) for the
+layout before adding a new one.
+
 ## TROUBLESHOOTING
 
 - **Redirected to login but Authentik shows an error** — check that the redirect
