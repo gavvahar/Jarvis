@@ -1,4 +1,4 @@
-.PHONY: docker lint
+.PHONY: docker lint pi-setup
 
 docker:
 	docker compose down
@@ -14,6 +14,9 @@ fmt:
 	tox -e format
 	make commit
 	git push
+
+pi-setup:
+	sudo bash scripts/setup-pi.sh
 
 commit:
 	git add .

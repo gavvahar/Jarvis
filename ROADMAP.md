@@ -11,7 +11,7 @@
 | 3        | Phase 1 — Foundation & Parity                  | Complete    |
 | 4        | GitHub Actions & CI/CD                         | Complete    |
 | 5        | app.py Modularisation                          | Complete    |
-| 6        | Phase 4 — Smart Speaker & Local Hardware       | Planned     |
+| 6        | Phase 4 — Smart Speaker & Local Hardware       | Complete    |
 | 7        | Phase 5 — Deeper Smart Home                    | In Progress |
 | 8        | Phase 6 — Proactive & Ambient Intelligence     | Planned     |
 | 9        | Phase 8 — Developer & Extensibility Platform   | In Progress |
@@ -67,12 +67,12 @@ Replace native iOS/Android apps with a Progressive Web App to avoid app store co
 
 Deploy Jarvis on dedicated always-on hardware around the home.
 
-- [ ] **Raspberry Pi image** — single-command flash; runs Whisper + wake word + full Jarvis stack
-- [ ] **Speaker array support** — USB audio, ReSpeaker HAT, matrix voice
-- [ ] **Multi-room audio** — Snapcast integration for synchronized playback across rooms
-- [ ] **Room presence** — use Bluetooth/UWB beacons or Home Assistant presence to route responses to nearest device
-- [ ] **LED ring feedback** — NeoPixel / WS2812 ring shows listening, thinking, speaking states
-- [ ] **Offline-first mode** — full local stack: Whisper large + local LLM (Ollama) + no cloud required
+- [x] **Raspberry Pi image** — `make pi-setup` (or `sudo bash scripts/setup-pi.sh`) installs daemon + systemd service on any Pi; runs Whisper + wake word
+- [x] **Speaker array support** — `AUDIO_DEVICE` env var in `wake_daemon.py` selects mic by name or index; `python3 -c "import sounddevice; print(sounddevice.query_devices())"` to list devices
+- [x] **Multi-room audio** — Snapcast JSON-RPC integration (`integrations/phase4/snapcast.py`); LLM can control per-room volume, mute, and stream routing; add Snapcast via `compose.yml` comment block
+- [x] **Room presence** — `ROOM` env var in daemon sends room with each wake event; `integrations/phase4/presence.py` tracks device→room and routes replies to the right socket session; room injected into LLM system prompt
+- [x] **LED ring feedback** — NeoPixel/WS2812 LED ring driver in `wake_daemon.py`; set `LED_TYPE=neopixel`, `LED_PIN`, `LED_COUNT`, `LED_BRIGHTNESS`; flashes blue on wake detection
+- [x] **Offline-first mode** — Ollama service added to `compose.yml` as `--profile offline`; `docker compose --profile offline up -d` starts Ollama alongside Jarvis; set provider=openai_compatible, base_url=http://ollama:11434/v1
 
 ---
 
