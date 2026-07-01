@@ -688,3 +688,197 @@ async def _db_update_presence(user_id: str, is_home: bool):
             user_id,
             is_home,
         )
+
+
+# ─── FINANCE / PLAID ──────────────────────────────────────────────────────────
+async def _db_add_plaid_item(user_id: str, item_id: str, access_token: str, institution_id: str, institution_name: str) -> int:
+    async with _pool().acquire() as conn:
+        return await conn.fetchval(
+            "INSERT INTO plaid_items (user_id, item_id, access_token, institution_id, institution_name) VALUES ($1,$2,$3,$4,$5) RETURNING id",
+            user_id,
+            item_id,
+            access_token,
+            institution_id,
+            institution_name,
+        )
+
+
+async def _db_list_plaid_items(user_id: str) -> list:
+    async with _pool().acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT id, item_id, institution_name, status, created_at FROM plaid_items WHERE user_id=$1 ORDER BY created_at",
+            user_id,
+        )
+    return [dict(r) for r in rows]
+
+
+async def _db_list_all_plaid_items() -> list:
+    async with _pool().acquire() as conn:
+        rows = await conn.fetch("SELECT id, user_id, item_id, access_token, cursor, status FROM plaid_items ORDER BY id")
+    return [dict(r) for r in rows]
+
+
+async def _db_get_plaid_item(user_id: str, item_pk: int) -> dict | None:
+    async with _pool().acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT id, item_id, access_token, institution_name, cursor, status FROM plaid_items WHERE id=$1 AND user_id=$2",
+            item_pk,
+            user_id,
+        )
+    return dict(row) if row else None
+
+
+async def _db_delete_plaid_item(user_id: str, item_pk: int) -> bool:
+    async with _pool().acquire() as conn:
+        r = await conn.execute("DELETE FROM plaid_items WHERE id=$1 AND user_id=$2", item_pk, user_id)
+    return r.split()[-1] != "0"
+
+
+async def _db_update_plaid_cursor(item_pk: int, cursor: str) -> None:
+    async with _pool().acquire() as conn:
+        await conn.execute("UPDATE plaid_items SET cursor=$2, updated_at=NOW() WHERE id=$1", item_pk, cursor)
+
+
+async def _db_mark_plaid_item_status(item_pk: int, status: str) -> None:
+    async with _pool().acquire() as conn:
+        await conn.execute("UPDATE plaid_items SET status=$2, updated_at=NOW() WHERE id=$1", item_pk, status)
+
+
+async def _db_upsert_plaid_accounts(user_id: str, item_pk: int, accounts: list) -> None:
+    async with _pool().acquire() as conn:
+        for a in accounts:
+            await conn.execute(
+                """
+                INSERT INTO plaid_accounts (user_id, item_id, account_id, name, official_name, mask, type, subtype, balance_current, balance_available, balance_limit, iso_currency, updated_at)
+                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,NOW())
+                ON CONFLICT (account_id) DO UPDATE SET
+                    name=EXCLUDED.name, official_name=EXCLUDED.official_name, mask=EXCLUDED.mask,
+                    type=EXCLUDED.type, subtype=EXCLUDED.subtype,
+                    balance_current=EXCLUDED.balance_current, balance_available=EXCLUDED.balance_available,
+                    balance_limit=EXCLUDED.balance_limit, iso_currency=EXCLUDED.iso_currency, updated_at=NOW()
+                """,
+                user_id,
+                item_pk,
+                a["account_id"],
+                a["name"],
+                a["official_name"],
+                a["mask"],
+                a["type"],
+                a["subtype"],
+                a["balance_current"],
+                a["balance_available"],
+                a["balance_limit"],
+                a["iso_currency"],
+            )
+
+
+async def _db_list_plaid_accounts(user_id: str, account_hint: str | None = None) -> list:
+    async with _pool().acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT id, item_id, account_id, name, official_name, mask, type, subtype,
+                   balance_current, balance_available, balance_limit, iso_currency
+            FROM plaid_accounts
+            WHERE user_id=$1 AND ($2::text IS NULL OR name ILIKE '%'||$2||'%' OR mask = $2)
+            ORDER BY name
+            """,
+            user_id,
+            account_hint,
+        )
+    return [dict(r) for r in rows]
+
+
+async def _db_upsert_plaid_transactions(user_id: str, upserts: list, removed_ids: list) -> None:
+    async with _pool().acquire() as conn:
+        for t in upserts:
+            await conn.execute(
+                """
+                INSERT INTO plaid_transactions (user_id, account_id, transaction_id, amount, iso_currency, date, merchant_name, name, category, personal_finance_category, pending)
+                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+                ON CONFLICT (transaction_id) DO UPDATE SET
+                    amount=EXCLUDED.amount, iso_currency=EXCLUDED.iso_currency, date=EXCLUDED.date,
+                    merchant_name=EXCLUDED.merchant_name, name=EXCLUDED.name, category=EXCLUDED.category,
+                    personal_finance_category=EXCLUDED.personal_finance_category, pending=EXCLUDED.pending
+                """,
+                user_id,
+                t["account_id"],
+                t["transaction_id"],
+                t["amount"],
+                t["iso_currency"],
+                t["date"],
+                t["merchant_name"],
+                t["name"],
+                t["category"],
+                t["personal_finance_category"],
+                t["pending"],
+            )
+        if removed_ids:
+            await conn.execute("DELETE FROM plaid_transactions WHERE transaction_id = ANY($1::text[])", removed_ids)
+
+
+async def _db_get_recent_transactions(user_id: str, account_hint: str | None = None, days: float = 7, limit: int = 10) -> list:
+    async with _pool().acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT t.id, t.transaction_id, t.amount, t.date, t.merchant_name, t.name,
+                   t.category, t.personal_finance_category, t.category_override, t.pending
+            FROM plaid_transactions t
+            JOIN plaid_accounts pa ON pa.account_id = t.account_id
+            WHERE t.user_id=$1 AND t.date > (CURRENT_DATE - $2::int)
+              AND ($3::text IS NULL OR pa.name ILIKE '%'||$3||'%' OR pa.mask = $3)
+            ORDER BY t.date DESC, t.id DESC
+            LIMIT $4
+            """,
+            user_id,
+            int(days),
+            account_hint,
+            int(limit),
+        )
+    return [dict(r) for r in rows]
+
+
+async def _db_get_spending_by_category(user_id: str, account_hint: str | None = None, days: float = 30) -> list:
+    async with _pool().acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT COALESCE(NULLIF(t.category_override, ''), NULLIF(t.category, ''), 'Uncategorized') AS category,
+                   SUM(t.amount) AS total
+            FROM plaid_transactions t
+            JOIN plaid_accounts pa ON pa.account_id = t.account_id
+            WHERE t.user_id=$1 AND t.date > (CURRENT_DATE - $2::int) AND t.amount > 0
+              AND ($3::text IS NULL OR pa.name ILIKE '%'||$3||'%' OR pa.mask = $3)
+            GROUP BY category
+            ORDER BY total DESC
+            """,
+            user_id,
+            int(days),
+            account_hint,
+        )
+    return [{"category": r["category"], "total": r["total"]} for r in rows]
+
+
+async def _db_find_transaction_by_merchant(user_id: str, merchant: str) -> dict | None:
+    async with _pool().acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            SELECT id, transaction_id, amount, date, merchant_name, name
+            FROM plaid_transactions
+            WHERE user_id=$1 AND (merchant_name ILIKE '%'||$2||'%' OR name ILIKE '%'||$2||'%')
+            ORDER BY date DESC, id DESC
+            LIMIT 1
+            """,
+            user_id,
+            merchant,
+        )
+    return dict(row) if row else None
+
+
+async def _db_set_transaction_category_override(user_id: str, transaction_pk: int, category: str) -> bool:
+    async with _pool().acquire() as conn:
+        r = await conn.execute(
+            "UPDATE plaid_transactions SET category_override=$3 WHERE id=$1 AND user_id=$2",
+            transaction_pk,
+            user_id,
+            category,
+        )
+    return r.split()[-1] != "0"

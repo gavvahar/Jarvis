@@ -100,7 +100,10 @@ jobs:
           def gql(query, **variables):
               args = ["gh", "api", "graphql", "-f", f"query={query}"]
               for k, v in variables.items():
-                  args += ["-f", f"{k}={v}"]
+                  # -F type-infers (numbers/bools stay typed); -f always sends a string.
+                  # GraphQL Int!/Boolean! variables need -F or gh rejects them as invalid.
+                  flag = "-F" if str(v).lstrip("-").isdigit() else "-f"
+                  args += [flag, f"{k}={v}"]
               r = subprocess.run(args, capture_output=True, text=True)
               if r.returncode != 0:
                   print(r.stderr[:300], file=sys.stderr)

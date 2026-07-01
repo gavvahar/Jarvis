@@ -28,8 +28,13 @@ jobs:
 
           repo = "${{ github.repository }}"
           sha = "${{ github.event.pull_request.head.sha }}"
-          required = ["smoke-test", "actionlint", "android-build", "pip-audit",
+          base_ref = "${{ github.event.pull_request.base.ref }}"
+          required = ["actionlint", "android-build", "pip-audit",
                       "docker-build", "compose-validate", "quality"]
+          # smoke-test (testing-smoke.yml) only runs for PRs targeting staging —
+          # requiring it on every base branch left this waiting forever on PRs into testing.
+          if base_ref == "staging":
+              required.append("smoke-test")
           failure_conclusions = {"failure", "timed_out", "cancelled", "action_required", "stale"}
 
           deadline = time.time() + 25 * 60

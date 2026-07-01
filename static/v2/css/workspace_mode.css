@@ -1,0 +1,306 @@
+/* ===========================================================
+   WORKSPACE MODE  (toggle with [N])
+   The orb + rings shrink into the bottom-right corner; the charts/
+   panels are removed; only the background and the top/bottom bars
+   remain. A clean, focused "workspace" surface.
+   =========================================================== */
+/* drop all the telemetry panels (the graphs/charts) */
+body.mode-workspace .panel {
+  opacity: 0;
+  pointer-events: none;
+  animation: none;
+}
+/* keep top + bottom bars; let them ease in fresh on entry */
+body.mode-workspace #topbar {
+  animation: barIn 0.6s ease-out both 0.25s;
+}
+body.mode-workspace #bottombar {
+  animation: barIn 0.6s ease-out both 0.38s;
+}
+/* corner brackets stay as a frame; the orb cluster handles its own move */
+body.mode-workspace #chat-panel {
+  display: none;
+}
+
+/* deep aurora field — stable gradient with a gentle opacity breath (no flicker) */
+.sb-aurora {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(
+      40% 46% at 30% 34%,
+      rgba(36, 118, 205, 0.26),
+      rgba(0, 0, 0, 0) 60%
+    ),
+    radial-gradient(
+      44% 52% at 72% 66%,
+      rgba(78, 52, 180, 0.2),
+      rgba(0, 0, 0, 0) 62%
+    ),
+    radial-gradient(
+      54% 60% at 56% 32%,
+      rgba(28, 180, 215, 0.14),
+      rgba(0, 0, 0, 0) 64%
+    );
+  opacity: 0.85;
+  will-change: opacity;
+  animation: sbAuroraPulse 10s ease-in-out infinite;
+}
+@keyframes sbAuroraPulse {
+  0%,
+  100% {
+    opacity: 0.66;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+/* darken the centre so the wordmark reads cleanly over the orb glow */
+#standby::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 44vmin;
+  height: 44vmin;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  background: radial-gradient(
+    circle,
+    rgba(2, 8, 16, 0.94) 0%,
+    rgba(3, 9, 20, 0.74) 40%,
+    rgba(2, 8, 16, 0) 70%
+  );
+}
+
+#standby-rings {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+}
+#standby-rings svg {
+  display: block;
+  width: 66vmin;
+  height: 66vmin;
+  overflow: visible;
+  filter: drop-shadow(0 0 8px rgba(80, 205, 245, 0.5));
+  animation: sbBreathe 7.5s ease-in-out infinite;
+  transform-origin: center;
+}
+@keyframes sbBreathe {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.018);
+  }
+}
+
+/* ring element styles — reference-matching arc-reactor HUD */
+.sb-thin {
+  fill: none;
+  stroke: rgba(150, 225, 255, 0.34);
+  stroke-width: 1.3;
+}
+.sb-thin-faint {
+  fill: none;
+  stroke: rgba(150, 225, 255, 0.16);
+  stroke-width: 1;
+}
+.sb-tooth {
+  stroke: #9fe6ff;
+  stroke-width: 5.2;
+  opacity: 1;
+}
+.sb-arc {
+  fill: none;
+  stroke: url(#sbSheen);
+  stroke-width: 14;
+  stroke-linecap: butt;
+}
+.sb-arc-thin {
+  fill: none;
+  stroke: rgba(150, 232, 255, 0.68);
+  stroke-width: 3;
+}
+.sb-yellow {
+  fill: none;
+  stroke: url(#sbAmber);
+  stroke-width: 15;
+  stroke-linecap: butt;
+  filter: drop-shadow(0 0 6px rgba(255, 190, 80, 0.85));
+  animation: sbYellow 2.6s ease-in-out infinite;
+}
+.sb-yellow-cap {
+  stroke: #ffc24a;
+  stroke-width: 4;
+}
+.sb-tick {
+  stroke: rgba(170, 235, 255, 0.85);
+  stroke-width: 1.7;
+}
+.sb-tick-faint {
+  stroke: rgba(150, 225, 255, 0.3);
+  stroke-width: 1.2;
+}
+.sb-dot {
+  fill: #eafaff;
+  filter: drop-shadow(0 0 5px rgba(150, 225, 255, 0.9));
+}
+.sb-dot-amber {
+  fill: #ffcf6e;
+  filter: drop-shadow(0 0 6px rgba(255, 190, 90, 0.95));
+}
+.sb-hub {
+  fill: none;
+  stroke: rgba(140, 220, 255, 0.3);
+  stroke-width: 1.4;
+}
+.sb-hub-faint {
+  fill: none;
+  stroke: rgba(140, 220, 255, 0.16);
+  stroke-width: 1.2;
+}
+.sb-hub-spoke {
+  stroke: rgba(140, 220, 255, 0.2);
+  stroke-width: 1.1;
+}
+@keyframes sbYellow {
+  0%,
+  100% {
+    opacity: 0.7;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+@keyframes dotBlink {
+  0%,
+  100% {
+    opacity: 0.55;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+/* ---- centre stack: clock + wordmark ---- */
+.standby-core {
+  position: relative;
+  z-index: 2;
+  text-align: center;
+  pointer-events: none;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1.6vmin;
+}
+
+.sb-clock {
+  font-family: "Oxanium", sans-serif;
+  font-weight: 300;
+  font-size: 3vmin;
+  letter-spacing: 0.1em;
+  line-height: 1;
+  color: rgba(196, 238, 255, 0.92);
+  text-shadow: 0 0 16px rgba(95, 210, 245, 0.5);
+  font-variant-numeric: tabular-nums;
+}
+.sb-clock .sec {
+  font-size: 1.6vmin;
+  opacity: 0.6;
+  margin-left: 0.2em;
+}
+.sb-date {
+  font-family: "Share Tech Mono", monospace;
+  font-size: 1.15vmin;
+  letter-spacing: 0.42em;
+  text-indent: 0.42em;
+  color: rgba(206, 238, 252, 0.9);
+  text-shadow:
+    0 0 7px rgba(6, 14, 24, 0.95),
+    0 0 3px rgba(6, 14, 24, 0.95);
+  margin-top: 0.4vmin;
+}
+
+.jarvis-word {
+  font-family: "Oxanium", sans-serif;
+  font-weight: 600;
+  font-size: 5vmin;
+  letter-spacing: 0.05em;
+  line-height: 1;
+  background: linear-gradient(
+    115deg,
+    #bfe8fb 0%,
+    #ffffff 26%,
+    #eaf9ff 44%,
+    #ffffff 58%,
+    #bfe8fb 80%,
+    #dff4ff 100%
+  );
+  background-size: 280% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+  filter: drop-shadow(0 0 14px rgba(95, 210, 245, 0.5));
+  animation:
+    wordShimmer 6.5s linear infinite,
+    wordPulse 5.5s ease-in-out infinite;
+}
+@keyframes wordShimmer {
+  0% {
+    background-position: 140% 0;
+  }
+  100% {
+    background-position: -140% 0;
+  }
+}
+@keyframes wordPulse {
+  0%,
+  100% {
+    filter: drop-shadow(0 0 12px rgba(95, 210, 245, 0.4));
+  }
+  50% {
+    filter: drop-shadow(0 0 24px rgba(120, 225, 255, 0.78));
+  }
+}
+
+.jarvis-sub {
+  margin-top: 0.4vmin;
+  white-space: nowrap;
+  font-family: "Share Tech Mono", monospace;
+  font-size: 1.15vmin;
+  letter-spacing: 0.4em;
+  text-indent: 0.4em;
+  color: rgba(214, 242, 254, 0.92);
+  text-shadow:
+    0 0 7px rgba(6, 14, 24, 0.95),
+    0 0 3px rgba(6, 14, 24, 0.95);
+}
+
+.standby-tag {
+  position: absolute;
+  bottom: 5.5vmin;
+  left: 50%;
+  transform: translateX(-50%);
+  font-family: "Share Tech Mono", monospace;
+  font-size: 11px;
+  letter-spacing: 0.3em;
+  color: rgba(150, 222, 250, 0.6);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  white-space: nowrap;
+}
+.dot-dormant {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: rgba(255, 182, 72, 0.95);
+  box-shadow: 0 0 10px rgba(255, 182, 72, 0.8);
+  animation: scanpulse 2.8s ease-in-out infinite;
+}
