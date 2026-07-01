@@ -192,12 +192,19 @@ Give Jarvis full visibility and control over money — balances, spending, budge
 
 ---
 
+## Known Issues
+
+- [ ] **Settings panel closes entirely when switching tabs** — after the topbar's 10 integration buttons (HA, Agenda, Messages, Doorbell, Vision, Garage, Tesla, Finance, Spotify, Apple Music) were consolidated into one SETTINGS button with tabs, switching from one open tab to another closes the whole dialog instead of swapping panes. Isolated logic testing (jsdom) shows the capture-phase mutual-exclusion + `MutationObserver` auto-collapse timing is *not* the cause in isolation — needs live-browser reproduction (devtools console + DOM inspection) to pin down; see `settings-panel-tabs-bug.md` in project memory for what's been ruled out.
+
+---
+
 ## GitHub Actions & CI/CD
 
 Automated workflows to keep the repo healthy and branches in sync.
 
 - [x] **Auto-merge staging → main** — nightly cron merges staging into main if clean
 - [x] **Cascade merge on push** — when `staging` or `main` receives a push, automatically attempt to merge it into every other open branch; on conflict, open a detailed issue describing the conflicting files and assign it to whoever made the last commit on that branch
+- [ ] **Playwright browser checks in `testing-smoke.yml`** — the smoke test currently only curls `/login` and `/` for non-5xx status; add a headless Playwright pass (with a seeded test account/session) that logs in and clicks through core UI (Settings panel tabs, chat send) so a broken button/JS bundle fails CI, not just a broken route
 
 ---
 
