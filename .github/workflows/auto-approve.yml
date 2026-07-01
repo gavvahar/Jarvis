@@ -20,11 +20,11 @@ jobs:
       - name: Wait for required checks to pass
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh pr checks "${{ github.event.pull_request.number }}" --watch --required --fail-fast
+        run: gh pr checks "${{ github.event.pull_request.number }}" -R "${{ github.repository }}" --watch --required --fail-fast
 
       - name: Approve pull request
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh pr review "${{ github.event.pull_request.number }}" --approve \
+          gh pr review "${{ github.event.pull_request.number }}" -R "${{ github.repository }}" --approve \
             --body "Auto-approved: all required checks passed."
