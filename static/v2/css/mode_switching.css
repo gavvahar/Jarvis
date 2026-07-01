@@ -1,0 +1,236 @@
+/* ===========================================================
+   MODE SWITCHING  (awake <-> standby)
+   =========================================================== */
+#hud,
+.panel,
+#topbar,
+#bottombar,
+.bracket {
+  transition: opacity 0.55s ease;
+}
+.parallax {
+  transition: opacity 1.1s ease;
+}
+#standby {
+  transition: opacity 0.8s ease;
+}
+
+/* ---- ORB CLUSTER: orb + rings as one group so they scale/move together.
+   In WORKSPACE mode the whole cluster glides to the bottom-right and shrinks,
+   staying perfectly proportionate (orb + rings keep their relationship). ---- */
+#orb-cluster {
+  position: absolute;
+  inset: 0;
+  transform-origin: 50% 50%;
+  transition: transform 1.05s cubic-bezier(0.65, 0.02, 0.22, 1);
+  will-change: transform;
+}
+body.mode-workspace #orb-cluster {
+  transform: translate(calc(var(--ws-orb-x) - 50%), calc(var(--ws-orb-y) - 50%))
+    scale(0.33);
+}
+
+/* ---- energy-surge flash on every mode toggle ---- */
+#mode-flash {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 62vmin;
+  height: 62vmin;
+  transform: translate(-50%, -50%) scale(0.2);
+  border-radius: 50%;
+  pointer-events: none;
+  opacity: 0;
+  z-index: 60;
+  background: radial-gradient(
+    circle,
+    rgba(150, 232, 255, 0) 36%,
+    rgba(150, 232, 255, 0.45) 50%,
+    rgba(150, 232, 255, 0) 64%
+  );
+  mix-blend-mode: screen;
+  filter: blur(2px);
+}
+#mode-flash.flash-anim {
+  animation: modeFlash 0.8s cubic-bezier(0.25, 0.7, 0.3, 1);
+}
+/* corner pulse: fire the surge on the orb's workspace position (bottom-right),
+   smaller to match the shrunken orb */
+#mode-flash.at-corner {
+  left: var(--ws-orb-x);
+  top: var(--ws-orb-y);
+  width: 26vmin;
+  height: 26vmin;
+}
+@keyframes modeFlash {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(0.18);
+  }
+  28% {
+    opacity: 0.7;
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(1.55);
+  }
+}
+
+/* ---- AWAKE entrance: orb powers up, rings draw in, panels pop in staggered ---- */
+body.mode-awake .parallax {
+  animation: orbWake 1.1s ease-out both;
+}
+body.mode-awake #hud {
+  animation: fadeIn 0.7s ease-out both 0.15s;
+}
+body.mode-awake #hud svg {
+  animation: hudIn 1s cubic-bezier(0.2, 0.9, 0.25, 1) both 0.15s;
+  transform-origin: center;
+}
+body.mode-awake #topbar {
+  animation: barIn 0.55s ease-out both 0.12s;
+}
+body.mode-awake #bottombar {
+  animation: barIn 0.55s ease-out both 1.05s;
+}
+body.mode-awake .bracket {
+  animation: fadeIn 0.5s ease-out both;
+}
+/* Telemetry panels are SUMMONED on command, not shown by default: they pop in (in awake
+   OR workspace) only when Sam opens the system visuals, which adds body.stats-open via the
+   show_system_visuals tool. Each panel keeps its inline animation-delay for a staggered
+   reveal; removing the class fades them back out via the .panel opacity transition above. */
+body.stats-open.mode-awake .panel,
+body.stats-open.mode-workspace .panel {
+  animation: popIn 0.6s cubic-bezier(0.2, 0.9, 0.25, 1) both;
+}
+@keyframes popIn {
+  0% {
+    opacity: 0;
+    transform: translateY(12px) scale(0.95);
+    filter: blur(3px);
+  }
+  60% {
+    filter: blur(0);
+  }
+  100% {
+    opacity: 1;
+    transform: none;
+    filter: none;
+  }
+}
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes barIn {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+}
+@keyframes hudIn {
+  from {
+    transform: scale(0.84);
+  }
+  to {
+    transform: scale(1);
+  }
+}
+@keyframes orbWake {
+  from {
+    opacity: 0.16;
+    transform: scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+/* ---- STANDBY entrance: rings assemble, wordmark settles in ---- */
+body.mode-standby #standby-rings {
+  animation: ringsAssemble 0.9s cubic-bezier(0.2, 0.9, 0.25, 1) both;
+}
+body.mode-standby .standby-core {
+  animation: coreIn 0.85s ease-out both 0.22s;
+}
+@keyframes ringsAssemble {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(0.85) rotate(-6deg);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1) rotate(0);
+  }
+}
+@keyframes coreIn {
+  from {
+    opacity: 0;
+    transform: scale(0.93);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* --- in STANDBY: hide all awake chrome, dim the orb to a faint core --- */
+body.mode-standby #hud,
+body.mode-standby .panel,
+body.mode-standby #topbar,
+body.mode-standby #bottombar,
+body.mode-standby .bracket {
+  opacity: 0;
+  pointer-events: none;
+  animation: none;
+}
+body.mode-standby .parallax {
+  opacity: 0.5;
+}
+/* confine the orb to a calm central core (kills edge twinkle / corner flicker) */
+body.mode-standby #neural {
+  -webkit-mask: radial-gradient(
+    circle at 50% 50%,
+    #000 0%,
+    #000 13%,
+    rgba(0, 0, 0, 0) 33%
+  );
+  mask: radial-gradient(
+    circle at 50% 50%,
+    #000 0%,
+    #000 13%,
+    rgba(0, 0, 0, 0) 33%
+  );
+}
+body.mode-standby #core-bloom {
+  opacity: 0.55;
+}
+/* hold the blueprint schematics steady in standby (no fade flicker) */
+body.mode-standby .schem {
+  animation: none;
+  opacity: 0.16;
+}
+
+/* --- standby overlay (hidden while awake) --- */
+#standby {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  pointer-events: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+body.mode-standby #standby {
+  opacity: 1;
+}

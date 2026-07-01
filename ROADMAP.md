@@ -15,7 +15,7 @@
 | 7        | Phase 5 — Deeper Smart Home                    | In Progress |
 | 8        | Phase 6 — Proactive & Ambient Intelligence     | Planned     |
 | 9        | Phase 8 — Developer & Extensibility Platform   | In Progress |
-| 10       | Phase 9 — Financial Intelligence               | Planned     |
+| 10       | Phase 9 — Financial Intelligence               | In Progress |
 | 11       | Phase 10 — Computer Vision & Spatial Awareness | Complete    |
 | 12       | Phase 11 — Accessibility & Hearing Assistance  | Planned     |
 | 13       | Phase 12 — Mental Wellness & Social Assistance | Planned     |
@@ -179,9 +179,9 @@ Give Jarvis eyes — know who is home, where they are, what they're doing, and f
 
 Give Jarvis full visibility and control over money — balances, spending, budgets, goals, and payments.
 
-- [ ] **Account aggregation** — Plaid Link for banks and credit cards; direct bank APIs (Chase, Amex, etc.) where available; unified account view in DB
-- [ ] **Balance & transaction lookup** — "what's my Chase balance?", "show my last 10 transactions" answered by voice
-- [ ] **Spending categorization** — auto-categorize transactions (food, transport, utilities, etc.); override via voice
+- [x] **Account aggregation** — Plaid Link (sandbox); unified account view across linked banks in `plaid_items`/`plaid_accounts`
+- [x] **Balance & transaction lookup** — "what's my balance?", "show my recent transactions" answered by voice via `get_account_balances`/`get_recent_transactions`
+- [x] **Spending categorization** — reuses Plaid's `personal_finance_category`; override via voice (`set_transaction_category`) or `PATCH /api/finance/transactions/{id}`
 - [ ] **Budget tracking** — set monthly budgets by category; alert when approaching or over limit
 - [ ] **Bill & subscription detection** — surface recurring charges automatically; alert before due dates
 - [ ] **Savings goals** — "save $5k for vacation by December"; track progress and surface weekly

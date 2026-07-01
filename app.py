@@ -29,6 +29,8 @@ from integrations.myq import _myq_configured, _myq_get_status
 from integrations.ha import _ha_configured, _validate_ha
 import integrations.tesla as _tesla_mod
 import integrations.vision as _vision_mod
+import integrations.finance as _finance_mod
+from integrations.finance import _finance_configured, _plaid_create_link_token, _plaid_exchange_public_token, _plaid_remove_item
 from integrations.tesla import _tesla_configured, _tesla_unofficial_access_token
 from integrations.vision import (
     _list_cameras,
@@ -85,6 +87,9 @@ from config import (
     TESLA_CLIENT_ID,
     TESLA_CLIENT_SECRET,
     SPOTIFY_CLIENT_ID,
+    PLAID_CLIENT_ID,
+    PLAID_SECRET,
+    PLAID_ENV,
 )
 
 try:
@@ -124,6 +129,11 @@ from db import (
     _db_append_transcript_segment,
     _db_finalize_meeting,
     _db_store_doorbell_event,
+    _db_list_plaid_items,
+    _db_list_plaid_accounts,
+    _db_get_plaid_item,
+    _db_delete_plaid_item,
+    _db_set_transaction_category_override,
 )
 
 
@@ -288,8 +298,9 @@ async def lifespan(application: FastAPI):
     t4 = asyncio.create_task(_timer_reminder_loop())
     t5 = asyncio.create_task(_phase5_mod._device_alert_loop())
     t6 = asyncio.create_task(_vision_mod._vision_loop())
+    t7 = asyncio.create_task(_finance_mod._finance_loop())
     yield
-    for t in (t1, t2, t3, t4, t5, t6):
+    for t in (t1, t2, t3, t4, t5, t6, t7):
         t.cancel()
     await _db_close()
 
@@ -413,6 +424,9 @@ async def api_status(request: Request):
         "spotify_client_enabled": bool(SPOTIFY_CLIENT_ID),
         "apple_music_configured": _apple_music_configured(config),
         "apple_music_server_enabled": _apple_music_server_configured(),
+        "finance_configured": await _finance_configured(user_id),
+        "plaid_client_enabled": bool(PLAID_CLIENT_ID and PLAID_SECRET),
+        "plaid_env": PLAID_ENV,
         "role": state.get("role", "user"),
     }
 
@@ -658,6 +672,67 @@ async def api_save_myq(request: Request):
         config["myq_password"] = myq_password
         await _db_save_config(user_id, config)
     return {"ok": True, "myq_configured": _myq_configured(config)}
+
+
+# ─── FINANCE / PLAID ROUTES ──────────────────────────────────────────────────
+@fast_app.post("/api/finance/link_token")
+async def api_finance_link_token(request: Request):
+    user_id = _require_user(request)
+    if not (PLAID_CLIENT_ID and PLAID_SECRET):
+        raise HTTPException(503, "Plaid not configured — set PLAID_CLIENT_ID and PLAID_SECRET in .env")
+    token = await _plaid_create_link_token(user_id)
+    return {"link_token": token}
+
+
+@fast_app.post("/api/finance/exchange_token")
+async def api_finance_exchange_token(request: Request):
+    user_id = _require_user(request)
+    data = await request.json()
+    public_token = (data.get("public_token") or "").strip()
+    if not public_token:
+        return {"ok": False, "error": "Missing public_token."}
+    try:
+        result = await _plaid_exchange_public_token(
+            user_id,
+            public_token,
+            (data.get("institution_id") or "").strip(),
+            (data.get("institution_name") or "").strip(),
+        )
+    except Exception as e:
+        return {"ok": False, "error": f"Could not link account: {e}"}
+    return {"ok": True, **result}
+
+
+@fast_app.get("/api/finance/connections")
+async def api_finance_connections(request: Request):
+    user_id = _require_user(request)
+    items = await _db_list_plaid_items(user_id)
+    accounts = await _db_list_plaid_accounts(user_id)
+    return {"connections": items, "accounts": accounts}
+
+
+@fast_app.delete("/api/finance/connections/{item_pk}")
+async def api_finance_disconnect(item_pk: int, request: Request):
+    user_id = _require_user(request)
+    item = await _db_get_plaid_item(user_id, item_pk)
+    if not item:
+        raise HTTPException(404, "Connection not found")
+    await _plaid_remove_item(item["access_token"])
+    await _db_delete_plaid_item(user_id, item_pk)
+    return {"ok": True}
+
+
+@fast_app.patch("/api/finance/transactions/{transaction_pk}")
+async def api_finance_override_category(transaction_pk: int, request: Request):
+    user_id = _require_user(request)
+    data = await request.json()
+    category = (data.get("category") or "").strip()
+    if not category:
+        return {"ok": False, "error": "category is required"}
+    ok = await _db_set_transaction_category_override(user_id, transaction_pk, category)
+    if not ok:
+        raise HTTPException(404, "Transaction not found")
+    return {"ok": True}
 
 
 @fast_app.get("/api/meetings")

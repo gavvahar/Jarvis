@@ -1,0 +1,453 @@
+/* ===========================================================
+   BACKEND INTEGRATION  (audio unlock, workspace surfaces,
+   background-task badge) — wired to live JARVIS.
+   =========================================================== */
+
+/* one-time click overlay to unlock browser audio (Chrome autoplay) */
+#audio-unlock {
+  position: fixed;
+  inset: 0;
+  z-index: 99999;
+  background: rgba(2, 6, 10, 0.86);
+  /* Hidden by default — JARVIS opens on the standby screen, not a "click to engage" gate.
+     socket.js only flips this to display:flex as a FALLBACK if the browser blocks audio
+     playback before any user gesture (any click/keypress unlocks it silently). */
+  display: none;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+#audio-unlock-inner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 24px;
+  font-family: var(--label);
+  font-size: 11px;
+  letter-spacing: 0.5em;
+  text-indent: 0.5em;
+  color: var(--cyan-bright);
+  text-shadow: 0 0 12px rgba(120, 220, 255, 0.5);
+}
+#audio-unlock-ring {
+  width: 84px;
+  height: 84px;
+  border-radius: 50%;
+  border: 2px solid var(--line);
+  box-shadow:
+    0 0 34px rgba(31, 182, 239, 0.3),
+    inset 0 0 24px rgba(31, 182, 239, 0.15);
+  animation: pulse-ring 1.8s ease-in-out infinite;
+}
+@keyframes pulse-ring {
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 0.5;
+  }
+  50% {
+    transform: scale(1.12);
+    opacity: 1;
+  }
+}
+
+/* Cleaner orb: hide the decorative concentric rings around the orb (lock screen + awake HUD).
+   The orb itself and the telemetry panels are unaffected. */
+#standby-rings,
+#hud {
+  display: none !important;
+}
+
+/* background research badge (bottom-left) */
+#bg-task-bar {
+  position: absolute;
+  left: 34px;
+  bottom: 64px;
+  z-index: 40;
+  display: none;
+  font-family: var(--label);
+  font-size: 9px;
+  letter-spacing: 0.22em;
+  color: var(--amber);
+  text-shadow: 0 0 8px rgba(255, 182, 72, 0.4);
+  animation: scanpulse 1.6s ease-in-out infinite;
+}
+
+/* ── WORKSPACE surface: deep-research + self-diagnostics cards ── */
+#workspace-surface {
+  position: absolute;
+  inset: 0;
+  display: none;
+  z-index: 30;
+  align-items: center;
+  justify-content: center;
+  gap: 34px;
+  pointer-events: none;
+}
+body.mode-workspace #workspace-surface {
+  display: flex;
+}
+.ws-card {
+  display: none;
+  flex-direction: column;
+  width: 430px;
+  max-width: 42vw;
+  padding: 22px 26px;
+  background: linear-gradient(
+    180deg,
+    rgba(9, 22, 35, 0.66),
+    rgba(5, 13, 23, 0.66)
+  );
+  border: 1px solid var(--line-faint);
+  border-top: 2px solid var(--line);
+  box-shadow:
+    0 18px 60px rgba(2, 10, 20, 0.5),
+    inset 0 0 40px rgba(20, 80, 120, 0.06);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  animation: popIn 0.6s cubic-bezier(0.2, 0.9, 0.25, 1) both;
+}
+.ws-card.show {
+  display: flex;
+}
+.ws-head {
+  font-family: var(--label);
+  font-size: 12px;
+  letter-spacing: 0.34em;
+  color: var(--cyan-bright);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+.ws-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--cyan);
+  box-shadow: 0 0 10px var(--cyan);
+  animation: scanpulse 1.6s ease-in-out infinite;
+}
+
+/* ═══ VISION SETTINGS PANEL ════════════════════════════════════════════════════ */
+.vision-section-label {
+  font-size: 0.65rem;
+  letter-spacing: 0.12em;
+  color: rgba(127, 233, 255, 0.55);
+  text-transform: uppercase;
+  margin: 0.6rem 0 0.35rem;
+  text-align: left;
+}
+.vision-cam-row,
+.vision-presence-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.78rem;
+  padding: 0.28rem 0;
+  border-bottom: 1px solid rgba(127, 233, 255, 0.08);
+  text-align: left;
+}
+.vision-cam-row span:first-child,
+.vision-presence-row span:last-child {
+  flex: 1;
+  word-break: break-all;
+}
+.vision-cam-badges {
+  display: flex;
+  gap: 0.25rem;
+}
+.vision-badge {
+  font-size: 0.6rem;
+  padding: 1px 5px;
+  border: 1px solid rgba(127, 233, 255, 0.4);
+  border-radius: 3px;
+  letter-spacing: 0.06em;
+}
+.vision-badge-priv {
+  border-color: #f59e0b;
+  color: #f59e0b;
+}
+.vision-cam-del {
+  background: none;
+  border: none;
+  color: rgba(239, 68, 68, 0.7);
+  cursor: pointer;
+  padding: 0 4px;
+  font-size: 0.85rem;
+}
+.vision-cam-del:hover {
+  color: #ef4444;
+}
+.vision-presence-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #22c55e;
+  flex-shrink: 0;
+  box-shadow: 0 0 6px #22c55e;
+}
+
+/* ═══ CAMERA SURFACE — live vision feed (troubleshooting HUD) ═══════════════════
+   Reuses the Workspace tab: shown only in mode-workspace when camera mode is active.
+   The feed's edges dissolve into the background grid via a radial mask. */
+#camera-surface {
+  position: absolute;
+  inset: 0;
+  display: none;
+  z-index: 31;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+body.mode-workspace #camera-surface.show {
+  display: flex;
+}
+.cam-frame {
+  position: relative;
+  width: min(70vw, 1040px);
+  aspect-ratio: 16/9;
+  max-height: 74vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: popIn 0.6s cubic-bezier(0.2, 0.9, 0.25, 1) both;
+}
+#cam-feed {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  border-radius: 14px;
+  filter: saturate(1.05) contrast(1.03);
+  opacity: 0.97;
+  /* edges fade out into the grid instead of a hard frame */
+  -webkit-mask-image: radial-gradient(
+    ellipse 82% 82% at 50% 50%,
+    #000 56%,
+    rgba(0, 0, 0, 0.35) 80%,
+    transparent 100%
+  );
+  mask-image: radial-gradient(
+    ellipse 82% 82% at 50% 50%,
+    #000 56%,
+    rgba(0, 0, 0, 0.35) 80%,
+    transparent 100%
+  );
+}
+/* faint cyan inner glow so the live image reads as a JARVIS surface */
+.cam-frame::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 14px;
+  pointer-events: none;
+  box-shadow: inset 0 0 90px rgba(127, 233, 255, 0.16);
+  -webkit-mask-image: radial-gradient(
+    ellipse 82% 82% at 50% 50%,
+    #000 56%,
+    transparent 100%
+  );
+  mask-image: radial-gradient(
+    ellipse 82% 82% at 50% 50%,
+    #000 56%,
+    transparent 100%
+  );
+}
+.cam-label {
+  position: absolute;
+  top: 9%;
+  left: 9%;
+  font-family: var(--label);
+  font-size: 11px;
+  letter-spacing: 0.3em;
+  color: var(--cyan-bright);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  text-shadow: 0 0 12px rgba(127, 233, 255, 0.5);
+}
+.cam-scan {
+  position: absolute;
+  left: 9%;
+  right: 9%;
+  top: 14%;
+  height: 2px;
+  pointer-events: none;
+  opacity: 0.55;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(127, 233, 255, 0.6),
+    transparent
+  );
+  animation: camScan 4.5s linear infinite;
+}
+@keyframes camScan {
+  0% {
+    top: 14%;
+  }
+  100% {
+    top: 86%;
+  }
+}
+.cam-corner {
+  position: absolute;
+  width: 26px;
+  height: 26px;
+  border: 1px solid rgba(127, 233, 255, 0.5);
+}
+.cam-corner.tl {
+  left: 7%;
+  top: 11%;
+  border-right: 0;
+  border-bottom: 0;
+}
+.cam-corner.tr {
+  right: 7%;
+  top: 11%;
+  border-left: 0;
+  border-bottom: 0;
+}
+.cam-corner.bl {
+  left: 7%;
+  bottom: 11%;
+  border-right: 0;
+  border-top: 0;
+}
+.cam-corner.br {
+  right: 7%;
+  bottom: 11%;
+  border-left: 0;
+  border-top: 0;
+}
+
+.ws-topic {
+  font-family: var(--mono);
+  font-size: 18px;
+  font-weight: 500;
+  color: #eafaff;
+  letter-spacing: 0.01em;
+  margin-bottom: 18px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ws-bar-row {
+  margin-bottom: 14px;
+}
+.ws-bar-label {
+  display: flex;
+  justify-content: space-between;
+  font-family: var(--label);
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  color: rgba(180, 235, 255, 0.6);
+  margin-bottom: 6px;
+}
+.ws-pct {
+  color: var(--cyan-bright);
+}
+.ws-track {
+  position: relative;
+  height: 6px;
+  background: rgba(127, 233, 255, 0.08);
+  border: 1px solid var(--line-faint);
+  overflow: hidden;
+}
+.ws-track.tall {
+  height: 10px;
+}
+.ws-track > i {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 0%;
+  background: linear-gradient(90deg, rgba(127, 233, 255, 0.4), var(--cyan));
+  box-shadow: 0 0 12px rgba(127, 233, 255, 0.6);
+  transition: width 1s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.ws-track > i.depth {
+  background: linear-gradient(90deg, rgba(120, 255, 210, 0.4), #6effc8);
+  box-shadow: 0 0 12px rgba(110, 255, 200, 0.5);
+}
+.ws-phase-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 18px 0 14px;
+  font-family: var(--label);
+  font-size: 12px;
+  letter-spacing: 0.22em;
+  color: var(--cyan-bright);
+}
+.ws-phase-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--cyan);
+  box-shadow: 0 0 8px var(--cyan);
+  animation: scanpulse 1.1s ease-in-out infinite;
+}
+.ws-brain {
+  margin-left: auto;
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  color: rgba(127, 233, 255, 0.7);
+}
+.ws-brain.local {
+  color: var(--amber);
+}
+.ws-stats {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 12px 14px;
+  margin-top: 6px;
+}
+.ws-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-family: var(--label);
+}
+.ws-stat span {
+  font-size: 9px;
+  letter-spacing: 0.2em;
+  color: rgba(180, 235, 255, 0.45);
+}
+.ws-stat b {
+  font-size: 17px;
+  font-weight: 400;
+  color: var(--cyan-bright);
+  font-variant-numeric: tabular-nums;
+}
+.ws-stat b.hl {
+  color: #6effc8;
+  text-shadow: 0 0 8px rgba(110, 255, 200, 0.4);
+}
+.ws-diag-pct {
+  font-family: var(--mono);
+  font-size: 54px;
+  font-weight: 300;
+  line-height: 1;
+  color: var(--cyan-bright);
+  text-shadow: 0 0 24px rgba(80, 200, 255, 0.4);
+  margin-bottom: 14px;
+  font-variant-numeric: tabular-nums;
+}
+.ws-diag-pct b {
+  font-size: 22px;
+  opacity: 0.6;
+  margin-left: 4px;
+}
+.ws-step {
+  margin-top: 12px;
+  font-family: var(--label);
+  font-size: 11px;
+  letter-spacing: 0.2em;
+  color: rgba(180, 235, 255, 0.55);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
