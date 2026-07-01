@@ -1,0 +1,30 @@
+name: Auto Approve
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize]
+
+permissions:
+  pull-requests: write
+  contents: read
+
+concurrency:
+  group: auto-approve-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  auto-approve:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Wait for required checks to pass
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh pr checks "${{ github.event.pull_request.number }}" --watch --required --fail-fast
+
+      - name: Approve pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh pr review "${{ github.event.pull_request.number }}" --approve \
+            --body "Auto-approved: all required checks passed."
