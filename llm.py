@@ -3,6 +3,7 @@ import json
 
 from config import DEFAULT_MODELS, MQTT_BROKER
 from db import _db_get_recent_doorbell_events
+from integrations.finance import _FINANCE_TOOL_NAMES, _execute_finance_tool, _get_finance_tools
 from integrations.ha import _get_ha_tools, _ha_call_service, _ha_configured, _ha_get_states
 from integrations.music.apple_music import _AM_TOOL_NAMES, _apple_music_configured, _execute_apple_music_tool, _get_apple_music_tools
 from integrations.music.spotify import _SPOTIFY_TOOL_NAMES, _execute_spotify_tool, _get_spotify_tools, _spotify_configured
@@ -100,6 +101,8 @@ async def _execute_ha_tool(config: dict, name, args, user_id: str = ""):
             return await _execute_spotify_tool(name, args, user_id, config)
         if name in _AM_TOOL_NAMES:
             return await _execute_apple_music_tool(name, args, user_id)
+        if name in _FINANCE_TOOL_NAMES:
+            return await _execute_finance_tool(name, args, user_id)
         return f"Unknown tool: {name}"
     except Exception as e:
         return f"Error: {e}"
@@ -354,6 +357,7 @@ async def _stream_reply(state: dict, on_text):
         is_kid_safe=state.get("_speaker_kid_safe", False),
         room=state.get("_room", ""),
     )
+    finance_tools = await _get_finance_tools(state.get("user_id", ""), provider)
     ha_tools = (
         _get_ha_tools(config, provider)
         + _get_myq_tools(config, provider)
@@ -365,6 +369,7 @@ async def _stream_reply(state: dict, on_text):
         + _get_phase5_tools(config, provider)
         + _get_vision_tools(provider)
         + _get_snapcast_tools(provider)
+        + finance_tools
     )
     local_msgs = list(state["conversation"])
 

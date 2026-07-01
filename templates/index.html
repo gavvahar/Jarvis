@@ -487,6 +487,21 @@
           </svg>
           TESLA
         </button>
+        <button id="finance-btn" title="Financial Accounts">
+          <svg
+            viewBox="0 0 20 20"
+            width="13"
+            height="13"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.5"
+          >
+            <rect x="2" y="5" width="16" height="11" rx="1.5" />
+            <line x1="2" y1="9" x2="18" y2="9" />
+            <circle cx="14" cy="12.5" r="1.2" />
+          </svg>
+          FINANCE
+        </button>
         <button id="spotify-btn" title="Spotify Music Control">
           <svg
             viewBox="0 0 20 20"
@@ -1016,6 +1031,31 @@
         </div>
       </div>
 
+      <!-- ============ FINANCE SETTINGS PANEL ============ -->
+      <div id="finance-settings" class="setup-hidden">
+        <div id="finance-settings-card" class="setup-card-inner">
+          <div class="setup-ring"></div>
+          <div class="setup-word">SETTINGS</div>
+          <div class="setup-sub">FINANCIAL ACCOUNTS — PLAID</div>
+
+          <p class="tesla-note" id="finance-env-note">
+            Running in <strong id="finance-env-label">sandbox</strong> mode —
+            use Plaid's test institution ("Platypus Bank") with username
+            <code>user_good</code> and password <code>pass_good</code>. No
+            real bank accounts can be linked until production credentials are
+            configured by the admin.
+          </p>
+
+          <div id="finance-connections-list"><em>Loading…</em></div>
+
+          <div style="display: flex; gap: 8px; margin-top: 14px">
+            <button type="button" id="finance-link-btn">+ LINK ACCOUNT</button>
+            <button type="button" id="finance-settings-close">CLOSE</button>
+          </div>
+          <div id="finance-msg"></div>
+        </div>
+      </div>
+
       <!-- ============ SPOTIFY SETTINGS MODAL ============ -->
       <div id="spotify-settings" class="setup-hidden">
         <div id="spotify-settings-card" class="setup-card-inner">
@@ -1392,6 +1432,7 @@
       data-web-components
       async
     ></script>
+    <script src="https://cdn.plaid.com/link/v2/stable/link-initialize.js"></script>
     <script src="/static/v2/vendor/qrcode.min.js"></script>
     <script src="/static/v2/js/sphere.js?v=1"></script>
     <script src="/static/v2/js/hud.js?v=1"></script>
