@@ -62,7 +62,35 @@
   color: #7fffc4;
 }
 
-/* ── Garage button in topbar ──────────────────────────────────────────────── */
+/* ── Vision button in topbar ──────────────────────────────────────────────── */
+#vision-btn {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  background: rgba(127, 233, 255, 0.12);
+  border: 1px solid rgba(127, 233, 255, 0.55);
+  border-radius: 5px;
+  color: rgba(127, 233, 255, 0.95);
+  font-family: "Share Tech Mono", monospace;
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  cursor: pointer;
+  pointer-events: auto;
+  text-shadow: 0 0 8px rgba(127, 233, 255, 0.6);
+  box-shadow: 0 0 6px rgba(127, 233, 255, 0.15);
+  transition:
+    background 0.2s,
+    color 0.2s,
+    box-shadow 0.2s;
+}
+#vision-btn:hover {
+  background: rgba(127, 233, 255, 0.22);
+  color: var(--cyan-bright, #aef1ff);
+  box-shadow: 0 0 12px rgba(127, 233, 255, 0.35);
+}
+
+/* ── Garage button in topbar ───────────────────────────────────────────────── */
 #garage-btn {
   display: flex;
   align-items: center;
