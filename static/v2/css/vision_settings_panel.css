@@ -1,0 +1,193 @@
+/* ── Vision & presence settings panel ─────────────────────────────────────── */
+#vision-settings {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: radial-gradient(
+    ellipse at center,
+    rgba(6, 18, 28, 0.86),
+    rgba(2, 6, 12, 0.97)
+  );
+  backdrop-filter: blur(6px);
+  transition: opacity 0.5s ease;
+}
+#vision-settings.setup-hidden {
+  opacity: 0;
+  pointer-events: none;
+}
+#vision-settings-card {
+  position: relative;
+  width: min(440px, 90vw);
+  max-height: 85vh;
+  overflow-y: auto;
+  padding: 36px 34px 28px;
+  text-align: center;
+  border: 1px solid rgba(127, 233, 255, 0.22);
+  border-radius: 14px;
+  background: linear-gradient(
+    160deg,
+    rgba(10, 26, 40, 0.72),
+    rgba(6, 16, 26, 0.82)
+  );
+  box-shadow:
+    0 0 60px rgba(20, 120, 180, 0.25),
+    inset 0 0 40px rgba(20, 120, 180, 0.06);
+  font-family: "Oxanium", system-ui, sans-serif;
+  color: #cfeffb;
+}
+.vision-section-label {
+  text-align: left;
+  font-family: "Share Tech Mono", monospace;
+  font-size: 9.5px;
+  letter-spacing: 0.26em;
+  color: rgba(127, 233, 255, 0.55);
+}
+#vision-presence-list,
+#vision-camera-list {
+  text-align: left;
+  margin-top: 8px;
+  max-height: 140px;
+  overflow-y: auto;
+}
+#vision-presence-list em,
+#vision-camera-list em {
+  color: rgba(127, 233, 255, 0.55);
+  font-style: normal;
+  font-size: 11.5px;
+}
+.vision-presence-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0;
+  font-family: "Share Tech Mono", monospace;
+  font-size: 11px;
+  color: rgba(127, 233, 255, 0.9);
+}
+.vision-presence-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #7fffc4;
+  box-shadow: 0 0 6px #7fffc4;
+  flex-shrink: 0;
+}
+.vision-cam-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 0;
+  border-top: 1px solid rgba(127, 233, 255, 0.12);
+  font-family: "Share Tech Mono", monospace;
+  font-size: 11px;
+  color: rgba(127, 233, 255, 0.9);
+}
+.vision-cam-row:first-child {
+  border-top: none;
+}
+.vision-cam-badges {
+  display: flex;
+  gap: 6px;
+}
+.vision-badge {
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  background: rgba(255, 154, 122, 0.15);
+  border: 1px solid rgba(255, 154, 122, 0.4);
+  color: #ff9a7a;
+}
+.vision-badge-priv {
+  background: rgba(255, 187, 51, 0.15);
+  border-color: rgba(255, 187, 51, 0.4);
+  color: #ffbb33;
+}
+.vision-cam-del {
+  padding: 3px 8px;
+  background: transparent;
+  border: 1px solid rgba(127, 233, 255, 0.35);
+  border-radius: 5px;
+  color: rgba(127, 233, 255, 0.75);
+  cursor: pointer;
+  font-size: 10px;
+}
+.vision-cam-del:hover {
+  background: rgba(255, 122, 122, 0.15);
+  border-color: rgba(255, 122, 122, 0.5);
+  color: #ff9a9a;
+}
+#vision-add-camera-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  text-align: left;
+  margin-top: 10px;
+}
+#vision-add-camera-form input,
+#vision-add-camera-form select {
+  width: 100%;
+  padding: 11px 13px;
+  box-sizing: border-box;
+  background: rgba(2, 10, 18, 0.8);
+  border: 1px solid rgba(127, 233, 255, 0.28);
+  border-radius: 8px;
+  color: #eafcff;
+  font-family: "Share Tech Mono", monospace;
+  font-size: 13px;
+  outline: none;
+  letter-spacing: 0.04em;
+  transition:
+    border-color 0.2s,
+    box-shadow 0.2s;
+}
+#vision-add-camera-form select {
+  cursor: pointer;
+}
+#vision-add-camera-form input:focus,
+#vision-add-camera-form select:focus {
+  border-color: var(--cyan-bright, #aef1ff);
+  box-shadow: 0 0 14px rgba(127, 233, 255, 0.3);
+}
+#vision-add-cam-btn,
+#vision-enroll-btn,
+#vision-enroll-clear-btn,
+#vision-settings-close {
+  padding: 9px 18px;
+  background: rgba(127, 233, 255, 0.12);
+  border: 1px solid rgba(127, 233, 255, 0.45);
+  border-radius: 5px;
+  color: rgba(127, 233, 255, 0.9);
+  font-family: "Share Tech Mono", monospace;
+  font-size: 10px;
+  letter-spacing: 0.15em;
+  cursor: pointer;
+  margin-top: 8px;
+  transition:
+    background 0.2s,
+    box-shadow 0.2s;
+}
+#vision-add-cam-btn:hover,
+#vision-enroll-btn:hover,
+#vision-enroll-clear-btn:hover,
+#vision-settings-close:hover {
+  background: rgba(127, 233, 255, 0.22);
+  box-shadow: 0 0 10px rgba(127, 233, 255, 0.3);
+}
+#vision-settings-close {
+  display: block;
+  width: 100%;
+  margin-top: 16px;
+}
+#vision-enroll-status {
+  margin-top: 8px;
+  font-family: "Share Tech Mono", monospace;
+  font-size: 10.5px;
+  letter-spacing: 0.06em;
+  color: rgba(127, 233, 255, 0.7);
+  min-height: 14px;
+}
