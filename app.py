@@ -61,6 +61,8 @@ from integrations.music.apple_music import (
     _resolve_apple_music_callback,
 )
 import integrations.phase5 as _phase5_mod
+import integrations.phase4.presence as _presence_mod
+import integrations.phase4.snapcast as _snapcast_mod
 from integrations.phase1.dav import _resolve_dav_collection
 from integrations.phase1.calendar import _calendar_configured
 from integrations.phase1.contacts import _contacts_configured
@@ -807,7 +809,10 @@ async def api_doorbell_event(request: Request):
 @fast_app.post("/api/wake")
 async def api_wake(request: Request):
     user_id = await _require_bearer(request)
-    device_id = ((await request.json()).get("device_id") or "unknown").strip()[:100]
+    body = await request.json()
+    device_id = (body.get("device_id") or "unknown").strip()[:100]
+    room = (body.get("room") or "").strip()[:100]
+    _presence_mod.update_user_room(user_id, device_id, room)
     now = __import__("time").time()
     if now - _last_wake_time.get(user_id, 0) < _WAKE_DEDUP_WINDOW:
         return {"status": "ignored"}
@@ -916,6 +921,15 @@ async def api_doorbell_events(request: Request):
             user_id,
         )
     return [{"id": r["id"], "event_type": r["event_type"], "source": r["source"], "received_at": r["received_at"].isoformat()} for r in rows]
+
+
+# ─── SNAPCAST ROUTES ─────────────────────────────────────────────────────────
+@fast_app.get("/api/snapcast/status")
+async def api_snapcast_status(request: Request):
+    _require_user(request)
+    if not _snapcast_mod._snapcast_configured():
+        raise HTTPException(503, "Snapcast not configured — set SNAPCAST_URL in .env")
+    return JSONResponse({"status": await _snapcast_mod._snapcast_get_status()})
 
 
 # ─── TESLA ROUTES ────────────────────────────────────────────────────────────
@@ -1134,6 +1148,7 @@ async def _process_message(sid: str, text: str, speaker_name: str | None = None,
     state = await _get_user_state(user_id)
     state["_speaker_name"] = speaker_name
     state["_speaker_kid_safe"] = speaker_kid_safe
+    state["_room"] = _presence_mod.get_user_room(user_id)
 
     if not _user_configured(state):
         await sio.emit("need_setup", {}, to=sid)
@@ -1210,6 +1225,12 @@ async def on_connect(sid, environ, auth=None):
 @sio.on("disconnect")
 async def on_disconnect(sid):
     _sid_to_user.pop(sid, None)
+    _presence_mod.deregister_sid(sid)
+
+
+@sio.on("register_room")
+async def on_register_room(sid, data):
+    _presence_mod.register_sid_room(sid, ((data or {}).get("room") or "").strip()[:100])
 
 
 @sio.on("user_message")
