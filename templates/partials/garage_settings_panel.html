@@ -1,39 +1,36 @@
-      <div id="garage-settings" class="setup-hidden">
-        <div id="garage-settings-card" class="setup-card-inner">
-          <div class="setup-ring"></div>
-          <div class="setup-word">SETTINGS</div>
-          <div class="setup-sub">GARAGE DOOR — MYQ</div>
-          <form id="garage-settings-form" autocomplete="off">
-            <label class="setup-label" for="myq-email">MYQ EMAIL</label>
-            <input
-              id="myq-email"
-              type="email"
-              placeholder="you@example.com"
-              autocomplete="off"
-              spellcheck="false"
-            />
-            <label
-              class="setup-label"
-              for="myq-password"
-              style="margin-top: 10px"
-              >MYQ PASSWORD</label
-            >
-            <input
-              id="myq-password"
-              type="password"
-              placeholder="Leave blank to keep existing password"
-              autocomplete="off"
-              spellcheck="false"
-            />
-            <div id="garage-status-row">
-              <span id="garage-status-dot"></span>
-              <span id="garage-status-text">—</span>
-            </div>
-            <div style="display: flex; gap: 8px; margin-top: 14px">
-              <button type="submit" id="garage-save">SAVE</button>
-              <button type="button" id="garage-cancel">CANCEL</button>
-            </div>
-          </form>
-          <div id="garage-msg"></div>
-        </div>
+<div id="garage-settings" class="setup-hidden">
+  <div id="garage-settings-card" class="setup-card-inner">
+    <div class="setup-ring"></div>
+    <div class="setup-word">SETTINGS</div>
+    <div class="setup-sub">GARAGE DOOR — MYQ</div>
+    <form id="garage-settings-form" autocomplete="off">
+      <label class="setup-label" for="myq-email">MYQ EMAIL</label>
+      <input
+        id="myq-email"
+        type="email"
+        placeholder="you@example.com"
+        autocomplete="off"
+        spellcheck="false"
+      />
+      <label class="setup-label" for="myq-password" style="margin-top: 10px"
+        >MYQ PASSWORD</label
+      >
+      <input
+        id="myq-password"
+        type="password"
+        placeholder="Leave blank to keep existing password"
+        autocomplete="off"
+        spellcheck="false"
+      />
+      <div id="garage-status-row">
+        <span id="garage-status-dot"></span>
+        <span id="garage-status-text">—</span>
       </div>
+      <div style="display: flex; gap: 8px; margin-top: 14px">
+        <button type="submit" id="garage-save">SAVE</button>
+        <button type="button" id="garage-cancel">CANCEL</button>
+      </div>
+    </form>
+    <div id="garage-msg"></div>
+  </div>
+</div>
