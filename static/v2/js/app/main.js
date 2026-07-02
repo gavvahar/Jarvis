@@ -6,6 +6,7 @@
    =========================================================== */
 import "./core.js";
 import "./setup.js";
+import "./settings.js";
 import "./ha.js";
 import "./pim.js";
 import "./meeting.js";

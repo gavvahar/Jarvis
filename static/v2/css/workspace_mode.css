@@ -12,7 +12,7 @@ body.mode-workspace .panel {
 }
 /* keep top + bottom bars; let them ease in fresh on entry */
 body.mode-workspace #topbar {
-  animation: barIn 0.6s ease-out both 0.25s;
+  animation: barInTop 0.6s ease-out both 0.25s;
 }
 body.mode-workspace #bottombar {
   animation: barIn 0.6s ease-out both 0.38s;

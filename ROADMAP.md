@@ -72,7 +72,7 @@ Deploy Jarvis on dedicated always-on hardware around the home.
 - [x] **Multi-room audio** — Snapcast JSON-RPC integration (`integrations/phase4/snapcast.py`); LLM can control per-room volume, mute, and stream routing; add Snapcast via `compose.yml` comment block
 - [x] **Room presence** — `ROOM` env var in daemon sends room with each wake event; `integrations/phase4/presence.py` tracks device→room and routes replies to the right socket session; room injected into LLM system prompt
 - [x] **LED ring feedback** — NeoPixel/WS2812 LED ring driver in `wake_daemon.py`; set `LED_TYPE=neopixel`, `LED_PIN`, `LED_COUNT`, `LED_BRIGHTNESS`; flashes blue on wake detection
-- [x] **Offline-first mode** — Ollama service added to `compose.yml` as `--profile offline`; `docker compose --profile offline up -d` starts Ollama alongside Jarvis; set provider=openai_compatible, base_url=http://ollama:11434/v1
+- [x] **Offline-first mode** — Ollama service added to `compose.yml` as `--profile offline`; `docker compose --profile offline up -d` starts Ollama alongside Jarvis; set provider=openai_compatible, base_url=`http://ollama:11434/v1`
 
 ---
 
@@ -192,12 +192,20 @@ Give Jarvis full visibility and control over money — balances, spending, budge
 
 ---
 
+## Known Issues
+
+- [x] **Settings panel closes entirely when switching tabs** — root cause: browser runs the microtask checkpoint between capture and bubble phases, so the `MutationObserver` in `settings.js` fired between them and saw "no pane open" before the new pane was shown. Fixed by wrapping the auto-close check in `setTimeout(0)` so it defers to after all event listeners complete; all `?v=` cache strings bumped to `?v=2`.
+
+---
+
 ## GitHub Actions & CI/CD
 
 Automated workflows to keep the repo healthy and branches in sync.
 
 - [x] **Auto-merge staging → main** — nightly cron merges staging into main if clean
 - [x] **Cascade merge on push** — when `staging` or `main` receives a push, automatically attempt to merge it into every other open branch; on conflict, open a detailed issue describing the conflicting files and assign it to whoever made the last commit on that branch
+- [ ] **Playwright browser checks in `testing-smoke.yml`** — the smoke test currently only curls `/login` and `/` for non-5xx status; add a headless Playwright pass (with a seeded test account/session) that logs in and clicks through core UI (Settings panel tabs, chat send) so a broken button/JS bundle fails CI, not just a broken route
+- [ ] **Self-hosted GitHub Actions runner** — register the home server (or a dedicated Pi) as a self-hosted runner so CI jobs get persistent Docker layer cache (faster builds), can test ARM-specific daemon packages (onnxruntime, sounddevice, rpi_ws281x) on real hardware, and aren't subject to GitHub's free-tier minute limits. Candidate jobs to move first: `docker-build` (biggest cache win), `testing-smoke` (runs against real stack). Keep `android-build` and `actionlint` on `ubuntu-latest` for clean environments. Add runner labels (`homelab`, `arm64`) so jobs can target the right host. Docs: https://docs.github.com/en/actions/concepts/runners/self-hosted-runners
 
 ---
 
