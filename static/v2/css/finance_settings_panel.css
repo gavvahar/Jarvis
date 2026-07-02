@@ -1,40 +1,9 @@
 /* ── Finance settings panel ───────────────────────────────────────────────── */
 #finance-settings {
-  position: fixed;
-  inset: 0;
-  z-index: 200;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: radial-gradient(
-    ellipse at center,
-    rgba(6, 18, 28, 0.86),
-    rgba(2, 6, 12, 0.97)
-  );
-  backdrop-filter: blur(6px);
-  transition: opacity 0.5s ease;
+  display: block;
 }
 #finance-settings.setup-hidden {
-  opacity: 0;
-  pointer-events: none;
-}
-#finance-settings-card {
-  position: relative;
-  width: min(440px, 90vw);
-  padding: 36px 34px 28px;
-  text-align: center;
-  border: 1px solid rgba(127, 233, 255, 0.22);
-  border-radius: 14px;
-  background: linear-gradient(
-    160deg,
-    rgba(10, 26, 40, 0.72),
-    rgba(6, 16, 26, 0.82)
-  );
-  box-shadow:
-    0 0 60px rgba(20, 120, 180, 0.25),
-    inset 0 0 40px rgba(20, 120, 180, 0.06);
-  font-family: "Oxanium", system-ui, sans-serif;
-  color: #cfeffb;
+  display: none;
 }
 #finance-settings-card button {
   padding: 9px 18px;
