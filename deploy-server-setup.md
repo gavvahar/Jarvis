@@ -34,6 +34,7 @@ sudo systemctl restart actions.runner.*
 ```
 
 Verify:
+
 ```bash
 sudo -u jarvis-ci docker ps
 ```
@@ -75,6 +76,7 @@ Then add a step:
 ```
 
 Fill in all values from [`.env.example`](.env.example) — at minimum:
+
 - `SECRET_KEY` — long random string (`openssl rand -hex 32`)
 - `ANTHROPIC_API_KEY` or `OPENAI_API_KEY`
 - `DATABASE_URL` and `POSTGRES_PASSWORD`
