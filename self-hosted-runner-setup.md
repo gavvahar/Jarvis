@@ -85,16 +85,16 @@ sudo ./svc.sh start
 
 ## Job routing (after both runners are online)
 
-| Job | Runner |
-|---|---|
-| `actionlint` | `ubuntu-latest` |
-| `android-build` | `ubuntu-latest` |
-| `pip-audit` | `ubuntu-latest` |
-| `quality` (tox) | `ubuntu-latest` |
-| `docker-build` | `[self-hosted, homelab]` |
+| Job                | Runner                   |
+| ------------------ | ------------------------ |
+| `actionlint`       | `ubuntu-latest`          |
+| `android-build`    | `ubuntu-latest`          |
+| `pip-audit`        | `ubuntu-latest`          |
+| `quality` (tox)    | `ubuntu-latest`          |
+| `docker-build`     | `[self-hosted, homelab]` |
 | `compose-validate` | `[self-hosted, homelab]` |
-| `smoke-test` | `[self-hosted, homelab]` |
-| `daemon-test` | `[self-hosted, arm64]` |
+| `smoke-test`       | `[self-hosted, homelab]` |
+| `daemon-test`      | `[self-hosted, arm64]`   |
 
 ---
 
