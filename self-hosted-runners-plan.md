@@ -25,6 +25,7 @@ Private repo → no fork-based attack risk (GitHub's main security concern for s
 | `compose-validate`    | `[self-hosted, homelab]` | Reuses compose on host     |
 | `smoke-test`          | `[self-hosted, homelab]` | Real stack, real network   |
 | `daemon-test` _(new)_ | `[self-hosted, arm64]`   | ARM package compatibility  |
+| `deploy` _(new)_      | `[self-hosted, homelab]` | Deploys to production on push to `main` |
 
 ## Implementation steps
 
