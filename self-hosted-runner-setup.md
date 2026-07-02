@@ -104,3 +104,17 @@ sudo ./svc.sh start
 - Token from Step 2 expires after **1 hour** — generate it right before running `config.sh`.
 - The `jarvis-ci` user needs to be in the `docker` group on the home server so `docker build` works without sudo.
 - Keep `android-build`, `actionlint`, `pip-audit`, and `quality` on `ubuntu-latest` — they need clean throwaway environments.
+
+## Playwright prereq (for when `testing-smoke.yml` adds browser checks)
+
+`smoke-test` stays on `[self-hosted, homelab]` even after Playwright is added — the smoke test already needs the real stack and `.env`, and keeping the browser pre-installed avoids the ~150 MB Chromium download that `ubuntu-latest` would incur every run.
+
+Run once on the home server as `jarvis-ci`:
+
+```bash
+pip3 install playwright
+playwright install chromium
+playwright install-deps chromium
+```
+
+After that, Playwright CI steps work with no per-run download overhead.
