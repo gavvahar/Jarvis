@@ -194,7 +194,7 @@ Give Jarvis full visibility and control over money — balances, spending, budge
 
 ## Known Issues
 
-- [ ] **Settings panel closes entirely when switching tabs** — after the topbar's 10 integration buttons (HA, Agenda, Messages, Doorbell, Vision, Garage, Tesla, Finance, Spotify, Apple Music) were consolidated into one SETTINGS button with tabs, switching from one open tab to another closes the whole dialog instead of swapping panes. Isolated logic testing (jsdom) shows the capture-phase mutual-exclusion + `MutationObserver` auto-collapse timing is _not_ the cause in isolation — needs live-browser reproduction (devtools console + DOM inspection) to pin down; see `settings-panel-tabs-bug.md` in project memory for what's been ruled out.
+- [x] **Settings panel closes entirely when switching tabs** — root cause: browser runs the microtask checkpoint between capture and bubble phases, so the `MutationObserver` in `settings.js` fired between them and saw "no pane open" before the new pane was shown. Fixed by wrapping the auto-close check in `setTimeout(0)` so it defers to after all event listeners complete; all `?v=` cache strings bumped to `?v=2`.
 
 ---
 

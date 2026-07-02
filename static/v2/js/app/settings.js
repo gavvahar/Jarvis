@@ -76,17 +76,25 @@ if (settingsTabs) {
 
 // Each tab's own close/cancel/save-success logic only knows how to hide
 // itself, not this shared shell. Watch for that and collapse the shell
-// too once nothing is left open — but not mid tab-switch, since the
-// newly-opened pane's class change lands in the same batch before this
-// callback runs.
+// too once nothing is left open.
+//
+// The check is deferred to a setTimeout(0) macrotask so it runs AFTER
+// both the capture-phase and bubble-phase event listeners have fired.
+// Without the defer, the browser's microtask checkpoint fires the
+// observer between the two phases — at that moment the old pane is
+// already hidden but the new pane hasn't been shown yet, so
+// anyPaneOpen() incorrectly returns false and collapses the shell
+// mid-switch.
 const paneObserver = new MutationObserver(() => {
-  if (
-    settingsPanel &&
-    !settingsPanel.classList.contains("setup-hidden") &&
-    !anyPaneOpen()
-  ) {
-    settingsPanel.classList.add("setup-hidden");
-  }
+  setTimeout(() => {
+    if (
+      settingsPanel &&
+      !settingsPanel.classList.contains("setup-hidden") &&
+      !anyPaneOpen()
+    ) {
+      settingsPanel.classList.add("setup-hidden");
+    }
+  }, 0);
 });
 PANES.forEach(({ id }) => {
   const el = $(id);

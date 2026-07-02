@@ -1,6 +1,6 @@
 ---
 name: settings-panel-tabs-bug
-description: "Known bug — switching tabs in the new consolidated Settings panel closes the whole dialog instead of swapping panes. Root cause not yet found; several things ruled out."
+description: "RESOLVED — root cause was browser microtask timing; fixed with setTimeout(0) defer in settings.js MutationObserver."
 metadata:
   type: project
   originSessionId: current
