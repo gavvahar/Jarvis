@@ -15,16 +15,16 @@ Private repo → no fork-based attack risk (GitHub's main security concern for s
 
 ## Target job routing (final state)
 
-| Job                   | Runner                   | Reason                     |
-| --------------------- | ------------------------ | -------------------------- |
-| `actionlint`          | `ubuntu-latest`          | Needs clean env, very fast |
-| `android-build`       | `ubuntu-latest`          | Needs fresh Android SDK    |
-| `pip-audit`           | `ubuntu-latest`          | Security scan, isolated    |
-| `quality` (tox)       | `ubuntu-latest`          | Clean Python env preferred |
-| `docker-build`        | `[self-hosted, homelab]` | Layer cache win            |
-| `compose-validate`    | `[self-hosted, homelab]` | Reuses compose on host     |
-| `smoke-test`          | `[self-hosted, homelab]` | Real stack, real network   |
-| `daemon-test` _(new)_ | `[self-hosted, arm64]`   | ARM package compatibility  |
+| Job                   | Runner                   | Reason                                  |
+| --------------------- | ------------------------ | --------------------------------------- |
+| `actionlint`          | `ubuntu-latest`          | Needs clean env, very fast              |
+| `android-build`       | `ubuntu-latest`          | Needs fresh Android SDK                 |
+| `pip-audit`           | `ubuntu-latest`          | Security scan, isolated                 |
+| `quality` (tox)       | `ubuntu-latest`          | Clean Python env preferred              |
+| `docker-build`        | `[self-hosted, homelab]` | Layer cache win                         |
+| `compose-validate`    | `[self-hosted, homelab]` | Reuses compose on host                  |
+| `smoke-test`          | `[self-hosted, homelab]` | Real stack, real network                |
+| `daemon-test` _(new)_ | `[self-hosted, arm64]`   | ARM package compatibility               |
 | `deploy` _(new)_      | `[self-hosted, homelab]` | Deploys to production on push to `main` |
 
 ## Implementation steps
