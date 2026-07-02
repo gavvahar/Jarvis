@@ -445,6 +445,9 @@ The frontend (`templates/`, `static/v2/`) is split into one file per feature
 panel — see [CONTRIBUTING.md](CONTRIBUTING.md#frontend-structure) for the
 layout before adding a new one.
 
+Pushes to `main` auto-deploy to your server — see [DEPLOYMENT.md](DEPLOYMENT.md)
+to set it up.
+
 ## TROUBLESHOOTING
 
 - **Redirected to login but Authentik shows an error** — check that the redirect
