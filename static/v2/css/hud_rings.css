@@ -1,0 +1,56 @@
+/* ============ HUD RINGS ============ */
+#hud {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+#hud svg {
+  display: block;
+  overflow: visible;
+  width: 90vmin;
+  height: 90vmin;
+}
+
+.r-stroke {
+  fill: none;
+  stroke: var(--line);
+  stroke-width: 1;
+}
+.r-faint {
+  fill: none;
+  stroke: var(--line-faint);
+  stroke-width: 1;
+}
+.r-amber {
+  fill: none;
+  stroke: rgba(255, 182, 72, 0.7);
+  stroke-width: 1.4;
+}
+.tick {
+  stroke: var(--line);
+  stroke-width: 1;
+}
+.tick-faint {
+  stroke: var(--line-faint);
+  stroke-width: 1;
+}
+.ring-label {
+  fill: var(--cyan);
+  font-family: var(--label);
+  letter-spacing: 0.18em;
+}
+
+@keyframes scanpulse {
+  0%,
+  100% {
+    opacity: 0.2;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+.scan {
+  animation: scanpulse 2.4s ease-in-out infinite;
+}

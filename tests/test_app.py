@@ -37,6 +37,7 @@ from integrations.shared_lists import _execute_shared_list_tool
 from integrations.tesla import _get_tesla_tools
 from llm import _build_system_prompt
 from integrations.tesla import _c_to_f
+from integrations.finance import _execute_finance_tool, _finance_configured, _get_finance_tools, _normalize_account, _normalize_transaction
 
 # ── Pure function tests ────────────────────────────────────────────────────────
 
@@ -1066,3 +1067,146 @@ class TestExecuteDeviceAlertToolMocked:
     def test_unknown_action(self):
         result = asyncio.run(_execute_device_alert_tool("u1", {"action": "whatever"}))
         assert "Unknown" in result
+
+
+class TestFinanceConfigured:
+    def test_no_items_returns_false(self):
+        with patch("integrations.finance._db_list_plaid_items", new=AsyncMock(return_value=[])):
+            assert asyncio.run(_finance_configured("user1")) is False
+
+    def test_with_items_returns_true(self):
+        with patch("integrations.finance._db_list_plaid_items", new=AsyncMock(return_value=[{"id": 1}])):
+            assert asyncio.run(_finance_configured("user1")) is True
+
+
+class TestGetFinanceTools:
+    def test_empty_when_not_configured(self):
+        with patch("integrations.finance._finance_configured", new=AsyncMock(return_value=False)):
+            assert asyncio.run(_get_finance_tools("user1", "anthropic")) == []
+
+    def test_anthropic_tools_when_configured(self):
+        with patch("integrations.finance._finance_configured", new=AsyncMock(return_value=True)):
+            tools = asyncio.run(_get_finance_tools("user1", "anthropic"))
+            names = [t["name"] for t in tools]
+            assert "get_account_balances" in names
+            assert "get_recent_transactions" in names
+            assert "get_spending_by_category" in names
+            assert "set_transaction_category" in names
+
+    def test_openai_tools_when_configured(self):
+        with patch("integrations.finance._finance_configured", new=AsyncMock(return_value=True)):
+            tools = asyncio.run(_get_finance_tools("user1", "openai"))
+            names = [t["function"]["name"] for t in tools]
+            assert "get_account_balances" in names
+
+
+class TestExecuteFinanceTool:
+    def test_no_user_id_returns_error(self):
+        result = asyncio.run(_execute_finance_tool("get_account_balances", {}, ""))
+        assert "No user context" in result
+
+    def test_unknown_tool_name(self):
+        result = asyncio.run(_execute_finance_tool("bogus_tool", {}, "user1"))
+        assert "Unknown finance tool" in result
+
+    def test_get_account_balances_formats_output(self):
+        fake_accounts = [{"name": "Checking", "mask": "1234", "balance_current": 100.5}]
+        with patch("integrations.finance._db_list_plaid_accounts", new=AsyncMock(return_value=fake_accounts)):
+            result = asyncio.run(_execute_finance_tool("get_account_balances", {}, "user1"))
+        assert "Checking" in result and "100.50" in result
+
+    def test_get_account_balances_no_accounts(self):
+        with patch("integrations.finance._db_list_plaid_accounts", new=AsyncMock(return_value=[])):
+            result = asyncio.run(_execute_finance_tool("get_account_balances", {}, "user1"))
+        assert "No linked bank accounts" in result
+
+    def test_get_recent_transactions_formats_output(self):
+        fake_txns = [
+            {
+                "date": datetime.date(2026, 6, 28),
+                "merchant_name": "Trader Joe's",
+                "name": "TJ PURCHASE",
+                "category": "FOOD_AND_DRINK",
+                "personal_finance_category": "FOOD_AND_DRINK_GROCERIES",
+                "category_override": None,
+                "amount": 42.10,
+                "pending": False,
+            }
+        ]
+        with patch("integrations.finance._db_get_recent_transactions", new=AsyncMock(return_value=fake_txns)):
+            result = asyncio.run(_execute_finance_tool("get_recent_transactions", {}, "user1"))
+        assert "Trader Joe's" in result and "42.10" in result
+
+    def test_get_spending_by_category_formats_output(self):
+        fake_rows = [{"category": "Groceries", "total": 340.12}]
+        with patch("integrations.finance._db_get_spending_by_category", new=AsyncMock(return_value=fake_rows)):
+            result = asyncio.run(_execute_finance_tool("get_spending_by_category", {}, "user1"))
+        assert "Groceries" in result and "340.12" in result
+
+    def test_set_transaction_category_no_match(self):
+        with patch("integrations.finance._db_find_transaction_by_merchant", new=AsyncMock(return_value=None)):
+            result = asyncio.run(_execute_finance_tool("set_transaction_category", {"merchant": "Nowhere", "category": "Misc"}, "user1"))
+        assert "No transaction found" in result
+
+    def test_set_transaction_category_updates(self):
+        fake_txn = {"id": 5, "amount": 12.5, "date": datetime.date(2026, 6, 20), "merchant_name": "Cafe", "name": "CAFE PURCHASE"}
+        with (
+            patch("integrations.finance._db_find_transaction_by_merchant", new=AsyncMock(return_value=fake_txn)),
+            patch("integrations.finance._db_set_transaction_category_override", new=AsyncMock(return_value=True)) as mock_set,
+        ):
+            result = asyncio.run(_execute_finance_tool("set_transaction_category", {"merchant": "Cafe", "category": "Dining"}, "user1"))
+        mock_set.assert_awaited_once_with("user1", 5, "Dining")
+        assert "Cafe" in result and "Dining" in result
+
+    def test_missing_merchant_or_category(self):
+        result = asyncio.run(_execute_finance_tool("set_transaction_category", {"merchant": "", "category": "Dining"}, "user1"))
+        assert "required" in result
+
+
+class TestNormalizeTransaction:
+    def test_uses_personal_finance_category(self):
+        t = {
+            "account_id": "a1",
+            "transaction_id": "t1",
+            "amount": 10.0,
+            "iso_currency_code": "USD",
+            "date": "2026-06-28",
+            "merchant_name": "Store",
+            "name": "STORE PURCHASE",
+            "personal_finance_category": {"primary": "SHOPS", "detailed": "SHOPS_GENERAL"},
+            "category": ["Shops"],
+            "pending": False,
+        }
+        result = _normalize_transaction(t)
+        assert result["category"] == "SHOPS"
+        assert result["personal_finance_category"] == "SHOPS_GENERAL"
+        assert result["date"] == datetime.date(2026, 6, 28)
+
+    def test_falls_back_to_legacy_category(self):
+        t = {
+            "account_id": "a1",
+            "transaction_id": "t2",
+            "amount": 5.0,
+            "date": "2026-06-01",
+            "name": "MISC",
+            "category": ["Legacy Category"],
+        }
+        result = _normalize_transaction(t)
+        assert result["category"] == "Legacy Category"
+        assert result["personal_finance_category"] == ""
+
+
+class TestNormalizeAccount:
+    def test_extracts_balances(self):
+        a = {
+            "account_id": "acc1",
+            "name": "Checking",
+            "mask": "1234",
+            "type": "depository",
+            "subtype": "checking",
+            "balances": {"current": 100.0, "available": 90.0, "limit": None, "iso_currency_code": "USD"},
+        }
+        result = _normalize_account(a)
+        assert result["balance_current"] == 100.0
+        assert result["balance_available"] == 90.0
+        assert result["iso_currency"] == "USD"
