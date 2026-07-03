@@ -10,7 +10,9 @@ test("root page loads without server error", async ({ page }) => {
   expect(res.status()).toBeLessThan(500);
 });
 
-test("settings panel tabs switch without closing the panel", async ({ page }) => {
+test("settings panel tabs switch without closing the panel", async ({
+  page,
+}) => {
   await page.goto("/");
 
   // Wait for the main UI to be present
@@ -24,13 +26,19 @@ test("settings panel tabs switch without closing the panel", async ({ page }) =>
 
   // Click the first tab (HA settings)
   await page.locator("#ha-settings-btn").click();
-  await expect(panel).not.toHaveClass(/setup-hidden/, { message: "panel closed after clicking HA tab" });
+  await expect(panel).not.toHaveClass(/setup-hidden/, {
+    message: "panel closed after clicking HA tab",
+  });
 
   // Switch to a second tab (vision)
   await page.locator("#vision-btn").click();
-  await expect(panel).not.toHaveClass(/setup-hidden/, { message: "panel closed when switching to vision tab" });
+  await expect(panel).not.toHaveClass(/setup-hidden/, {
+    message: "panel closed when switching to vision tab",
+  });
 
   // Switch to a third tab (garage)
   await page.locator("#garage-btn").click();
-  await expect(panel).not.toHaveClass(/setup-hidden/, { message: "panel closed when switching to garage tab" });
+  await expect(panel).not.toHaveClass(/setup-hidden/, {
+    message: "panel closed when switching to garage tab",
+  });
 });
