@@ -1,7 +1,4 @@
-import asyncio
-import datetime
-
-import httpx
+import asyncio, datetime, httpx
 from fastapi import HTTPException
 
 from config import VISION_AWAY_TIMEOUT, VISION_FACE_THRESHOLD, VISION_POLL_INTERVAL

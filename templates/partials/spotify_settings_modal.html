@@ -1,0 +1,26 @@
+<div id="spotify-settings" class="settings-tab-pane setup-hidden">
+  <div id="spotify-settings-card" class="setup-card-inner">
+    <div class="setup-sub">SPOTIFY MUSIC</div>
+    <p class="spotify-note">
+      Connect your Spotify account to control music via voice. Requires
+      <code>SPOTIFY_CLIENT_ID</code> and <code>SPOTIFY_CLIENT_SECRET</code> in
+      your server's <code>.env</code>. Register
+      <code id="spotify-redirect-uri"></code>
+      as a redirect URI in your Spotify app dashboard.
+    </p>
+    <div id="spotify-status-row" style="margin-top: 12px">
+      <span id="spotify-dot" class="disconnected"></span>
+      <span id="spotify-text">NOT CONNECTED</span>
+    </div>
+    <div style="display: flex; gap: 8px; margin-top: 14px">
+      <a id="spotify-auth-link" class="setup-link-btn" href="/api/spotify/auth"
+        >CONNECT WITH SPOTIFY</a
+      >
+      <button type="button" id="spotify-disconnect-btn">DISCONNECT</button>
+    </div>
+    <div id="spotify-msg"></div>
+    <div style="margin-top: 20px">
+      <button type="button" id="spotify-settings-close">CLOSE</button>
+    </div>
+  </div>
+</div>

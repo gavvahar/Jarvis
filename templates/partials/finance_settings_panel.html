@@ -1,0 +1,21 @@
+<div id="finance-settings" class="settings-tab-pane setup-hidden">
+  <div id="finance-settings-card" class="setup-card-inner">
+    <div class="setup-sub">FINANCIAL ACCOUNTS — PLAID</div>
+
+    <p class="tesla-note" id="finance-env-note">
+      Running in <strong id="finance-env-label">sandbox</strong> mode — use
+      Plaid's test institution ("Platypus Bank") with username
+      <code>user_good</code> and password <code>pass_good</code>. No real bank
+      accounts can be linked until production credentials are configured by the
+      admin.
+    </p>
+
+    <div id="finance-connections-list"><em>Loading…</em></div>
+
+    <div style="display: flex; gap: 8px; margin-top: 14px">
+      <button type="button" id="finance-link-btn">+ LINK ACCOUNT</button>
+      <button type="button" id="finance-settings-close">CLOSE</button>
+    </div>
+    <div id="finance-msg"></div>
+  </div>
+</div>

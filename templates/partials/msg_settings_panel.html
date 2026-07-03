@@ -1,0 +1,193 @@
+<div id="msg-settings" class="settings-tab-pane">
+  <div id="msg-settings-card">
+    <h2>PHONE MESSAGES — WEBHOOK</h2>
+    <p class="msg-settings-note">
+      Forward notifications from your phone to Jarvis using this webhook. Jarvis
+      will classify each message and alert you to anything important.
+    </p>
+    <div class="msg-field-label">WEBHOOK URL</div>
+    <div class="msg-field-row">
+      <input id="msg-webhook-url" type="text" readonly />
+      <button id="msg-copy-url">COPY</button>
+    </div>
+    <div class="msg-field-label">BEARER TOKEN</div>
+    <div class="msg-field-row">
+      <input id="msg-webhook-token" type="text" readonly />
+      <button id="msg-copy-token">COPY</button>
+      <button id="msg-regen-token">NEW</button>
+    </div>
+
+    <div class="msg-tab-bar">
+      <button class="msg-tab msg-tab-active" data-tab="android">ANDROID</button>
+      <button class="msg-tab" data-tab="ios">iOS</button>
+    </div>
+
+    <div class="msg-tab-content" id="msg-tab-android">
+      <p class="msg-settings-note">
+        Choose how you'd like to forward messages to Jarvis:
+      </p>
+      <div class="msg-tab-bar msg-android-tab-bar">
+        <button class="msg-tab msg-tab-active" data-atab="apk">
+          JARVIS APP
+        </button>
+        <button class="msg-tab" data-atab="macrodroid">MACRODROID</button>
+      </div>
+
+      <!-- APK download option -->
+      <div class="msg-android-content" id="msg-atab-apk">
+        <p class="msg-settings-note">
+          The easiest option — download and install the Jarvis companion app
+          directly on your phone. No account or sign-in needed.
+        </p>
+        <div class="msg-field-label">DOWNLOAD LINK</div>
+        <div class="msg-field-row">
+          <input id="msg-apk-url" type="text" readonly />
+          <button id="msg-copy-apk">COPY</button>
+        </div>
+        <ol class="msg-ios-steps">
+          <li>
+            On your Android phone, open the
+            <strong>Download Link</strong> above in a browser and install the
+            APK
+            <ul>
+              <li>
+                If prompted, allow installs from unknown sources in your phone's
+                settings
+              </li>
+            </ul>
+          </li>
+          <li>
+            Open the app and paste the <strong>Webhook URL</strong> and
+            <strong>Bearer Token</strong> from above
+          </li>
+          <li>
+            Tap <strong>Grant Notification Access</strong>, find
+            <em>Jarvis Messages</em> in the list, and enable it
+          </li>
+          <li>
+            Done — Jarvis will now receive your messages silently in the
+            background
+          </li>
+        </ol>
+        <p class="msg-settings-note">
+          Works with Google Messages (RCS + SMS), Signal, WhatsApp, Telegram,
+          and Messenger.
+        </p>
+      </div>
+
+      <!-- Macrodroid option -->
+      <div class="msg-android-content msg-tab-hidden" id="msg-atab-macrodroid">
+        <p class="msg-settings-note">
+          Use <strong>Macrodroid</strong> (free on the Play Store) to forward
+          notifications to Jarvis — no APK download needed.
+        </p>
+        <ol class="msg-ios-steps">
+          <li>
+            Install <strong>Macrodroid</strong> from the Google Play Store and
+            open it
+          </li>
+          <li>
+            Tap <strong>+</strong> to create a new macro, give it a name like
+            <em>Jarvis Messages</em>
+          </li>
+          <li>
+            Under <strong>Triggers</strong> → tap <strong>Add Trigger</strong> →
+            <strong>Notification</strong> →
+            <strong>Notification Received</strong>
+            <ul>
+              <li>
+                Select the apps you want to forward (e.g. Google Messages,
+                WhatsApp, Signal)
+              </li>
+            </ul>
+          </li>
+          <li>
+            Under <strong>Actions</strong> → tap <strong>Add Action</strong> →
+            <strong>Connectivity</strong> →
+            <strong>HTTP Request</strong>
+            <ul>
+              <li><strong>URL</strong> → paste your Webhook URL from above</li>
+              <li><strong>Method</strong> → POST</li>
+              <li>
+                <strong>Headers</strong> → add: <code>Authorization</code>:
+                <code>Bearer YOUR_TOKEN</code>
+              </li>
+              <li>
+                <strong>Content Type</strong> →
+                <code>application/json</code>
+              </li>
+              <li>
+                <strong>Body</strong> → paste exactly:
+                <code
+                  >{"sender": "{notification_title}", "text":
+                  "{notification_text}"}</code
+                >
+              </li>
+            </ul>
+          </li>
+          <li>
+            Tap <strong>OK</strong> → <strong>Save</strong> → make sure the
+            macro is toggled <strong>on</strong>
+          </li>
+          <li>
+            Grant Macrodroid notification access when prompted — this is
+            required for it to read your messages
+          </li>
+        </ol>
+      </div>
+    </div>
+
+    <div class="msg-tab-content msg-tab-hidden" id="msg-tab-ios">
+      <p class="msg-settings-note">
+        Use the built-in <strong>Shortcuts</strong> app to forward message
+        notifications to Jarvis — no extra app needed. Works with SMS and
+        iMessage.
+      </p>
+      <ol class="msg-ios-steps">
+        <li>
+          Open <strong>Shortcuts</strong> → tap <strong>Automation</strong> at
+          the bottom → tap <strong>+</strong> → <strong>New Automation</strong>
+        </li>
+        <li>
+          Scroll down and tap <strong>App</strong> → select
+          <strong>Messages</strong> → enable
+          <strong>Receives a Notification</strong> → tap
+          <strong>Next</strong>
+        </li>
+        <li>
+          Tap <strong>Add Action</strong> and search for
+          <strong>Get Contents of URL</strong> — add it
+        </li>
+        <li>
+          Configure the action:
+          <ul>
+            <li><strong>URL</strong> → paste your Webhook URL from above</li>
+            <li><strong>Method</strong> → POST</li>
+            <li>
+              Tap <strong>Headers</strong> → add key <code>Authorization</code>,
+              value <code>Bearer YOUR_TOKEN</code> (paste your token from above)
+            </li>
+            <li><strong>Request Body</strong> → JSON</li>
+            <li>
+              Add field <code>sender</code> → tap the value field → choose
+              <em>Shortcut Input</em> →
+              <em>Notification Title</em>
+            </li>
+            <li>
+              Add field <code>text</code> → tap the value field → choose
+              <em>Shortcut Input</em> →
+              <em>Notification Content</em>
+            </li>
+          </ul>
+        </li>
+        <li>
+          Tap <strong>Next</strong> → turn off
+          <strong>Ask Before Running</strong> → tap
+          <strong>Done</strong>
+        </li>
+      </ol>
+    </div>
+
+    <button id="msg-settings-close">CLOSE</button>
+  </div>
+</div>

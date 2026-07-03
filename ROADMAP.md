@@ -10,12 +10,12 @@
 | 2        | Phase 7 — Multi-User & Household               | Complete    |
 | 3        | Phase 1 — Foundation & Parity                  | Complete    |
 | 4        | GitHub Actions & CI/CD                         | Complete    |
-| 5        | app.py Modularisation                          | In Progress |
-| 6        | Phase 4 — Smart Speaker & Local Hardware       | Planned     |
+| 5        | app.py Modularisation                          | Complete    |
+| 6        | Phase 4 — Smart Speaker & Local Hardware       | Complete    |
 | 7        | Phase 5 — Deeper Smart Home                    | In Progress |
 | 8        | Phase 6 — Proactive & Ambient Intelligence     | Planned     |
 | 9        | Phase 8 — Developer & Extensibility Platform   | In Progress |
-| 10       | Phase 9 — Financial Intelligence               | Planned     |
+| 10       | Phase 9 — Financial Intelligence               | In Progress |
 | 11       | Phase 10 — Computer Vision & Spatial Awareness | Complete    |
 | 12       | Phase 11 — Accessibility & Hearing Assistance  | Planned     |
 | 13       | Phase 12 — Mental Wellness & Social Assistance | Planned     |
@@ -67,12 +67,12 @@ Replace native iOS/Android apps with a Progressive Web App to avoid app store co
 
 Deploy Jarvis on dedicated always-on hardware around the home.
 
-- [ ] **Raspberry Pi image** — single-command flash; runs Whisper + wake word + full Jarvis stack
-- [ ] **Speaker array support** — USB audio, ReSpeaker HAT, matrix voice
-- [ ] **Multi-room audio** — Snapcast integration for synchronized playback across rooms
-- [ ] **Room presence** — use Bluetooth/UWB beacons or Home Assistant presence to route responses to nearest device
-- [ ] **LED ring feedback** — NeoPixel / WS2812 ring shows listening, thinking, speaking states
-- [ ] **Offline-first mode** — full local stack: Whisper large + local LLM (Ollama) + no cloud required
+- [x] **Raspberry Pi image** — `make pi-setup` (or `sudo bash scripts/setup-pi.sh`) installs daemon + systemd service on any Pi; runs Whisper + wake word
+- [x] **Speaker array support** — `AUDIO_DEVICE` env var in `wake_daemon.py` selects mic by name or index; `python3 -c "import sounddevice; print(sounddevice.query_devices())"` to list devices
+- [x] **Multi-room audio** — Snapcast JSON-RPC integration (`integrations/phase4/snapcast.py`); LLM can control per-room volume, mute, and stream routing; add Snapcast via `compose.yml` comment block
+- [x] **Room presence** — `ROOM` env var in daemon sends room with each wake event; `integrations/phase4/presence.py` tracks device→room and routes replies to the right socket session; room injected into LLM system prompt
+- [x] **LED ring feedback** — NeoPixel/WS2812 LED ring driver in `wake_daemon.py`; set `LED_TYPE=neopixel`, `LED_PIN`, `LED_COUNT`, `LED_BRIGHTNESS`; flashes blue on wake detection
+- [x] **Offline-first mode** — Ollama service added to `compose.yml` as `--profile offline`; `docker compose --profile offline up -d` starts Ollama alongside Jarvis; set provider=openai_compatible, base_url=`http://ollama:11434/v1`
 
 ---
 
@@ -179,9 +179,9 @@ Give Jarvis eyes — know who is home, where they are, what they're doing, and f
 
 Give Jarvis full visibility and control over money — balances, spending, budgets, goals, and payments.
 
-- [ ] **Account aggregation** — Plaid Link for banks and credit cards; direct bank APIs (Chase, Amex, etc.) where available; unified account view in DB
-- [ ] **Balance & transaction lookup** — "what's my Chase balance?", "show my last 10 transactions" answered by voice
-- [ ] **Spending categorization** — auto-categorize transactions (food, transport, utilities, etc.); override via voice
+- [x] **Account aggregation** — Plaid Link (sandbox); unified account view across linked banks in `plaid_items`/`plaid_accounts`
+- [x] **Balance & transaction lookup** — "what's my balance?", "show my recent transactions" answered by voice via `get_account_balances`/`get_recent_transactions`
+- [x] **Spending categorization** — reuses Plaid's `personal_finance_category`; override via voice (`set_transaction_category`) or `PATCH /api/finance/transactions/{id}`
 - [ ] **Budget tracking** — set monthly budgets by category; alert when approaching or over limit
 - [ ] **Bill & subscription detection** — surface recurring charges automatically; alert before due dates
 - [ ] **Savings goals** — "save $5k for vacation by December"; track progress and surface weekly
@@ -192,12 +192,20 @@ Give Jarvis full visibility and control over money — balances, spending, budge
 
 ---
 
+## Known Issues
+
+- [x] **Settings panel closes entirely when switching tabs** — root cause: browser runs the microtask checkpoint between capture and bubble phases, so the `MutationObserver` in `settings.js` fired between them and saw "no pane open" before the new pane was shown. Fixed by wrapping the auto-close check in `setTimeout(0)` so it defers to after all event listeners complete; all `?v=` cache strings bumped to `?v=2`.
+
+---
+
 ## GitHub Actions & CI/CD
 
 Automated workflows to keep the repo healthy and branches in sync.
 
 - [x] **Auto-merge staging → main** — nightly cron merges staging into main if clean
 - [x] **Cascade merge on push** — when `staging` or `main` receives a push, automatically attempt to merge it into every other open branch; on conflict, open a detailed issue describing the conflicting files and assign it to whoever made the last commit on that branch
+- [ ] **Playwright browser checks in `testing-smoke.yml`** — the smoke test currently only curls `/login` and `/` for non-5xx status; add a headless Playwright pass (with a seeded test account/session) that logs in and clicks through core UI (Settings panel tabs, chat send) so a broken button/JS bundle fails CI, not just a broken route
+- [ ] **Self-hosted GitHub Actions runner** — register the home server (or a dedicated Pi) as a self-hosted runner so CI jobs get persistent Docker layer cache (faster builds), can test ARM-specific daemon packages (onnxruntime, sounddevice, rpi_ws281x) on real hardware, and aren't subject to GitHub's free-tier minute limits. Candidate jobs to move first: `docker-build` (biggest cache win), `testing-smoke` (runs against real stack). Keep `android-build` and `actionlint` on `ubuntu-latest` for clean environments. Add runner labels (`homelab`, `arm64`) so jobs can target the right host. Docs: https://docs.github.com/en/actions/concepts/runners/self-hosted-runners
 
 ---
 
@@ -205,7 +213,7 @@ Automated workflows to keep the repo healthy and branches in sync.
 
 Split the monolithic `app.py` (~5,900 lines) into focused modules so each integration and layer can be found, edited, and tested in isolation.
 
-- [ ] **`config.py`** — all ENV vars and constants; no local imports
+- [x] **`config.py`** — all ENV vars and constants; no local imports
 - [x] **`db.py`** — DB pool, `_pool()`, schema loading, and all `_db_*` helper functions
 - [x] **`auth.py`** — OIDC discovery, session signing/verification, `_get_current_user`, `_require_admin`
 - [x] **`integrations/ha.py`** — Home Assistant tool schemas, `_ha_call_service`, `_ha_get_states`, `_execute_ha_tool`
@@ -214,11 +222,11 @@ Split the monolithic `app.py` (~5,900 lines) into focused modules so each integr
 - [x] **`integrations/music/spotify.py`** — Spotify tool schemas, OAuth helpers, and execution
 - [x] **`integrations/music/apple_music.py`** — Apple Music tool schemas and execution
 - [x] **`integrations/vision.py`** — face recognition, camera snapshots, `_vision_loop`, vision tool schemas
-- [ ] **`integrations/phase1.py`** — timers, reminders, news, calendar, contacts tool schemas and execution
-- [ ] **`integrations/phase5.py`** — routines, device alerts, Zigbee tool schemas and execution
+- [x] **`integrations/phase1.py`** — timers, reminders, news, calendar, contacts tool schemas and execution
+- [x] **`integrations/phase5.py`** — routines, device alerts, Zigbee tool schemas and execution
 - [x] **`integrations/shared_lists.py`** — shared list tool schemas and execution
-- [ ] **`llm.py`** — LLM client builders, `_stream_reply`, `_build_system_prompt`
-- [ ] **`app.py`** — FastAPI app, lifespan, Socket.IO handlers, and HTTP routes only (glue layer)
+- [x] **`llm.py`** — LLM client builders, `_stream_reply`, `_build_system_prompt`
+- [x] **`app.py`** — FastAPI app, lifespan, Socket.IO handlers, and HTTP routes only (glue layer)
 
 ---
 

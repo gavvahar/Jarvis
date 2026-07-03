@@ -1,0 +1,101 @@
+:root {
+  /* WORKSPACE: orb-cluster centre point (viewport %), shared by the cluster
+     transform AND the energy-surge flash so the pulse fires exactly on the orb */
+  --ws-orb-x: 85.5%;
+  --ws-orb-y: 77%;
+  --cyan: #1fb6ef;
+  --cyan-bright: #7fdcff;
+  --cyan-dim: #1583b8;
+  --blue: #1577d0;
+  --amber: #ffb648;
+  --ink: #02060a;
+  --line: rgba(31, 182, 239, 0.55);
+  --line-faint: rgba(31, 182, 239, 0.16);
+  --mono: "Oxanium", "Share Tech Mono", ui-monospace, monospace;
+  --label: "Share Tech Mono", ui-monospace, monospace;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+/* eliminate 300ms tap delay and double-tap zoom on interactive elements */
+button,
+input,
+select,
+textarea {
+  touch-action: manipulation;
+}
+
+html,
+body {
+  width: 100%;
+  height: 100%;
+  background: var(--ink);
+  color: var(--cyan);
+  overflow: hidden;
+  font-family: var(--mono);
+  cursor: crosshair;
+}
+
+#stage {
+  position: fixed;
+  inset: 0;
+  background:
+    radial-gradient(
+      circle at 50% 48%,
+      rgba(20, 60, 90, 0.32) 0%,
+      rgba(6, 18, 30, 0.1) 34%,
+      rgba(2, 6, 10, 0) 60%
+    ),
+    radial-gradient(circle at 50% 50%, #04101a 0%, #020609 70%, #000 100%);
+}
+
+/* ---- layer that holds everything that parallaxes ---- */
+.parallax {
+  position: absolute;
+  inset: 0;
+  will-change: transform;
+}
+
+/* WebGL canvas */
+#neural {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+/* central soft bloom behind sphere */
+#core-bloom {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 40vmin;
+  height: 40vmin;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  background: radial-gradient(
+    circle,
+    rgba(30, 160, 235, 0.26) 0%,
+    rgba(20, 120, 200, 0.08) 42%,
+    rgba(0, 0, 0, 0) 70%
+  );
+  filter: blur(6px);
+  pointer-events: none;
+  animation: breathe 6.5s ease-in-out infinite;
+}
+@keyframes breathe {
+  0%,
+  100% {
+    opacity: 0.55;
+    transform: translate(-50%, -50%) scale(1);
+  }
+  50% {
+    opacity: 0.9;
+    transform: translate(-50%, -50%) scale(1.06);
+  }
+}

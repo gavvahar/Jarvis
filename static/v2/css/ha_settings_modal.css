@@ -1,0 +1,99 @@
+/* ── HA Settings tab ───────────────────────────────────────────────────────── */
+#ha-settings {
+  display: block;
+}
+#ha-settings.setup-hidden {
+  display: none;
+}
+#ha-settings-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  text-align: left;
+  margin-top: 20px;
+}
+#ha-settings-form input {
+  width: 100%;
+  padding: 11px 13px;
+  box-sizing: border-box;
+  background: rgba(2, 10, 18, 0.8);
+  border: 1px solid rgba(127, 233, 255, 0.28);
+  border-radius: 8px;
+  color: #eafcff;
+  font-family: "Share Tech Mono", monospace;
+  font-size: 13px;
+  outline: none;
+  letter-spacing: 0.04em;
+  transition:
+    border-color 0.2s,
+    box-shadow 0.2s;
+}
+#ha-settings-form input:focus {
+  border-color: var(--cyan-bright, #aef1ff);
+  box-shadow: 0 0 14px rgba(127, 233, 255, 0.3);
+}
+#ha-status-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+  font-family: "Share Tech Mono", monospace;
+  font-size: 10.5px;
+  letter-spacing: 0.18em;
+  color: rgba(127, 233, 255, 0.55);
+}
+#ha-status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: rgba(127, 233, 255, 0.3);
+  flex-shrink: 0;
+}
+#ha-status-dot.connected {
+  background: #7fffc4;
+  box-shadow: 0 0 6px #7fffc4;
+}
+#ha-status-dot.disconnected {
+  background: #ff9a7a;
+}
+#ha-settings-form button {
+  flex: 1;
+  padding: 11px;
+  background: rgba(127, 233, 255, 0.12);
+  border: 1px solid rgba(127, 233, 255, 0.4);
+  border-radius: 8px;
+  color: #eafcff;
+  font-family: "Oxanium", sans-serif;
+  font-weight: 500;
+  letter-spacing: 0.12em;
+  font-size: 12px;
+  cursor: pointer;
+  transition:
+    background 0.2s,
+    box-shadow 0.2s;
+}
+#ha-settings-form button:hover {
+  background: rgba(127, 233, 255, 0.22);
+  box-shadow: 0 0 16px rgba(127, 233, 255, 0.3);
+}
+#ha-settings-form button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+#ha-cancel {
+  border-color: rgba(127, 233, 255, 0.2) !important;
+}
+#ha-msg {
+  min-height: 16px;
+  margin-top: 12px;
+  font-family: "Share Tech Mono", monospace;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  color: rgba(127, 233, 255, 0.7);
+}
+#ha-msg.ok {
+  color: #7fffc4;
+}
+#ha-msg.err {
+  color: #ff9a7a;
+}
