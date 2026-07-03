@@ -20,14 +20,14 @@ For runner registration itself, see [self-hosted-runner-setup.md](self-hosted-ru
 
 ## 1 — Docker
 
-Docker and Docker Compose must be installed on the server and accessible to the `jarvis-ci` runner user.
+Docker and Docker Compose must be installed on the server and accessible to the `nihar` runner user.
 
 ```bash
 # Install Docker (if not already installed)
 curl -fsSL https://get.docker.com | sh
 
-# Add jarvis-ci to the docker group so it can run docker without sudo
-sudo usermod -aG docker jarvis-ci
+# Add nihar to the docker group so it can run docker without sudo
+sudo usermod -aG docker nihar
 
 # Log out and back in (or restart the runner service) for the group to take effect
 sudo systemctl restart actions.runner.*
@@ -36,7 +36,7 @@ sudo systemctl restart actions.runner.*
 Verify:
 
 ```bash
-sudo -u jarvis-ci docker ps
+sudo -u nihar docker ps
 ```
 
 ---
@@ -53,7 +53,7 @@ Place the production `.env` at a fixed path on the server:
 sudo mkdir -p /etc/jarvis
 sudo cp .env /etc/jarvis/.env
 sudo chmod 600 /etc/jarvis/.env
-sudo chown jarvis-ci:jarvis-ci /etc/jarvis/.env
+sudo chown nihar:nihar /etc/jarvis/.env
 ```
 
 Then add a step to `deploy-main.yml` before `docker compose up`:
