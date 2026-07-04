@@ -19,6 +19,12 @@ test("settings panel tabs switch without closing the panel", async ({
   const settingsBtn = page.locator("#settings-btn");
   await settingsBtn.waitFor({ state: "visible", timeout: 10000 });
 
+  // Dismiss the setup wizard if it's covering the UI (shown when no API key is configured)
+  await page.evaluate(() => {
+    const setup = document.getElementById("setup");
+    if (setup) setup.classList.add("setup-hidden");
+  });
+
   // Open the settings panel
   await settingsBtn.click();
   const panel = page.locator("#settings-panel");
