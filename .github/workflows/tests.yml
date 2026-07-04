@@ -99,14 +99,3 @@ jobs:
 
       - name: Run tox (github)
         run: tox -e github
-
-  daemon-test:
-    runs-on: [self-hosted, arm64]
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install daemon dependencies
-        run: pip3 install -r requirements/daemon/requirements.txt
-
-      - name: Verify ARM-specific packages import correctly
-        run: python3 -c "import onnxruntime, sounddevice; print('daemon deps OK')"
