@@ -6,11 +6,13 @@ Instructions for registering the home server and Pi as GitHub Actions runners.
 
 ## Home Server (`homelab` label)
 
-### Step 1 — Create a dedicated user (once)
+### Step 1 — Add user to docker group (once)
+
+The runner runs as `nihar` (already exists on the home server). Just make sure it's in the docker group:
 
 ```bash
-sudo useradd -m -s /bin/bash jarvis-ci
-sudo usermod -aG docker jarvis-ci
+sudo usermod -aG docker nihar
+# Log out and back in for the group to take effect
 ```
 
 ### Step 2 — Get the registration token
@@ -22,9 +24,7 @@ Select **Linux + x64**. Copy the `--token XXXXX` value — it expires in 1 hour.
 ### Step 3 — Download and configure the runner
 
 ```bash
-sudo -u jarvis-ci bash
-cd /home/jarvis-ci
-mkdir actions-runner && cd actions-runner
+cd /opt/docker-compose/actions-runner   # actual location on home server
 
 # The GitHub UI shows the exact current download URL — copy it from there
 curl -o actions-runner-linux-x64.tar.gz -L <URL_FROM_GITHUB_UI>
@@ -41,11 +41,17 @@ tar xzf actions-runner-linux-x64.tar.gz
 ### Step 4 — Install as a systemd service
 
 ```bash
-exit   # back to your normal user
-cd /home/jarvis-ci/actions-runner
-sudo ./svc.sh install jarvis-ci
+sudo ./svc.sh install nihar
 sudo ./svc.sh start
 sudo ./svc.sh status
+```
+
+If the service file already exists (re-registration), edit the user directly:
+
+```bash
+sudo sed -i 's/User=.*/User=nihar/' /etc/systemd/system/actions.runner.gavvahar-Jarvis.homelab.service
+sudo systemctl daemon-reload
+sudo systemctl restart actions.runner.gavvahar-Jarvis.homelab.service
 ```
 
 ### Step 5 — Verify
@@ -59,10 +65,10 @@ sudo ./svc.sh status
 Same steps, but select **Linux + ARM64** in the GitHub UI and use `arm64` as the label:
 
 ```bash
-sudo useradd -m -s /bin/bash jarvis-ci
+sudo useradd -m -s /bin/bash nihar
 
-sudo -u jarvis-ci bash
-cd /home/jarvis-ci
+sudo -u nihar bash
+cd /home/nihar
 mkdir actions-runner && cd actions-runner
 
 curl -o actions-runner-linux-arm64.tar.gz -L <URL_FROM_GITHUB_UI>
@@ -76,8 +82,8 @@ tar xzf actions-runner-linux-arm64.tar.gz
   --unattended
 
 exit
-cd /home/jarvis-ci/actions-runner
-sudo ./svc.sh install jarvis-ci
+cd /home/nihar/actions-runner
+sudo ./svc.sh install nihar
 sudo ./svc.sh start
 ```
 
@@ -102,14 +108,14 @@ sudo ./svc.sh start
 
 - `daemon-test` will queue indefinitely until the Pi runner is registered — it won't fail CI, just wait.
 - Token from Step 2 expires after **1 hour** — generate it right before running `config.sh`.
-- The `jarvis-ci` user needs to be in the `docker` group on the home server so `docker build` works without sudo.
+- The `nihar` user needs to be in the `docker` group on the home server so `docker build` works without sudo.
 - Keep `android-build`, `actionlint`, `pip-audit`, and `quality` on `ubuntu-latest` — they need clean throwaway environments.
 
 ## Playwright prereq (for when `testing-smoke.yml` adds browser checks)
 
 `smoke-test` stays on `[self-hosted, homelab]` even after Playwright is added — the smoke test already needs the real stack and `.env`, and keeping the browser pre-installed avoids the ~150 MB Chromium download that `ubuntu-latest` would incur every run.
 
-Run once on the home server as `jarvis-ci`:
+Run once on the home server as `nihar`:
 
 ```bash
 pip3 install playwright
