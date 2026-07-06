@@ -59,7 +59,7 @@ jobs:
           pip-audit -r requirements/standard/requirements.txt
 
   docker-build:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, homelab]
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
@@ -68,7 +68,7 @@ jobs:
         run: docker build --tag jarvis:ci .
 
   compose-validate:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, homelab]
     steps:
       - uses: actions/checkout@v4
 
