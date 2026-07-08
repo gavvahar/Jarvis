@@ -1,4 +1,4 @@
-# Contributing to J.A.R.V.I.S.
+# Contributing to J.A.R.V.I.S
 
 ## Getting started
 
@@ -14,7 +14,7 @@ You still need a running Postgres and a `.env` file — see the README.
 
 Changes reach `main` through a two-stage pipeline:
 
-```
+```text
 feature branch → testing → staging → main (auto)
 ```
 
