@@ -1,0 +1,87 @@
+name: Auto Approve
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize]
+
+permissions:
+  pull-requests: write
+  contents: read
+  checks: read
+  statuses: read
+
+concurrency:
+  group: auto-approve-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  auto-approve:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Wait for required checks to pass
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 - <<'EOF'
+          import subprocess, json, time, sys
+
+          repo = "${{ github.repository }}"
+          sha = "${{ github.event.pull_request.head.sha }}"
+          base_ref = "${{ github.event.pull_request.base.ref }}"
+          required = ["actionlint", "android-build", "pip-audit",
+                      "docker-build", "compose-validate", "quality"]
+          # smoke-test (testing-smoke.yml) only runs for PRs targeting staging —
+          # requiring it on every base branch left this waiting forever on PRs into testing.
+          if base_ref == "staging":
+              required.append("smoke-test")
+          failure_conclusions = {"failure", "timed_out", "cancelled", "action_required", "stale"}
+
+          deadline = time.time() + 25 * 60
+          while time.time() < deadline:
+              result = subprocess.run(
+                  ["gh", "api", f"repos/{repo}/commits/{sha}/check-runs",
+                   "--paginate", "-q", ".check_runs"],
+                  capture_output=True, text=True,
+              )
+              if result.returncode != 0:
+                  print(result.stderr, file=sys.stderr)
+                  sys.exit(1)
+
+              runs = []
+              for line in result.stdout.splitlines():
+                  runs.extend(json.loads(line))
+
+              latest = {}
+              for r in runs:
+                  name = r["name"]
+                  if name not in latest or r["started_at"] > latest[name]["started_at"]:
+                      latest[name] = r
+
+              missing = [name for name in required if name not in latest]
+              failed = [name for name in required
+                        if name in latest and latest[name]["conclusion"] in failure_conclusions]
+              pending = [name for name in required
+                         if name in latest and latest[name]["status"] != "completed"]
+
+              if failed:
+                  print(f"Required check(s) failed: {', '.join(failed)}")
+                  sys.exit(1)
+
+              if not missing and not pending:
+                  print("All required checks passed.")
+                  sys.exit(0)
+
+              print(f"Waiting... missing={missing} pending={pending}")
+              time.sleep(15)
+
+          print("Timed out waiting for required checks.")
+          sys.exit(1)
+          EOF
+
+      - name: Approve pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh pr review "${{ github.event.pull_request.number }}" -R "${{ github.repository }}" --approve \
+            --body "Auto-approved: all required checks passed."

@@ -1,5 +1,5 @@
 """
-app.py — J.A.R.V.I.S. Starter Kit backend (FastAPI + python-socketio).
+app.py — J.A.R.V.I.S. backend (FastAPI + python-socketio).
 
 Multi-user: each user authenticates via Authentik (OIDC) and gets their own
 config and conversation history stored in PostgreSQL.
@@ -10,368 +10,163 @@ Three providers:
   • openai_compatible — any OpenAI-compatible endpoint (Ollama, OpenRouter, …)
 """
 
-import json, os, re, asyncio, secrets, tempfile, urllib.parse, asyncpg, httpx
-
-
+import json, os, re, asyncio, secrets, tempfile, urllib.parse, httpx, datetime, hashlib, base64, pathlib, socketio
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Request, File, UploadFile
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
-import socketio
-from dotenv import load_dotenv
-
-from personality import JARVIS_SYSTEM
-
-load_dotenv()
-
-# ─── CONSTANTS ────────────────────────────────────────────────────────────────
-MAX_HISTORY = 20
-
-DEFAULT_MODELS = {
-    "anthropic": "claude-haiku-4-5",
-    "openai": "gpt-4o-mini",
-    "openai_compatible": "",
-}
-VALID_PROVIDERS = set(DEFAULT_MODELS.keys())
-
-# ─── ENV ──────────────────────────────────────────────────────────────────────
-DATABASE_URL = os.environ.get(
-    "DATABASE_URL", "postgresql://jarvis:jarvis@postgres/jarvis"
+import auth as _auth
+from auth import (
+    init_signer,
+    _get_oidc_config,
+    _fetch_oidc_config,
+    _sign_session,
+    _get_current_user,
+    _get_user_from_environ,
 )
-AUTHENTIK_URL = os.environ.get("AUTHENTIK_URL", "").rstrip("/")
-_OIDC_APP_SLUG = os.environ.get("OIDC_APP_SLUG", "").strip()
-OIDC_DISCOVERY_URL = os.environ.get("OIDC_DISCOVERY_URL", "") or (
-    f"{AUTHENTIK_URL}/application/o/{_OIDC_APP_SLUG}/.well-known/openid-configuration"
-    if AUTHENTIK_URL and _OIDC_APP_SLUG
-    else ""
+from integrations.myq import _myq_configured, _myq_get_status
+from integrations.ha import _ha_configured, _validate_ha
+import integrations.tesla as _tesla_mod
+import integrations.vision as _vision_mod
+import integrations.finance as _finance_mod
+from integrations.finance import _finance_configured, _plaid_create_link_token, _plaid_exchange_public_token, _plaid_remove_item
+from integrations.tesla import _tesla_configured, _tesla_unofficial_access_token
+from integrations.vision import (
+    _list_cameras,
+    _add_camera,
+    _delete_camera,
+    _update_camera,
+    _get_presence_members,
+    _get_security_events,
+    _face_enroll_sample,
+    _face_enroll_finish,
+    _face_enroll_delete,
 )
-OIDC_CLIENT_ID = os.environ.get("OIDC_CLIENT_ID", "")
-OIDC_CLIENT_SECRET = os.environ.get("OIDC_CLIENT_SECRET", "")
-APP_URL = os.environ.get("APP_URL", "http://localhost:5000").rstrip("/")
-SECRET_KEY = os.environ.get("SECRET_KEY", "change-me")
-OIDC_ADMIN_GROUP = os.environ.get("OIDC_ADMIN_GROUP", "jarvis-admins")
+from integrations.music.spotify import (
+    _spotify_configured,
+    _spotify_req,
+    _spotify_start_party,
+    _spotify_auth_url,
+    _spotify_finish_auth,
+    _spotify_disconnect,
+)
+from integrations.music.apple_music import (
+    init as _init_apple_music,
+    _apple_music_server_configured,
+    _apple_music_configured,
+    _apple_music_dev_token,
+    _am_request_callback,
+    _apple_music_start_party,
+    _save_apple_music_user_token,
+    _disconnect_apple_music_user_token,
+    _resolve_apple_music_callback,
+)
+import integrations.phase5 as _phase5_mod
+import integrations.phase4.presence as _presence_mod
+import integrations.phase4.snapcast as _snapcast_mod
+from integrations.phase1.dav import _resolve_dav_collection
+from integrations.phase1.calendar import _calendar_configured
+from integrations.phase1.contacts import _contacts_configured
+from llm import (
+    _build_client,
+    _generate_meeting_notes,
+    _location_context,
+    _stream_reply,
+    _validate,
+)
+from config import (
+    MAX_HISTORY,
+    DEFAULT_MODELS,
+    VALID_PROVIDERS,
+    OIDC_CLIENT_ID,
+    OIDC_CLIENT_SECRET,
+    APP_URL,
+    SECRET_KEY,
+    OIDC_ADMIN_GROUP,
+    TESLA_CLIENT_ID,
+    TESLA_CLIENT_SECRET,
+    SPOTIFY_CLIENT_ID,
+    PLAID_CLIENT_ID,
+    PLAID_SECRET,
+    PLAID_ENV,
+)
 
-# ─── DB ───────────────────────────────────────────────────────────────────────
-_db_pool: asyncpg.Pool | None = None
+try:
+    import librosa as _librosa
+    import numpy as _np
 
+    _VOICE_ID_OK = True
+except ImportError:
+    _VOICE_ID_OK = False
 
-def _pool() -> asyncpg.Pool:
-    assert _db_pool is not None, "Database pool not initialised"
-    return _db_pool
-
-
-_SCHEMA = """
-CREATE TABLE IF NOT EXISTS user_configs (
-    user_id     TEXT PRIMARY KEY,
-    email       TEXT NOT NULL DEFAULT '',
-    role        TEXT NOT NULL DEFAULT 'user',
-    provider    TEXT NOT NULL DEFAULT 'anthropic',
-    api_key     TEXT NOT NULL DEFAULT '',
-    model       TEXT NOT NULL DEFAULT 'claude-haiku-4-5',
-    base_url    TEXT NOT NULL DEFAULT '',
-    ha_url      TEXT NOT NULL DEFAULT '',
-    ha_token    TEXT NOT NULL DEFAULT '',
-    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-ALTER TABLE user_configs ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'user';
-ALTER TABLE user_configs ADD COLUMN IF NOT EXISTS webhook_token TEXT NOT NULL DEFAULT '';
-
-CREATE TABLE IF NOT EXISTS phone_messages (
-    id          BIGSERIAL PRIMARY KEY,
-    user_id     TEXT NOT NULL REFERENCES user_configs(user_id) ON DELETE CASCADE,
-    sender      TEXT NOT NULL DEFAULT '',
-    body        TEXT NOT NULL DEFAULT '',
-    important   BOOLEAN NOT NULL DEFAULT FALSE,
-    reason      TEXT NOT NULL DEFAULT '',
-    received_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE INDEX IF NOT EXISTS idx_phone_messages_user ON phone_messages (user_id, received_at DESC);
-
-CREATE TABLE IF NOT EXISTS conversations (
-    id          BIGSERIAL PRIMARY KEY,
-    user_id     TEXT NOT NULL REFERENCES user_configs(user_id) ON DELETE CASCADE,
-    role        TEXT NOT NULL,
-    content     TEXT NOT NULL,
-    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE INDEX IF NOT EXISTS idx_conversations_user ON conversations (user_id, created_at DESC);
-
-CREATE TABLE IF NOT EXISTS meetings (
-    id          BIGSERIAL PRIMARY KEY,
-    user_id     TEXT NOT NULL REFERENCES user_configs(user_id) ON DELETE CASCADE,
-    started_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    ended_at    TIMESTAMPTZ,
-    transcript  TEXT NOT NULL DEFAULT '',
-    notes       TEXT NOT NULL DEFAULT '',
-    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE INDEX IF NOT EXISTS idx_meetings_user ON meetings (user_id, started_at DESC);
-"""
-
-
-async def _db_init():
-    global _db_pool
-    _db_pool = await asyncpg.create_pool(DATABASE_URL, min_size=2, max_size=10)
-    async with _pool().acquire() as conn:
-        await conn.execute(_SCHEMA)
-
-
-async def _db_ensure_user(user_id: str, email: str, role: str):
-    async with _pool().acquire() as conn:
-        await conn.execute(
-            """
-            INSERT INTO user_configs (user_id, email, role)
-            VALUES ($1, $2, $3)
-            ON CONFLICT (user_id) DO UPDATE SET email = EXCLUDED.email, role = EXCLUDED.role
-            """,
-            user_id,
-            email,
-            role,
-        )
-
-
-async def _db_load_config(user_id: str) -> dict:
-    async with _pool().acquire() as conn:
-        row = await conn.fetchrow(
-            "SELECT role, provider, api_key, model, base_url, ha_url, ha_token "
-            "FROM user_configs WHERE user_id = $1",
-            user_id,
-        )
-    if row is None:
-        return {
-            "role": "user",
-            "provider": "anthropic",
-            "api_key": "",
-            "model": "claude-haiku-4-5",
-            "base_url": "",
-            "ha_url": "",
-            "ha_token": "",
-        }
-    return dict(row)
-
-
-async def _db_save_config(user_id: str, config: dict):
-    async with _pool().acquire() as conn:
-        await conn.execute(
-            """
-            UPDATE user_configs
-            SET provider=$2, api_key=$3, model=$4, base_url=$5,
-                ha_url=$6, ha_token=$7, updated_at=NOW()
-            WHERE user_id=$1
-            """,
-            user_id,
-            config["provider"],
-            config["api_key"],
-            config["model"],
-            config["base_url"],
-            config["ha_url"],
-            config["ha_token"],
-        )
-
-
-async def _db_load_conversation(user_id: str) -> list:
-    async with _pool().acquire() as conn:
-        rows = await conn.fetch(
-            """
-            SELECT role, content FROM (
-                SELECT role, content, created_at
-                FROM conversations
-                WHERE user_id = $1
-                ORDER BY created_at DESC
-                LIMIT $2
-            ) sub ORDER BY created_at ASC
-            """,
-            user_id,
-            MAX_HISTORY,
-        )
-    return [{"role": r["role"], "content": json.loads(r["content"])} for r in rows]
-
-
-async def _db_append_message(user_id: str, role: str, content):
-    async with _pool().acquire() as conn:
-        await conn.execute(
-            "INSERT INTO conversations (user_id, role, content) VALUES ($1, $2, $3)",
-            user_id,
-            role,
-            json.dumps(content),
-        )
-        await conn.execute(
-            """
-            DELETE FROM conversations
-            WHERE user_id = $1 AND id NOT IN (
-                SELECT id FROM conversations
-                WHERE user_id = $1
-                ORDER BY created_at DESC
-                LIMIT $2
-            )
-            """,
-            user_id,
-            MAX_HISTORY,
-        )
-
-
-async def _db_clear_conversation(user_id: str):
-    async with _pool().acquire() as conn:
-        await conn.execute("DELETE FROM conversations WHERE user_id = $1", user_id)
-
-
-async def _db_get_or_create_webhook_token(user_id: str) -> str:
-    async with _pool().acquire() as conn:
-        row = await conn.fetchrow(
-            "SELECT webhook_token FROM user_configs WHERE user_id = $1", user_id
-        )
-    if row and row["webhook_token"]:
-        return row["webhook_token"]
-    token = secrets.token_hex(32)
-    async with _pool().acquire() as conn:
-        await conn.execute(
-            "UPDATE user_configs SET webhook_token = $2 WHERE user_id = $1",
-            user_id,
-            token,
-        )
-    return token
-
-
-async def _db_regenerate_webhook_token(user_id: str) -> str:
-    token = secrets.token_hex(32)
-    async with _pool().acquire() as conn:
-        await conn.execute(
-            "UPDATE user_configs SET webhook_token = $2 WHERE user_id = $1",
-            user_id,
-            token,
-        )
-    return token
-
-
-async def _db_find_user_by_token(token: str) -> str | None:
-    async with _pool().acquire() as conn:
-        row = await conn.fetchrow(
-            "SELECT user_id FROM user_configs WHERE webhook_token = $1 AND webhook_token != ''",
-            token,
-        )
-    return row["user_id"] if row else None
-
-
-async def _db_store_phone_message(
-    user_id: str, sender: str, body: str, important: bool, reason: str
-):
-    async with _pool().acquire() as conn:
-        await conn.execute(
-            "INSERT INTO phone_messages (user_id, sender, body, important, reason) "
-            "VALUES ($1, $2, $3, $4, $5)",
-            user_id,
-            sender,
-            body,
-            important,
-            reason,
-        )
-
-
-async def _db_create_meeting(user_id: str) -> int:
-    async with _pool().acquire() as conn:
-        row = await conn.fetchrow(
-            "INSERT INTO meetings (user_id) VALUES ($1) RETURNING id", user_id
-        )
-    return row["id"]
-
-
-async def _db_append_transcript_segment(meeting_id: int, segment: str):
-    async with _pool().acquire() as conn:
-        await conn.execute(
-            "UPDATE meetings SET transcript = transcript || $2 WHERE id = $1",
-            meeting_id,
-            " " + segment,
-        )
-
-
-async def _db_finalize_meeting(meeting_id: int, notes: str):
-    async with _pool().acquire() as conn:
-        await conn.execute(
-            "UPDATE meetings SET ended_at = NOW(), notes = $2 WHERE id = $1",
-            meeting_id,
-            notes,
-        )
-
-
-# ─── AUTH ─────────────────────────────────────────────────────────────────────
-_signer: URLSafeTimedSerializer | None = None
-_oidc_config: dict | None = None
-
-
-def _get_signer() -> URLSafeTimedSerializer:
-    assert _signer is not None, "Session signer not initialised"
-    return _signer
-
-
-def _get_oidc_config() -> dict:
-    assert _oidc_config is not None, "OIDC not configured"
-    return _oidc_config
-
-
-async def _fetch_oidc_config():
-    global _oidc_config
-    if not OIDC_DISCOVERY_URL:
-        print(
-            "[AUTH] OIDC_DISCOVERY_URL not set — authentication disabled.", flush=True
-        )
-        return
-    try:
-        async with httpx.AsyncClient(timeout=10) as c:
-            r = await c.get(OIDC_DISCOVERY_URL)
-            r.raise_for_status()
-            _oidc_config = r.json()
-        print("[AUTH] OIDC configuration loaded.", flush=True)
-    except Exception as e:
-        print(f"[AUTH] Failed to fetch OIDC discovery document: {e}", flush=True)
-
-
-def _sign_session(user_id: str) -> str:
-    return _get_signer().dumps(user_id)
-
-
-def _verify_session(value: str) -> str | None:
-    try:
-        return _get_signer().loads(value, max_age=86400 * 30)
-    except (BadSignature, SignatureExpired):
-        return None
-
-
-def _get_current_user(request: Request) -> str | None:
-    cookie = request.cookies.get("jarvis_session")
-    if not cookie:
-        return None
-    return _verify_session(cookie)
-
-
-def _get_user_from_environ(environ: dict) -> str | None:
-    """Extract and verify the session cookie from a Socket.IO ASGI environ."""
-    headers = dict(environ.get("headers", []))
-    cookie_str = headers.get(b"cookie", b"").decode()
-    for part in cookie_str.split(";"):
-        part = part.strip()
-        if part.startswith("jarvis_session="):
-            return _verify_session(part[len("jarvis_session=") :])
-    return None
+from db import (
+    _pool,
+    _db_init,
+    _db_ready,
+    _db_close,
+    _db_ensure_user,
+    _db_load_config,
+    _db_save_config,
+    _db_set_kid_safe,
+    _db_set_display_name,
+    _db_save_pim_config,
+    _db_get_household_members,
+    _db_get_or_create_webhook_token,
+    _db_regenerate_webhook_token,
+    _db_find_user_by_token,
+    _db_load_conversation,
+    _db_append_message,
+    _db_clear_conversation,
+    _db_save_voice_embedding,
+    _db_clear_voice_embedding,
+    _db_get_all_voice_embeddings,
+    _db_get_all_shared_lists,
+    _db_fire_due_timers,
+    _db_fire_due_reminders,
+    _db_store_phone_message,
+    _db_create_meeting,
+    _db_append_transcript_segment,
+    _db_finalize_meeting,
+    _db_store_doorbell_event,
+    _db_list_plaid_items,
+    _db_list_plaid_accounts,
+    _db_get_plaid_item,
+    _db_delete_plaid_item,
+    _db_set_transaction_category_override,
+)
 
 
 # ─── PER-USER STATE ───────────────────────────────────────────────────────────
-# {user_id: {config, client, provider, conversation}}
 _user_states: dict[str, dict] = {}
 _user_locks: dict[str, asyncio.Lock] = {}
-
-# {user_id: {meeting_id, segments}}
 _active_meetings: dict[str, dict] = {}
+_party_tokens: dict[str, str] = {}
+_last_wake_time: dict[str, float] = {}
+_WAKE_DEDUP_WINDOW = 2.0
 
-# socket sid → user_id
+
+def _create_party_token(user_id: str) -> str:
+    for t, uid in list(_party_tokens.items()):
+        if uid == user_id:
+            _party_tokens.pop(t, None)
+    token = secrets.token_urlsafe(8)
+    _party_tokens[token] = user_id
+    return token
+
+
+def _clear_party_tokens(user_id: str):
+    for t, uid in list(_party_tokens.items()):
+        if uid == user_id:
+            _party_tokens.pop(t, None)
+
+
 _sid_to_user: dict[str, str] = {}
 
-_location_context: dict = {}
+
+def _sids_for_user(user_id: str) -> list[str]:
+    return [sid for sid, uid in _sid_to_user.items() if uid == user_id]
+
 
 _whisper = None
 _whisper_lock = asyncio.Lock()
@@ -384,6 +179,44 @@ def _get_whisper():
 
         _whisper = WhisperModel("tiny.en", device="cpu", compute_type="int8")
     return _whisper
+
+
+_voice_cache: dict = {}
+_VOICE_THRESHOLD = 0.82
+
+
+def _cosine_similarity(a: list, b: list) -> float:
+    av = _np.array(a, dtype=float)
+    bv = _np.array(b, dtype=float)
+    denom = _np.linalg.norm(av) * _np.linalg.norm(bv)
+    return float(_np.dot(av, bv) / denom) if denom > 0 else 0.0
+
+
+def _extract_voice_embedding(audio_path: str) -> list | None:
+    if not _VOICE_ID_OK:
+        return None
+    y, _ = _librosa.load(audio_path, sr=16000, mono=True)
+    mfcc = _librosa.feature.mfcc(y=y, sr=16000, n_mfcc=40)
+    return [*mfcc.mean(axis=1).tolist(), *mfcc.std(axis=1).tolist()]
+
+
+async def _refresh_voice_cache() -> None:
+    rows = await _db_get_all_voice_embeddings()
+    _voice_cache.clear()
+    _voice_cache.update(rows)
+
+
+def _identify_speaker_from_embedding(embedding: list) -> tuple:
+    if not _voice_cache or not embedding:
+        return None, "", False
+    best_uid, best_name, best_safe, best_score = None, "", False, 0.0
+    for uid, (stored, name, is_safe) in _voice_cache.items():
+        score = _cosine_similarity(embedding, stored)
+        if score > best_score:
+            best_uid, best_name, best_safe, best_score = uid, name, is_safe, score
+    if best_score >= _VOICE_THRESHOLD:
+        return best_uid, best_name, best_safe
+    return None, "guest", False
 
 
 def _get_user_lock(user_id: str) -> asyncio.Lock:
@@ -401,15 +234,14 @@ async def _get_user_state(user_id: str) -> dict:
             provider = "anthropic"
         if not config.get("model"):
             config["model"] = DEFAULT_MODELS.get(provider, "")
-        client = _build_client(
-            provider, config.get("api_key", ""), config.get("base_url", "")
-        )
+        client = _build_client(provider, config.get("api_key", ""), config.get("base_url", ""))
         _user_states[user_id] = {
             "config": config,
             "client": client,
             "provider": provider,
             "conversation": conversation,
             "role": config.get("role", "user"),
+            "user_id": user_id,
         }
     return _user_states[user_id]
 
@@ -418,377 +250,43 @@ def _user_configured(state: dict) -> bool:
     return state["client"] is not None
 
 
-async def _require_admin(request: Request) -> str:
-    user_id = _get_current_user(request)
-    if not user_id:
+def _require_user(request: Request) -> str:
+    uid = _get_current_user(request)
+    if not uid:
         raise HTTPException(401)
-    state = await _get_user_state(user_id)
-    if state.get("role") != "admin":
+    return uid
+
+
+async def _require_bearer(request: Request) -> str:
+    auth = request.headers.get("Authorization", "")
+    if not auth.startswith("Bearer "):
+        raise HTTPException(401)
+    uid = await _db_find_user_by_token(auth[7:].strip())
+    if not uid:
+        raise HTTPException(401)
+    return uid
+
+
+async def _require_admin(request: Request) -> str:
+    uid = _require_user(request)
+    if (await _get_user_state(uid)).get("role") != "admin":
         raise HTTPException(403, "Admin access required")
-    return user_id
-
-
-# ─── LLM CLIENTS ─────────────────────────────────────────────────────────────
-def _build_client(provider, api_key, base_url=""):
-    if not api_key and provider != "openai_compatible":
-        return None
-    try:
-        if provider == "anthropic":
-            import anthropic
-
-            return anthropic.AsyncAnthropic(api_key=api_key)
-        import openai
-
-        kwargs = {"api_key": api_key or "ollama"}
-        if provider == "openai_compatible" and base_url:
-            kwargs["base_url"] = base_url.strip()
-        return openai.AsyncOpenAI(**kwargs)
-    except Exception as e:
-        print(f"[CLIENT] Failed to build {provider} client: {e}", flush=True)
-        return None
-
-
-def _build_sync_client(provider, api_key, base_url=""):
-    if not api_key and provider != "openai_compatible":
-        return None
-    try:
-        if provider == "anthropic":
-            import anthropic
-
-            return anthropic.Anthropic(api_key=api_key)
-        import openai
-
-        kwargs = {"api_key": api_key or "ollama"}
-        if provider == "openai_compatible" and base_url:
-            kwargs["base_url"] = base_url.strip()
-        return openai.OpenAI(**kwargs)
-    except Exception as e:
-        print(f"[CLIENT] Failed to build sync {provider} client: {e}", flush=True)
-        return None
-
-
-# ─── HOME ASSISTANT ───────────────────────────────────────────────────────────
-HA_TOOLS_ANTHROPIC = [
-    {
-        "name": "get_ha_states",
-        "description": (
-            "Get the current state of Home Assistant devices. "
-            "Optionally filter by domain (e.g. 'light', 'switch', 'climate', "
-            "'sensor', 'automation', 'script'). Omit domain to get all entities."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "domain": {
-                    "type": "string",
-                    "description": "Optional domain filter, e.g. 'light' or 'switch'.",
-                }
-            },
-        },
-    },
-    {
-        "name": "call_ha_service",
-        "description": (
-            "Call a Home Assistant service to control a device, run a script, "
-            "or trigger an automation."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "domain": {
-                    "type": "string",
-                    "description": "Service domain, e.g. 'light', 'switch', 'climate', 'automation', 'script'.",
-                },
-                "service": {
-                    "type": "string",
-                    "description": "Service name, e.g. 'turn_on', 'turn_off', 'toggle', 'trigger'.",
-                },
-                "entity_id": {
-                    "type": "string",
-                    "description": "Entity ID to act on, e.g. 'light.living_room'. Omit for scripts/automations.",
-                },
-                "service_data": {
-                    "type": "object",
-                    "description": 'Optional extra data, e.g. {"brightness_pct": 50} for lights.',
-                },
-            },
-            "required": ["domain", "service"],
-        },
-    },
-]
-
-HA_TOOLS_OPENAI = [
-    {
-        "type": "function",
-        "function": {
-            "name": "get_ha_states",
-            "description": (
-                "Get the current state of Home Assistant devices. "
-                "Optionally filter by domain (e.g. 'light', 'switch', 'climate', "
-                "'sensor', 'automation', 'script'). Omit domain to get all entities."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "domain": {
-                        "type": "string",
-                        "description": "Optional domain filter, e.g. 'light' or 'switch'.",
-                    }
-                },
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "call_ha_service",
-            "description": (
-                "Call a Home Assistant service to control a device, run a script, "
-                "or trigger an automation."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "domain": {
-                        "type": "string",
-                        "description": "Service domain, e.g. 'light', 'switch', 'climate', 'automation', 'script'.",
-                    },
-                    "service": {
-                        "type": "string",
-                        "description": "Service name, e.g. 'turn_on', 'turn_off', 'toggle', 'trigger'.",
-                    },
-                    "entity_id": {
-                        "type": "string",
-                        "description": "Entity ID to act on, e.g. 'light.living_room'. Omit for scripts/automations.",
-                    },
-                    "service_data": {
-                        "type": "object",
-                        "description": 'Optional extra data, e.g. {"brightness_pct": 50} for lights.',
-                    },
-                },
-                "required": ["domain", "service"],
-            },
-        },
-    },
-]
-
-
-def _ha_configured(config: dict) -> bool:
-    return bool(config.get("ha_url") and config.get("ha_token"))
-
-
-def _ha_headers(config: dict) -> dict:
-    return {
-        "Authorization": f"Bearer {config['ha_token']}",
-        "Content-Type": "application/json",
-    }
-
-
-def _get_ha_tools(config: dict, provider: str) -> list:
-    if not _ha_configured(config):
-        return []
-    return HA_TOOLS_ANTHROPIC if provider == "anthropic" else HA_TOOLS_OPENAI
-
-
-async def _validate_ha(url, token):
-    try:
-        async with httpx.AsyncClient(timeout=5) as c:
-            r = await c.get(
-                url.rstrip("/") + "/api/",
-                headers={"Authorization": f"Bearer {token}"},
-            )
-        if r.status_code == 200:
-            return True, ""
-        if r.status_code == 401:
-            return False, "Home Assistant token was rejected."
-        return False, f"Home Assistant returned HTTP {r.status_code}."
-    except Exception as e:
-        return False, f"Could not reach Home Assistant: {e}"
-
-
-async def _ha_get_states(config: dict, domain=None):
-    url = config["ha_url"].rstrip("/") + "/api/states"
-    async with httpx.AsyncClient(timeout=8) as c:
-        r = await c.get(url, headers=_ha_headers(config))
-    r.raise_for_status()
-    states = r.json()
-    if domain:
-        states = [s for s in states if s["entity_id"].startswith(domain + ".")]
-    lines = []
-    for s in states[:60]:
-        name = s.get("attributes", {}).get("friendly_name", "")
-        line = f"{s['entity_id']}: {s['state']}"
-        if name:
-            line += f" ({name})"
-        lines.append(line)
-    return "\n".join(lines) if lines else "No entities found."
-
-
-async def _ha_call_service(
-    config: dict, domain, service, entity_id=None, service_data=None
-):
-    url = config["ha_url"].rstrip("/") + f"/api/services/{domain}/{service}"
-    payload = dict(service_data or {})
-    if entity_id:
-        payload["entity_id"] = entity_id
-    async with httpx.AsyncClient(timeout=8) as c:
-        r = await c.post(url, headers=_ha_headers(config), json=payload)
-    return (
-        "Done."
-        if r.status_code in (200, 201)
-        else f"HA returned {r.status_code}: {r.text[:120]}"
-    )
-
-
-async def _execute_ha_tool(config: dict, name, args):
-    try:
-        if name == "get_ha_states":
-            return await _ha_get_states(config, args.get("domain"))
-        if name == "call_ha_service":
-            return await _ha_call_service(
-                config,
-                args["domain"],
-                args["service"],
-                args.get("entity_id"),
-                args.get("service_data"),
-            )
-        return f"Unknown tool: {name}"
-    except Exception as e:
-        return f"Error: {e}"
-
-
-# ─── CONFIG VALIDATION ────────────────────────────────────────────────────────
-def _openai_create_sync(client, model, messages, stream, max_out=500):
-    last = None
-    for extra in ({"max_tokens": max_out}, {"max_completion_tokens": max_out}, {}):
-        try:
-            return client.chat.completions.create(
-                model=model, messages=messages, stream=stream, **extra
-            )
-        except Exception as e:
-            last = e
-            if any(
-                x in str(e).lower()
-                for x in (
-                    "max_tokens",
-                    "max_completion_tokens",
-                    "unsupported",
-                    "temperature",
-                )
-            ):
-                continue
-            raise
-    assert last is not None
-    raise last
-
-
-def _validate(provider, api_key, model, base_url=""):
-    client = _build_sync_client(provider, api_key, base_url)
-    if client is None:
-        pkg = "anthropic" if provider == "anthropic" else "openai"
-        return (
-            False,
-            f"Could not initialise the client. Is the '{pkg}' package installed?",
-        )
-    model = model or DEFAULT_MODELS.get(provider, "")
-    if not model:
-        return False, "Please choose a model."
-    try:
-        if provider == "anthropic":
-            client.messages.create(
-                model=model,
-                max_tokens=4,
-                messages=[{"role": "user", "content": "Reply with: ok"}],
-            )
-        else:
-            _openai_create_sync(
-                client,
-                model,
-                [{"role": "user", "content": "Reply with: ok"}],
-                stream=False,
-                max_out=4,
-            )
-        return True, ""
-    except Exception as e:
-        msg = str(e)
-        low = msg.lower()
-        if (
-            "authentication" in low
-            or "401" in low
-            or ("invalid" in low and "key" in low)
-        ):
-            return False, "That key was rejected. Check it and try again."
-        if "404" in low or "not_found" in low or ("model" in low and "exist" in low):
-            return False, f"The model '{model}' wasn't found for this key/provider."
-        if (
-            "credit" in low
-            or "billing" in low
-            or "quota" in low
-            or "insufficient" in low
-        ):
-            return False, "The key is valid but the account has no available credit."
-        if "connection" in low or "could not" in low or "getaddrinfo" in low:
-            return (
-                False,
-                "Couldn't reach the endpoint. Check the base URL / your connection.",
-            )
-        return False, f"Couldn't connect: {msg[:160]}"
-
-
-# ─── MEETING NOTES ───────────────────────────────────────────────────────────
-async def _generate_meeting_notes(state: dict, transcript: str) -> str:
-    provider = state["provider"]
-    config = state["config"]
-    client = state["client"]
-    model = config.get("model") or DEFAULT_MODELS.get(provider, "")
-    prompt = (
-        "Analyze this meeting transcript and produce structured notes in exactly this format:\n\n"
-        "## Summary\n[2-3 sentence summary]\n\n"
-        "## Key Decisions\n- [decision]\n\n"
-        "## Action Items\n- [owner]: [action]\n\n"
-        "## Topics Discussed\n- [topic]\n\n"
-        f"Transcript:\n{transcript}"
-    )
-    if provider == "anthropic":
-        msg = await client.messages.create(
-            model=model,
-            max_tokens=1000,
-            messages=[{"role": "user", "content": prompt}],
-        )
-        return msg.content[0].text
-    last = None
-    for extra in ({"max_tokens": 1000}, {"max_completion_tokens": 1000}, {}):
-        try:
-            resp = await client.chat.completions.create(
-                model=model,
-                messages=[{"role": "user", "content": prompt}],
-                stream=False,
-                **extra,
-            )
-            return resp.choices[0].message.content
-        except Exception as e:
-            last = e
-            if any(
-                x in str(e).lower()
-                for x in ("max_tokens", "max_completion_tokens", "unsupported")
-            ):
-                continue
-            raise
-    assert last is not None
-    raise last
+    return uid
 
 
 # ─── SOCKET.IO + FASTAPI ─────────────────────────────────────────────────────
 sio = socketio.AsyncServer(async_mode="asgi", cors_allowed_origins="*")
+_init_apple_music(sio, _sid_to_user)
+_vision_mod.init(sio, _sids_for_user)
+_phase5_mod.init(sio, _sids_for_user, _user_states)
 
 
 @asynccontextmanager
 async def lifespan(application: FastAPI):
-    global _signer
-    _signer = URLSafeTimedSerializer(SECRET_KEY)
+    init_signer(SECRET_KEY)
     await _db_init()
     await _fetch_oidc_config()
-    print("J.A.R.V.I.S. Starter Kit - online. Open http://localhost:5000", flush=True)
+    print("J.A.R.V.I.S. - online. Open http://localhost:5000", flush=True)
     try:
         await asyncio.to_thread(_get_whisper)
         print("[STT] Whisper model ready.", flush=True)
@@ -797,12 +295,14 @@ async def lifespan(application: FastAPI):
     t1 = asyncio.create_task(_telemetry_loop())
     t2 = asyncio.create_task(_weather_loop())
     t3 = asyncio.create_task(_meeting_cleanup_loop())
+    t4 = asyncio.create_task(_timer_reminder_loop())
+    t5 = asyncio.create_task(_phase5_mod._device_alert_loop())
+    t6 = asyncio.create_task(_vision_mod._vision_loop())
+    t7 = asyncio.create_task(_finance_mod._finance_loop())
     yield
-    t1.cancel()
-    t2.cancel()
-    t3.cancel()
-    if _db_pool:
-        await _db_pool.close()
+    for t in (t1, t2, t3, t4, t5, t6, t7):
+        t.cancel()
+    await _db_close()
 
 
 _SESSION_COOKIE_OPTS = dict(httponly=True, max_age=86400 * 30, samesite="lax")
@@ -817,23 +317,19 @@ app = socketio.ASGIApp(sio, other_asgi_app=fast_app)
 
 @fast_app.middleware("http")
 async def _refresh_session(request: Request, call_next):
-    """Re-issue the session cookie on every authenticated request so the
-    30-day expiry resets from last activity, not from login."""
     response = await call_next(request)
-    if request.url.path not in _NO_REFRESH_PATHS and _signer:
-        user_id = _get_current_user(request)
-        if user_id:
-            response.set_cookie(
-                "jarvis_session", _sign_session(user_id), **_SESSION_COOKIE_OPTS
-            )
+    if request.url.path not in _NO_REFRESH_PATHS and _auth._signer:
+        uid = _get_current_user(request)
+        if uid:
+            response.set_cookie("jarvis_session", _sign_session(uid), **_SESSION_COOKIE_OPTS)
     return response
 
 
 # ─── AUTH ROUTES ─────────────────────────────────────────────────────────────
 @fast_app.get("/login")
 async def login(request: Request):
-    if not _oidc_config:
-        raise HTTPException(503, "OIDC not configured — set OIDC_DISCOVERY_URL in .env")
+    if not _auth._oidc_config:
+        return RedirectResponse("/", status_code=302)
     state = secrets.token_urlsafe(32)
     params = {
         "client_id": OIDC_CLIENT_ID,
@@ -842,7 +338,7 @@ async def login(request: Request):
         "redirect_uri": f"{APP_URL}/auth/callback",
         "state": state,
     }
-    url = _oidc_config["authorization_endpoint"] + "?" + urllib.parse.urlencode(params)
+    url = _auth._oidc_config["authorization_endpoint"] + "?" + urllib.parse.urlencode(params)
     response = RedirectResponse(url)
     response.set_cookie("oidc_state", state, httponly=True, max_age=300, samesite="lax")
     return response
@@ -852,12 +348,8 @@ async def login(request: Request):
 async def auth_callback(request: Request):
     code = request.query_params.get("code")
     state = request.query_params.get("state")
-    stored_state = request.cookies.get("oidc_state")
-    if not code or not state or state != stored_state:
-        raise HTTPException(
-            400, "Invalid OAuth2 callback — state mismatch or missing code"
-        )
-
+    if not code or not state or state != request.cookies.get("oidc_state"):
+        raise HTTPException(400, "Invalid OAuth2 callback — state mismatch or missing code")
     try:
         async with httpx.AsyncClient(timeout=10) as c:
             r = await c.post(
@@ -872,7 +364,6 @@ async def auth_callback(request: Request):
             )
             r.raise_for_status()
             tokens = r.json()
-
             r = await c.get(
                 _get_oidc_config()["userinfo_endpoint"],
                 headers={"Authorization": f"Bearer {tokens['access_token']}"},
@@ -883,17 +374,12 @@ async def auth_callback(request: Request):
         raise HTTPException(502, f"OIDC token exchange failed: {e}") from e
 
     user_id = userinfo["sub"]
-    email = userinfo.get("email", "")
-    groups = userinfo.get("groups", [])
-    role = "admin" if OIDC_ADMIN_GROUP and OIDC_ADMIN_GROUP in groups else "user"
-    await _db_ensure_user(user_id, email, role)
-    # Invalidate cached state so role is reloaded on next request
+    role = "admin" if OIDC_ADMIN_GROUP and OIDC_ADMIN_GROUP in userinfo.get("groups", []) else "user"
+    await _db_ensure_user(user_id, userinfo.get("email", ""), role)
     _user_states.pop(user_id, None)
 
     response = RedirectResponse("/", status_code=303)
-    response.set_cookie(
-        "jarvis_session", _sign_session(user_id), **_SESSION_COOKIE_OPTS
-    )
+    response.set_cookie("jarvis_session", _sign_session(user_id), **_SESSION_COOKIE_OPTS)
     response.delete_cookie("oidc_state")
     return response
 
@@ -915,9 +401,7 @@ async def index(request: Request):
 
 @fast_app.get("/api/status")
 async def api_status(request: Request):
-    user_id = _get_current_user(request)
-    if not user_id:
-        raise HTTPException(401)
+    user_id = _require_user(request)
     state = await _get_user_state(user_id)
     config = state["config"]
     return {
@@ -926,14 +410,30 @@ async def api_status(request: Request):
         "model": config.get("model", ""),
         "ha_configured": _ha_configured(config),
         "ha_url": config.get("ha_url", ""),
+        "calendar_configured": _calendar_configured(config),
+        "calendar_url": config.get("calendar_url", ""),
+        "calendar_username": config.get("calendar_username", ""),
+        "contacts_configured": _contacts_configured(config),
+        "contacts_url": config.get("contacts_url", ""),
+        "contacts_username": config.get("contacts_username", ""),
+        "myq_configured": _myq_configured(config),
+        "tesla_configured": _tesla_configured(config),
+        "tesla_method": config.get("tesla_method", ""),
+        "tesla_fleet_enabled": bool(TESLA_CLIENT_ID),
+        "spotify_configured": _spotify_configured(config),
+        "spotify_client_enabled": bool(SPOTIFY_CLIENT_ID),
+        "apple_music_configured": _apple_music_configured(config),
+        "apple_music_server_enabled": _apple_music_server_configured(),
+        "finance_configured": await _finance_configured(user_id),
+        "plaid_client_enabled": bool(PLAID_CLIENT_ID and PLAID_SECRET),
+        "plaid_env": PLAID_ENV,
         "role": state.get("role", "user"),
     }
 
 
 @fast_app.post("/api/transcribe")
 async def api_transcribe(request: Request, audio: UploadFile = File(...)):
-    if not _get_current_user(request):
-        raise HTTPException(401)
+    _require_user(request)
     data = await audio.read()
     if not data:
         return {"text": ""}
@@ -945,18 +445,19 @@ async def api_transcribe(request: Request, audio: UploadFile = File(...)):
 
         def _run():
             m = _get_whisper()
-            segs, _ = m.transcribe(
-                tmp,
-                language="en",
-                beam_size=1,
-                vad_filter=True,
-                no_speech_threshold=0.6,
-            )
+            segs, _ = m.transcribe(tmp, language="en", beam_size=1, vad_filter=True, no_speech_threshold=0.6)
             return " ".join(s.text for s in segs).strip()
 
         async with _whisper_lock:
             text = await asyncio.to_thread(_run)
-        return {"text": text}
+
+        speaker_id, speaker_name, speaker_kid_safe = None, None, False
+        if _VOICE_ID_OK and _voice_cache:
+            embedding = await asyncio.to_thread(_extract_voice_embedding, tmp)
+            if embedding:
+                speaker_id, speaker_name, speaker_kid_safe = _identify_speaker_from_embedding(embedding)
+
+        return {"text": text, "speaker_id": speaker_id, "speaker_name": speaker_name, "speaker_kid_safe": speaker_kid_safe}
     except Exception as e:
         print(f"[STT] {e}", flush=True)
         return {"text": ""}
@@ -970,10 +471,7 @@ async def api_transcribe(request: Request, audio: UploadFile = File(...)):
 
 @fast_app.post("/api/save_config")
 async def api_save_config(request: Request):
-    user_id = _get_current_user(request)
-    if not user_id:
-        raise HTTPException(401)
-
+    user_id = _require_user(request)
     data = await request.json()
     provider = (data.get("provider") or "anthropic").strip()
     key = (data.get("key") or "").strip()
@@ -994,47 +492,80 @@ async def api_save_config(request: Request):
     ok, err = await asyncio.to_thread(_validate, provider, key, model, base_url)
     if not ok:
         return {"ok": False, "error": err}
-
     if ha_url and ha_token:
         ha_ok, ha_err = await _validate_ha(ha_url, ha_token)
         if not ha_ok:
             return {"ok": False, "error": f"Home Assistant: {ha_err}"}
 
-    new_config = {
-        "provider": provider,
-        "api_key": key,
-        "model": model,
-        "base_url": base_url,
-        "ha_url": ha_url,
-        "ha_token": ha_token,
-    }
-
+    new_config = {"provider": provider, "api_key": key, "model": model, "base_url": base_url, "ha_url": ha_url, "ha_token": ha_token}
     async with _get_user_lock(user_id):
         await _db_save_config(user_id, new_config)
         state = await _get_user_state(user_id)
         state["config"].update(new_config)
         state["client"] = _build_client(provider, key, base_url)
         state["provider"] = provider
-
     return {"ok": True}
+
+
+# ─── VISION API ───────────────────────────────────────────────────────────────
+@fast_app.get("/api/cameras")
+async def api_list_cameras(request: Request):
+    return await _list_cameras(_require_user(request))
+
+
+@fast_app.post("/api/cameras")
+async def api_add_camera(request: Request):
+    return await _add_camera(_require_user(request), await request.json())
+
+
+@fast_app.delete("/api/cameras/{camera_id}")
+async def api_delete_camera(camera_id: int, request: Request):
+    return await _delete_camera(camera_id, _require_user(request))
+
+
+@fast_app.patch("/api/cameras/{camera_id}")
+async def api_update_camera(camera_id: int, request: Request):
+    return await _update_camera(camera_id, await request.json(), _require_user(request))
+
+
+@fast_app.get("/api/presence")
+async def api_presence(request: Request):
+    _require_user(request)
+    return await _get_presence_members()
+
+
+@fast_app.get("/api/security-events")
+async def api_security_events(request: Request):
+    return await _get_security_events(_require_user(request), float(request.query_params.get("hours", "24")))
+
+
+@fast_app.post("/api/face/enroll-sample")
+async def api_face_enroll_sample(request: Request, image: UploadFile = File(...)):
+    _require_user(request)
+    return await _face_enroll_sample(await image.read())
+
+
+@fast_app.post("/api/face/enroll-finish")
+async def api_face_enroll_finish(request: Request):
+    return await _face_enroll_finish(_require_user(request), (await request.json()).get("embeddings", []))
+
+
+@fast_app.delete("/api/face/enrollment")
+async def api_face_enroll_delete(request: Request):
+    return await _face_enroll_delete(_require_user(request))
 
 
 @fast_app.post("/api/save_ha")
 async def api_save_ha(request: Request):
-    user_id = _get_current_user(request)
-    if not user_id:
-        raise HTTPException(401)
-
+    user_id = _require_user(request)
     data = await request.json()
     ha_url = (data.get("ha_url") or "").strip()
     ha_token = (data.get("ha_token") or "").strip()
 
     state = await _get_user_state(user_id)
     config = state["config"]
-    effective_token = ha_token or config.get("ha_token", "")
-
-    if ha_url and effective_token:
-        ha_ok, ha_err = await _validate_ha(ha_url, effective_token)
+    if ha_url and (ha_token or config.get("ha_token")):
+        ha_ok, ha_err = await _validate_ha(ha_url, ha_token or config.get("ha_token", ""))
         if not ha_ok:
             return {"ok": False, "error": ha_err}
 
@@ -1045,19 +576,171 @@ async def api_save_ha(request: Request):
         elif not ha_url:
             config["ha_token"] = ""
         await _db_save_config(user_id, config)
-
     return {"ok": True, "ha_configured": _ha_configured(config)}
+
+
+@fast_app.post("/api/save_pim")
+async def api_save_pim(request: Request):
+    user_id = _require_user(request)
+    data = await request.json()
+    state = await _get_user_state(user_id)
+    config = state["config"]
+
+    calendar_url = (data.get("calendar_url") or "").strip()
+    calendar_username = (data.get("calendar_username") or "").strip()
+    calendar_password = (data.get("calendar_password") or "").strip()
+    contacts_url = (data.get("contacts_url") or "").strip()
+    contacts_username = (data.get("contacts_username") or "").strip()
+    contacts_password = (data.get("contacts_password") or "").strip()
+
+    calendar_to_save = {"url": config.get("calendar_url", ""), "username": config.get("calendar_username", ""), "password": config.get("calendar_password", "")}
+    contacts_to_save = {"url": config.get("contacts_url", ""), "username": config.get("contacts_username", ""), "password": config.get("contacts_password", "")}
+
+    if bool(data.get("clear_calendar")):
+        calendar_to_save = {"url": "", "username": "", "password": ""}
+    elif calendar_url or calendar_username:
+        if not calendar_url or not calendar_username:
+            return {"ok": False, "error": "Calendar needs both a server URL and username."}
+        eff_pw = calendar_password or config.get("calendar_password", "")
+        if not eff_pw:
+            return {"ok": False, "error": "Calendar password is required."}
+        try:
+            resolved = await _resolve_dav_collection(calendar_url, calendar_username, eff_pw, "calendar")
+        except ValueError as e:
+            return {"ok": False, "error": f"Calendar: {e}"}
+        calendar_to_save = {"url": resolved["url"], "username": calendar_username, "password": eff_pw}
+
+    if bool(data.get("clear_contacts")):
+        contacts_to_save = {"url": "", "username": "", "password": ""}
+    elif contacts_url or contacts_username:
+        if not contacts_url or not contacts_username:
+            return {"ok": False, "error": "Contacts needs both a server URL and username."}
+        eff_pw = contacts_password or config.get("contacts_password", "")
+        if not eff_pw:
+            return {"ok": False, "error": "Contacts password is required."}
+        try:
+            resolved = await _resolve_dav_collection(contacts_url, contacts_username, eff_pw, "addressbook")
+        except ValueError as e:
+            return {"ok": False, "error": f"Contacts: {e}"}
+        contacts_to_save = {"url": resolved["url"], "username": contacts_username, "password": eff_pw}
+
+    async with _get_user_lock(user_id):
+        config.update(
+            {
+                "calendar_url": calendar_to_save["url"],
+                "calendar_username": calendar_to_save["username"],
+                "calendar_password": calendar_to_save["password"],
+                "contacts_url": contacts_to_save["url"],
+                "contacts_username": contacts_to_save["username"],
+                "contacts_password": contacts_to_save["password"],
+            }
+        )
+        await _db_save_pim_config(
+            user_id,
+            config["calendar_url"],
+            config["calendar_username"],
+            config["calendar_password"],
+            config["contacts_url"],
+            config["contacts_username"],
+            config["contacts_password"],
+        )
+    return {
+        "ok": True,
+        "calendar_configured": _calendar_configured(config),
+        "calendar_url": config.get("calendar_url", ""),
+        "calendar_username": config.get("calendar_username", ""),
+        "contacts_configured": _contacts_configured(config),
+        "contacts_url": config.get("contacts_url", ""),
+        "contacts_username": config.get("contacts_username", ""),
+    }
+
+
+@fast_app.post("/api/save_myq")
+async def api_save_myq(request: Request):
+    user_id = _require_user(request)
+    data = await request.json()
+    myq_email = (data.get("myq_email") or "").strip()
+    myq_password = (data.get("myq_password") or "").strip()
+    if myq_email and myq_password:
+        result = await _myq_get_status({"myq_email": myq_email, "myq_password": myq_password})
+        if result.startswith("Could not reach MyQ"):
+            return {"ok": False, "error": result}
+    state = await _get_user_state(user_id)
+    config = state["config"]
+    async with _get_user_lock(user_id):
+        config["myq_email"] = myq_email
+        config["myq_password"] = myq_password
+        await _db_save_config(user_id, config)
+    return {"ok": True, "myq_configured": _myq_configured(config)}
+
+
+# ─── FINANCE / PLAID ROUTES ──────────────────────────────────────────────────
+@fast_app.post("/api/finance/link_token")
+async def api_finance_link_token(request: Request):
+    user_id = _require_user(request)
+    if not (PLAID_CLIENT_ID and PLAID_SECRET):
+        raise HTTPException(503, "Plaid not configured — set PLAID_CLIENT_ID and PLAID_SECRET in .env")
+    token = await _plaid_create_link_token(user_id)
+    return {"link_token": token}
+
+
+@fast_app.post("/api/finance/exchange_token")
+async def api_finance_exchange_token(request: Request):
+    user_id = _require_user(request)
+    data = await request.json()
+    public_token = (data.get("public_token") or "").strip()
+    if not public_token:
+        return {"ok": False, "error": "Missing public_token."}
+    try:
+        result = await _plaid_exchange_public_token(
+            user_id,
+            public_token,
+            (data.get("institution_id") or "").strip(),
+            (data.get("institution_name") or "").strip(),
+        )
+    except Exception as e:
+        return {"ok": False, "error": f"Could not link account: {e}"}
+    return {"ok": True, **result}
+
+
+@fast_app.get("/api/finance/connections")
+async def api_finance_connections(request: Request):
+    user_id = _require_user(request)
+    items = await _db_list_plaid_items(user_id)
+    accounts = await _db_list_plaid_accounts(user_id)
+    return {"connections": items, "accounts": accounts}
+
+
+@fast_app.delete("/api/finance/connections/{item_pk}")
+async def api_finance_disconnect(item_pk: int, request: Request):
+    user_id = _require_user(request)
+    item = await _db_get_plaid_item(user_id, item_pk)
+    if not item:
+        raise HTTPException(404, "Connection not found")
+    await _plaid_remove_item(item["access_token"])
+    await _db_delete_plaid_item(user_id, item_pk)
+    return {"ok": True}
+
+
+@fast_app.patch("/api/finance/transactions/{transaction_pk}")
+async def api_finance_override_category(transaction_pk: int, request: Request):
+    user_id = _require_user(request)
+    data = await request.json()
+    category = (data.get("category") or "").strip()
+    if not category:
+        return {"ok": False, "error": "category is required"}
+    ok = await _db_set_transaction_category_override(user_id, transaction_pk, category)
+    if not ok:
+        raise HTTPException(404, "Transaction not found")
+    return {"ok": True}
 
 
 @fast_app.get("/api/meetings")
 async def api_meetings(request: Request):
-    user_id = _get_current_user(request)
-    if not user_id:
-        raise HTTPException(401)
+    user_id = _require_user(request)
     async with _pool().acquire() as conn:
         rows = await conn.fetch(
-            "SELECT id, started_at, ended_at, notes FROM meetings "
-            "WHERE user_id = $1 ORDER BY started_at DESC LIMIT 20",
+            "SELECT id, started_at, ended_at, notes FROM meetings WHERE user_id = $1 ORDER BY started_at DESC LIMIT 20",
             user_id,
         )
     return [
@@ -1073,13 +756,10 @@ async def api_meetings(request: Request):
 
 @fast_app.get("/api/meetings/{meeting_id}")
 async def api_meeting_detail(request: Request, meeting_id: int):
-    user_id = _get_current_user(request)
-    if not user_id:
-        raise HTTPException(401)
+    user_id = _require_user(request)
     async with _pool().acquire() as conn:
         row = await conn.fetchrow(
-            "SELECT id, started_at, ended_at, transcript, notes FROM meetings "
-            "WHERE id = $1 AND user_id = $2",
+            "SELECT id, started_at, ended_at, transcript, notes FROM meetings WHERE id = $1 AND user_id = $2",
             meeting_id,
             user_id,
         )
@@ -1095,61 +775,40 @@ async def api_meeting_detail(request: Request, meeting_id: int):
 
 
 # ─── PHONE MESSAGES ──────────────────────────────────────────────────────────
-def _sids_for_user(user_id: str) -> list[str]:
-    return [sid for sid, uid in _sid_to_user.items() if uid == user_id]
-
-
 async def _classify_message(state: dict, sender: str, body: str) -> tuple[bool, str]:
-    """Return (is_important, reason). Falls back to False on any error."""
     provider = state["provider"]
     config = state["config"]
     client = state["client"]
     model = config.get("model") or DEFAULT_MODELS.get(provider, "")
     prompt = (
         "You filter phone messages for importance. Reply with exactly:\n"
-        "  yes: <one-line reason>\n"
-        "or:\n"
-        "  no\n\n"
+        "  yes: <one-line reason>\nor:\n  no\n\n"
         "Flag as important if the message contains: an invitation, event, deadline, "
         "urgent request, meeting request, or time-sensitive ask. "
         "Routine greetings, spam, and casual chitchat are NOT important.\n\n"
-        f"Sender: {sender}\n"
-        f"Message: {body}"
+        f"Sender: {sender}\nMessage: {body}"
     )
     try:
         if provider == "anthropic":
-            msg = await client.messages.create(
-                model=model,
-                max_tokens=60,
-                messages=[{"role": "user", "content": prompt}],
-            )
+            msg = await client.messages.create(model=model, max_tokens=60, messages=[{"role": "user", "content": prompt}])
             reply = msg.content[0].text.strip().lower()
         else:
             last = None
             reply = "no"
             for extra in ({"max_tokens": 60}, {"max_completion_tokens": 60}, {}):
                 try:
-                    resp = await client.chat.completions.create(
-                        model=model,
-                        messages=[{"role": "user", "content": prompt}],
-                        stream=False,
-                        **extra,
-                    )
+                    resp = await client.chat.completions.create(model=model, messages=[{"role": "user", "content": prompt}], stream=False, **extra)
                     reply = resp.choices[0].message.content.strip().lower()
                     break
                 except Exception as e:
                     last = e
-                    if any(
-                        x in str(e).lower()
-                        for x in ("max_tokens", "max_completion_tokens", "unsupported")
-                    ):
+                    if any(x in str(e).lower() for x in ("max_tokens", "max_completion_tokens", "unsupported")):
                         continue
                     raise
             if last and not reply:
                 raise last
         if reply.startswith("yes"):
-            reason = reply[3:].lstrip(":").strip()
-            return True, reason or "flagged as important"
+            return True, reply[3:].lstrip(":").strip() or "flagged as important"
         return False, ""
     except Exception as e:
         print(f"[MESSAGES] classify error: {e}", flush=True)
@@ -1161,135 +820,385 @@ async def _classify_and_notify(user_id: str, sender: str, body: str, state: dict
     await _db_store_phone_message(user_id, sender, body, important, reason)
     if important:
         for sid in _sids_for_user(user_id):
-            await sio.emit(
-                "message_alert",
-                {"sender": sender, "text": body[:300], "reason": reason},
-                to=sid,
-            )
+            await sio.emit("message_alert", {"sender": sender, "text": body[:300], "reason": reason}, to=sid)
 
 
 @fast_app.get("/api/messages/token")
 async def api_messages_token(request: Request):
-    user_id = _get_current_user(request)
-    if not user_id:
-        raise HTTPException(401)
+    user_id = _require_user(request)
     token = await _db_get_or_create_webhook_token(user_id)
-    return {"token": token, "url": f"{APP_URL}/api/messages/ingest"}
+    return {"token": token, "url": f"{APP_URL}/api/messages/ingest", "apk_url": f"{APP_URL}/download/jarvis-messages.apk"}
 
 
 @fast_app.post("/api/messages/token/regenerate")
 async def api_messages_token_regenerate(request: Request):
-    user_id = _get_current_user(request)
-    if not user_id:
-        raise HTTPException(401)
+    user_id = _require_user(request)
     token = await _db_regenerate_webhook_token(user_id)
-    return {"token": token, "url": f"{APP_URL}/api/messages/ingest"}
+    return {"token": token, "url": f"{APP_URL}/api/messages/ingest", "apk_url": f"{APP_URL}/download/jarvis-messages.apk"}
+
+
+@fast_app.get("/download/jarvis-messages.apk")
+async def download_apk():
+    apk_path = pathlib.Path("static/downloads/jarvis-messages.apk")
+    if not apk_path.exists():
+        raise HTTPException(404, detail="APK not yet available. Ask your admin to build it from the android/ folder.")
+    return FileResponse(apk_path, media_type="application/vnd.android.package-archive", filename="jarvis-messages.apk")
 
 
 @fast_app.post("/api/messages/ingest")
 async def api_messages_ingest(request: Request):
-    auth = request.headers.get("Authorization", "")
-    if not auth.startswith("Bearer "):
-        raise HTTPException(401)
-    token = auth[7:].strip()
-    user_id = await _db_find_user_by_token(token)
-    if not user_id:
-        raise HTTPException(401)
-
+    user_id = await _require_bearer(request)
     data = await request.json()
     sender = (data.get("sender") or "Unknown").strip()[:200]
     body = (data.get("text") or "").strip()[:2000]
     if not body:
         return {"ok": True}
-
     state = _user_states.get(user_id)
     if state and _user_configured(state):
         asyncio.create_task(_classify_and_notify(user_id, sender, body, state))
     else:
         await _db_store_phone_message(user_id, sender, body, False, "")
-
     return {"ok": True}
+
+
+@fast_app.post("/api/doorbell/event")
+async def api_doorbell_event(request: Request):
+    user_id = await _require_bearer(request)
+    data = await request.json()
+    event_type = (data.get("event_type") or "motion").strip()[:50]
+    source = (data.get("source") or "").strip()[:200]
+    await _db_store_doorbell_event(user_id, event_type, source)
+    hour = datetime.datetime.now().hour
+    if not (event_type == "motion" and (hour >= 23 or hour < 7)):
+        speak_map = {
+            "doorbell_press": "Someone is at the front door, sir.",
+            "motion": "Motion detected at the front door.",
+            "person": "A person has been detected at the front door, sir.",
+            "package": "A package has been delivered to the front door, sir.",
+        }
+        for sid in _sids_for_user(user_id):
+            await sio.emit("doorbell_alert", {"event_type": event_type, "source": source, "speak": speak_map.get(event_type, "Doorbell alert.")}, to=sid)
+    return {"ok": True}
+
+
+@fast_app.post("/api/wake")
+async def api_wake(request: Request):
+    user_id = await _require_bearer(request)
+    body = await request.json()
+    device_id = (body.get("device_id") or "unknown").strip()[:100]
+    room = (body.get("room") or "").strip()[:100]
+    _presence_mod.update_user_room(user_id, device_id, room)
+    now = __import__("time").time()
+    if now - _last_wake_time.get(user_id, 0) < _WAKE_DEDUP_WINDOW:
+        return {"status": "ignored"}
+    _last_wake_time[user_id] = now
+    for sid in _sids_for_user(user_id):
+        await sio.emit("wake_trigger", {"device_id": device_id}, to=sid)
+    return {"status": "ok"}
+
+
+@fast_app.post("/api/voice/enroll-sample")
+async def api_voice_enroll_sample(request: Request, audio: UploadFile = File(...)):
+    _require_user(request)
+    if not _VOICE_ID_OK:
+        return {"ok": False, "error": "Voice ID unavailable — install librosa on the server."}
+    data = await audio.read()
+    tmp = None
+    try:
+        with tempfile.NamedTemporaryFile(suffix=".webm", delete=False) as f:
+            f.write(data)
+            tmp = f.name
+        embedding = await asyncio.to_thread(_extract_voice_embedding, tmp)
+        if embedding is None:
+            return {"ok": False, "error": "Could not extract embedding."}
+        return {"ok": True, "embedding": embedding}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+    finally:
+        if tmp:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+
+
+@fast_app.post("/api/voice/enroll-finish")
+async def api_voice_enroll_finish(request: Request):
+    user_id = _require_user(request)
+    if not _VOICE_ID_OK:
+        raise HTTPException(400, "Voice ID unavailable.")
+    data = await request.json()
+    embeddings = data.get("embeddings", [])
+    if not embeddings or len(embeddings) < 2:
+        raise HTTPException(400, "At least 2 samples required.")
+    import numpy as _np2
+
+    avg = _np2.mean([_np2.array(e) for e in embeddings], axis=0).tolist()
+    await _db_save_voice_embedding(user_id, avg)
+    await _refresh_voice_cache()
+    return {"ok": True}
+
+
+@fast_app.delete("/api/voice/enrollment")
+async def api_voice_enrollment_delete(request: Request):
+    user_id = _require_user(request)
+    await _db_clear_voice_embedding(user_id)
+    await _refresh_voice_cache()
+    return {"ok": True}
+
+
+@fast_app.patch("/api/user/profile")
+async def api_user_profile(request: Request):
+    user_id = _require_user(request)
+    data = await request.json()
+    if "display_name" in data:
+        name = str(data["display_name"]).strip()[:100]
+        await _db_set_display_name(user_id, name)
+        if user_id in _user_states:
+            _user_states[user_id]["config"]["display_name"] = name
+        await _refresh_voice_cache()
+    if "is_kid_safe" in data:
+        value = bool(data["is_kid_safe"])
+        await _db_set_kid_safe(user_id, value)
+        if user_id in _user_states:
+            _user_states[user_id]["config"]["is_kid_safe"] = value
+        await _refresh_voice_cache()
+    return {"ok": True}
+
+
+@fast_app.get("/api/household/members")
+async def api_household_members(request: Request):
+    user_id = _require_user(request)
+    if (await _get_user_state(user_id)).get("role") != "admin":
+        raise HTTPException(403)
+    return {"members": await _db_get_household_members()}
+
+
+@fast_app.get("/api/shared-lists")
+async def api_shared_lists(request: Request):
+    _require_user(request)
+    return {"lists": await _db_get_all_shared_lists()}
+
+
+@fast_app.get("/api/doorbell/token")
+async def api_doorbell_token(request: Request):
+    user_id = _require_user(request)
+    token = await _db_get_or_create_webhook_token(user_id)
+    return {"token": token, "url": f"{APP_URL}/api/doorbell/event"}
+
+
+@fast_app.get("/api/doorbell/events")
+async def api_doorbell_events(request: Request):
+    user_id = _require_user(request)
+    async with _pool().acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT id, event_type, source, received_at FROM doorbell_events WHERE user_id = $1 ORDER BY received_at DESC LIMIT 50",
+            user_id,
+        )
+    return [{"id": r["id"], "event_type": r["event_type"], "source": r["source"], "received_at": r["received_at"].isoformat()} for r in rows]
+
+
+# ─── SNAPCAST ROUTES ─────────────────────────────────────────────────────────
+@fast_app.get("/api/snapcast/status")
+async def api_snapcast_status(request: Request):
+    _require_user(request)
+    if not _snapcast_mod._snapcast_configured():
+        raise HTTPException(503, "Snapcast not configured — set SNAPCAST_URL in .env")
+    return JSONResponse({"status": await _snapcast_mod._snapcast_get_status()})
+
+
+# ─── TESLA ROUTES ────────────────────────────────────────────────────────────
+@fast_app.get("/api/tesla/status")
+async def api_tesla_status(request: Request):
+    user_id = _require_user(request)
+    config = (await _get_user_state(user_id))["config"]
+    return {"tesla_configured": _tesla_configured(config), "tesla_method": config.get("tesla_method", ""), "tesla_fleet_enabled": bool(TESLA_CLIENT_ID)}
+
+
+@fast_app.post("/api/tesla/save_unofficial")
+async def api_tesla_save_unofficial(request: Request):
+    user_id = _require_user(request)
+    data = await request.json()
+    refresh_token = (data.get("refresh_token") or "").strip()
+    if not refresh_token:
+        return {"ok": False, "error": "No refresh token provided."}
+    _tesla_mod._tesla_tokens.pop(user_id, None)
+    try:
+        token = await _tesla_unofficial_access_token(user_id, {"tesla_refresh_token": refresh_token})
+        async with httpx.AsyncClient(timeout=10) as c:
+            r = await c.get(f"{_tesla_mod._TESLA_OWNER_BASE}/api/1/vehicles", headers={"Authorization": f"Bearer {token}"})
+            r.raise_for_status()
+    except Exception as e:
+        _tesla_mod._tesla_tokens.pop(user_id, None)
+        return {"ok": False, "error": f"Could not connect to Tesla: {e}"}
+    state = await _get_user_state(user_id)
+    config = state["config"]
+    new_method = "both" if config.get("tesla_method") in ("fleet",) and config.get("tesla_fleet_refresh_token") else "unofficial"
+    async with _get_user_lock(user_id):
+        config["tesla_refresh_token"] = refresh_token
+        config["tesla_method"] = new_method
+        async with _pool().acquire() as conn:
+            await conn.execute(
+                "UPDATE user_configs SET tesla_refresh_token = $2, tesla_method = $3 WHERE user_id = $1",
+                user_id,
+                refresh_token,
+                new_method,
+            )
+    return {"ok": True, "tesla_configured": True, "tesla_method": new_method}
+
+
+@fast_app.get("/api/tesla/fleet/auth")
+async def api_tesla_fleet_auth(request: Request):
+    user_id = _require_user(request)
+    if not TESLA_CLIENT_ID:
+        raise HTTPException(503, "Tesla Fleet API not configured — set TESLA_CLIENT_ID and TESLA_CLIENT_SECRET in .env")
+    state_token = secrets.token_urlsafe(32)
+    code_verifier = secrets.token_urlsafe(64)
+    digest = hashlib.sha256(code_verifier.encode()).digest()
+    code_challenge = base64.urlsafe_b64encode(digest).rstrip(b"=").decode()
+    _tesla_mod._tesla_auth_pending[state_token] = {"user_id": user_id, "code_verifier": code_verifier}
+    if len(_tesla_mod._tesla_auth_pending) > 200:
+        for k in list(_tesla_mod._tesla_auth_pending.keys())[:100]:
+            _tesla_mod._tesla_auth_pending.pop(k, None)
+    params = urllib.parse.urlencode(
+        {
+            "client_id": TESLA_CLIENT_ID,
+            "redirect_uri": f"{APP_URL}/auth/tesla/callback",
+            "response_type": "code",
+            "scope": "openid offline_access vehicle_device_data vehicle_cmds vehicle_charging_cmds",
+            "state": state_token,
+            "code_challenge": code_challenge,
+            "code_challenge_method": "S256",
+        }
+    )
+    return RedirectResponse(f"{_tesla_mod._TESLA_AUTH_BASE}/authorize?{params}")
+
+
+@fast_app.get("/auth/tesla/callback")
+async def auth_tesla_callback(request: Request):
+    code = request.query_params.get("code")
+    state_token = request.query_params.get("state")
+    pending = _tesla_mod._tesla_auth_pending.pop(state_token, None) if state_token else None
+    if not pending or not code:
+        raise HTTPException(400, "Invalid Tesla OAuth callback — state mismatch or missing code")
+    try:
+        async with httpx.AsyncClient(timeout=15) as c:
+            r = await c.post(
+                f"{_tesla_mod._TESLA_AUTH_BASE}/token",
+                json={
+                    "grant_type": "authorization_code",
+                    "client_id": TESLA_CLIENT_ID,
+                    "client_secret": TESLA_CLIENT_SECRET,
+                    "code": code,
+                    "redirect_uri": f"{APP_URL}/auth/tesla/callback",
+                    "code_verifier": pending["code_verifier"],
+                },
+            )
+            r.raise_for_status()
+            tokens = r.json()
+    except Exception as e:
+        raise HTTPException(502, f"Tesla token exchange failed: {e}") from e
+    fleet_refresh = tokens.get("refresh_token", "")
+    state = await _get_user_state(pending["user_id"])
+    config = state["config"]
+    new_method = "both" if config.get("tesla_method") == "unofficial" and config.get("tesla_refresh_token") else "fleet"
+    async with _get_user_lock(pending["user_id"]):
+        config["tesla_fleet_refresh_token"] = fleet_refresh
+        config["tesla_method"] = new_method
+        async with _pool().acquire() as conn:
+            await conn.execute(
+                "UPDATE user_configs SET tesla_fleet_refresh_token = $2, tesla_method = $3 WHERE user_id = $1",
+                pending["user_id"],
+                fleet_refresh,
+                new_method,
+            )
+    _tesla_mod._tesla_tokens.pop(pending["user_id"], None)
+    return RedirectResponse("/?tesla_connected=1", status_code=303)
+
+
+@fast_app.post("/api/tesla/disconnect")
+async def api_tesla_disconnect(request: Request):
+    user_id = _require_user(request)
+    which = (await request.json()).get("which", "all")
+    state = await _get_user_state(user_id)
+    config = state["config"]
+    async with _get_user_lock(user_id):
+        if which in ("unofficial", "all"):
+            config["tesla_refresh_token"] = ""
+        if which in ("fleet", "all"):
+            config["tesla_fleet_refresh_token"] = ""
+        has_u = bool(config.get("tesla_refresh_token"))
+        has_f = bool(config.get("tesla_fleet_refresh_token"))
+        config["tesla_method"] = "both" if has_u and has_f else "unofficial" if has_u else "fleet" if has_f else ""
+        async with _pool().acquire() as conn:
+            await conn.execute(
+                "UPDATE user_configs SET tesla_refresh_token = $2, tesla_fleet_refresh_token = $3, tesla_method = $4 WHERE user_id = $1",
+                user_id,
+                config["tesla_refresh_token"],
+                config["tesla_fleet_refresh_token"],
+                config["tesla_method"],
+            )
+    _tesla_mod._tesla_tokens.pop(user_id, None)
+    return {"ok": True, "tesla_configured": _tesla_configured(config), "tesla_method": config.get("tesla_method", "")}
+
+
+# ─── SPOTIFY OAUTH ────────────────────────────────────────────────────────────
+@fast_app.get("/api/spotify/auth")
+async def api_spotify_auth(request: Request):
+    return RedirectResponse(_spotify_auth_url(_require_user(request)))
+
+
+@fast_app.get("/auth/spotify/callback")
+async def auth_spotify_callback(request: Request):
+    await _spotify_finish_auth(request.query_params.get("state"), request.query_params.get("code"), _get_user_state, _get_user_lock)
+    return RedirectResponse("/?spotify_connected=1", status_code=303)
+
+
+@fast_app.post("/api/spotify/disconnect")
+async def api_spotify_disconnect(request: Request):
+    await _spotify_disconnect(_require_user(request), _get_user_state, _get_user_lock)
+    return {"ok": True}
+
+
+# ─── APPLE MUSIC API ──────────────────────────────────────────────────────────
+@fast_app.get("/api/apple_music/token")
+async def api_apple_music_token(request: Request):
+    _require_user(request)
+    if not _apple_music_server_configured():
+        return {"token": None, "enabled": False}
+    return {"token": _apple_music_dev_token(), "enabled": True}
+
+
+@fast_app.post("/api/apple_music/user_token")
+async def api_apple_music_user_token(request: Request):
+    user_id = _require_user(request)
+    body = await request.json()
+    await _save_apple_music_user_token(user_id, (body.get("token") or "").strip(), (body.get("storefront") or "us").strip().lower(), _get_user_state, _get_user_lock)
+    return {"ok": True}
+
+
+@fast_app.post("/api/apple_music/disconnect")
+async def api_apple_music_disconnect(request: Request):
+    await _disconnect_apple_music_user_token(_require_user(request), _get_user_state, _get_user_lock)
+    return {"ok": True}
+
+
+@sio.on("apple_music_callback")
+async def on_apple_music_callback(sid, data):
+    _resolve_apple_music_callback(data)
 
 
 @fast_app.get("/api/messages")
 async def api_messages(request: Request):
-    user_id = _get_current_user(request)
-    if not user_id:
-        raise HTTPException(401)
+    user_id = _require_user(request)
     async with _pool().acquire() as conn:
         rows = await conn.fetch(
-            "SELECT id, sender, body, important, reason, received_at "
-            "FROM phone_messages WHERE user_id = $1 ORDER BY received_at DESC LIMIT 50",
+            "SELECT id, sender, body, important, reason, received_at FROM phone_messages WHERE user_id = $1 ORDER BY received_at DESC LIMIT 50",
             user_id,
         )
     return [
-        {
-            "id": r["id"],
-            "sender": r["sender"],
-            "body": r["body"],
-            "important": r["important"],
-            "reason": r["reason"],
-            "received_at": r["received_at"].isoformat(),
-        }
-        for r in rows
+        {"id": r["id"], "sender": r["sender"], "body": r["body"], "important": r["important"], "reason": r["reason"], "received_at": r["received_at"].isoformat()} for r in rows
     ]
-
-
-# ─── LLM STREAMING ───────────────────────────────────────────────────────────
-def _build_system_prompt(config: dict) -> str:
-    system = JARVIS_SYSTEM
-    ctx = _location_context
-    if ctx:
-        parts = []
-        if ctx.get("city"):
-            loc = ctx["city"]
-            if ctx.get("region"):
-                loc += f", {ctx['region']}"
-            parts.append(f"location: {loc}")
-        if ctx.get("temp_f") is not None:
-            parts.append(f"temperature: {ctx['temp_f']}°F")
-        if ctx.get("condition"):
-            parts.append(f"conditions: {ctx['condition']}")
-        if ctx.get("pressure_kpa"):
-            parts.append(f"pressure: {ctx['pressure_kpa']} kPa")
-        if parts:
-            system += (
-                "\n\nCURRENT ENVIRONMENT — use naturally when relevant, don't announce it unprompted:\n"
-                + ", ".join(parts)
-                + "."
-            )
-    if _ha_configured(config):
-        system += (
-            "\n\nHOME AUTOMATION — you are connected to Home Assistant via tools. "
-            "Use get_ha_states to check device states and call_ha_service to control "
-            "devices, run scripts, and trigger automations. When given a home control "
-            "command, use your tools and then confirm briefly in JARVIS voice."
-        )
-    return system
-
-
-async def _openai_stream_async(client, model, messages, max_out=500, **extra_kwargs):
-    last = None
-    for extra in ({"max_tokens": max_out}, {"max_completion_tokens": max_out}, {}):
-        try:
-            return await client.chat.completions.create(
-                model=model, messages=messages, stream=True, **extra, **extra_kwargs
-            )
-        except Exception as e:
-            last = e
-            if any(
-                x in str(e).lower()
-                for x in (
-                    "max_tokens",
-                    "max_completion_tokens",
-                    "unsupported",
-                    "temperature",
-                )
-            ):
-                continue
-            raise
-    assert last is not None
-    raise last
 
 
 _SENT_RE = re.compile(r'(.+?[.!?…]+["\')\]]?\s)', re.DOTALL)
@@ -1306,123 +1215,15 @@ def _split_sentences(buf):
     return out, buf
 
 
-async def _stream_reply(state: dict, on_text):
-    provider = state["provider"]
-    config = state["config"]
-    client = state["client"]
-    model = config.get("model") or DEFAULT_MODELS.get(provider, "")
-    system = _build_system_prompt(config)
-    ha_tools = _get_ha_tools(config, provider)
-    local_msgs = list(state["conversation"])
-
-    for _ in range(4):
-        if provider == "anthropic":
-            full = ""
-            stream_kwargs = dict(
-                model=model,
-                max_tokens=500,
-                system=[
-                    {
-                        "type": "text",
-                        "text": system,
-                        "cache_control": {"type": "ephemeral"},
-                    }
-                ],
-                messages=local_msgs,
-            )
-            if ha_tools:
-                stream_kwargs["tools"] = ha_tools
-            async with client.messages.stream(**stream_kwargs) as stream:
-                async for delta in stream.text_stream:
-                    full += delta
-                    await on_text(delta)
-                final = await stream.get_final_message()
-            if final.stop_reason != "tool_use" or not ha_tools:
-                return full
-            results = []
-            for block in final.content:
-                if block.type == "tool_use":
-                    result = await _execute_ha_tool(
-                        config, block.name, dict(block.input)
-                    )
-                    results.append(
-                        {
-                            "type": "tool_result",
-                            "tool_use_id": block.id,
-                            "content": result,
-                        }
-                    )
-            local_msgs.append({"role": "assistant", "content": final.content})
-            local_msgs.append({"role": "user", "content": results})
-
-        else:
-            msgs = [{"role": "system", "content": system}] + local_msgs
-            tool_calls_acc = {}
-            finish_reason = None
-            full = ""
-            stream_extra = {"tools": ha_tools} if ha_tools else {}
-            stream = await _openai_stream_async(client, model, msgs, **stream_extra)
-            async for chunk in stream:
-                try:
-                    choice = chunk.choices[0]
-                except (AttributeError, IndexError):
-                    continue
-                if choice.finish_reason:
-                    finish_reason = choice.finish_reason
-                delta = choice.delta
-                if delta.content:
-                    full += delta.content
-                    await on_text(delta.content)
-                if getattr(delta, "tool_calls", None):
-                    for tc in delta.tool_calls:
-                        idx = tc.index
-                        if idx not in tool_calls_acc:
-                            tool_calls_acc[idx] = {
-                                "id": tc.id or "",
-                                "name": (tc.function.name or "") if tc.function else "",
-                                "args": "",
-                            }
-                        if tc.function and tc.function.arguments:
-                            tool_calls_acc[idx]["args"] += tc.function.arguments
-                        if tc.id and not tool_calls_acc[idx]["id"]:
-                            tool_calls_acc[idx]["id"] = tc.id
-                        if (
-                            tc.function
-                            and tc.function.name
-                            and not tool_calls_acc[idx]["name"]
-                        ):
-                            tool_calls_acc[idx]["name"] = tc.function.name
-            if finish_reason != "tool_calls" or not ha_tools:
-                return full
-            tc_list = []
-            tool_msgs = []
-            for acc in tool_calls_acc.values():
-                args = json.loads(acc["args"] or "{}")
-                result = await _execute_ha_tool(config, acc["name"], args)
-                tc_list.append(
-                    {
-                        "id": acc["id"],
-                        "type": "function",
-                        "function": {"name": acc["name"], "arguments": acc["args"]},
-                    }
-                )
-                tool_msgs.append(
-                    {"role": "tool", "tool_call_id": acc["id"], "content": result}
-                )
-            local_msgs.append(
-                {"role": "assistant", "content": None, "tool_calls": tc_list}
-            )
-            local_msgs.extend(tool_msgs)
-
-    return full
-
-
-async def _process_message(sid: str, text: str):
+async def _process_message(sid: str, text: str, speaker_name: str | None = None, speaker_kid_safe: bool = False):
     user_id = _sid_to_user.get(sid)
     if not user_id:
         return
 
     state = await _get_user_state(user_id)
+    state["_speaker_name"] = speaker_name
+    state["_speaker_kid_safe"] = speaker_kid_safe
+    state["_room"] = _presence_mod.get_user_room(user_id)
 
     if not _user_configured(state):
         await sio.emit("need_setup", {}, to=sid)
@@ -1430,7 +1231,6 @@ async def _process_message(sid: str, text: str):
         return
 
     await sio.emit("status", {"state": "thinking"}, to=sid)
-
     state["conversation"].append({"role": "user", "content": text})
     await _db_append_message(user_id, "user", text)
     if len(state["conversation"]) > MAX_HISTORY:
@@ -1455,9 +1255,7 @@ async def _process_message(sid: str, text: str):
     try:
         full = await _stream_reply(state, on_text)
         if sent_buf.strip():
-            await sio.emit(
-                "speak_sentence", {"text": sent_buf.strip(), "seq": seq}, to=sid
-            )
+            await sio.emit("speak_sentence", {"text": sent_buf.strip(), "seq": seq}, to=sid)
         reply = full.strip() or "…"
         state["conversation"].append({"role": "assistant", "content": reply})
         await _db_append_message(user_id, "assistant", reply)
@@ -1481,9 +1279,7 @@ async def _process_message(sid: str, text: str):
             conv.pop()
             await _db_clear_conversation(user_id)
             for msg_entry in conv:
-                await _db_append_message(
-                    user_id, msg_entry["role"], msg_entry["content"]
-                )
+                await _db_append_message(user_id, msg_entry["role"], msg_entry["content"])
         await sio.emit("speak_sentence", {"text": msg, "seq": 0}, to=sid)
         await sio.emit("response_done", {"text": msg}, to=sid)
         await sio.emit("status", {"state": "idle"}, to=sid)
@@ -1498,23 +1294,61 @@ async def on_connect(sid, environ, auth=None):
     _sid_to_user[sid] = user_id
     state = await _get_user_state(user_id)
     await sio.emit("status", {"state": "idle"}, to=sid)
-    await sio.emit(
-        "config_state",
-        {"configured": _user_configured(state), "role": state.get("role", "user")},
-        to=sid,
-    )
+    await sio.emit("config_state", {"configured": _user_configured(state), "role": state.get("role", "user")}, to=sid)
 
 
 @sio.on("disconnect")
 async def on_disconnect(sid):
     _sid_to_user.pop(sid, None)
+    _presence_mod.deregister_sid(sid)
+
+
+@sio.on("register_room")
+async def on_register_room(sid, data):
+    _presence_mod.register_sid_room(sid, ((data or {}).get("room") or "").strip()[:100])
 
 
 @sio.on("user_message")
 async def on_user_message(sid, data):
     text = ((data or {}).get("text") or "").strip()
-    if text:
-        asyncio.create_task(_process_message(sid, text))
+    if not text:
+        return
+    lower = text.lower()
+    party_on = any(p in lower for p in ("party mode", "let's party", "party time", "activate party", "start the party"))
+    party_off = any(p in lower for p in ("end party", "stop party", "deactivate party", "turn off party", "party off"))
+    if party_on or party_off:
+        active = party_on
+        user_id = _sid_to_user.get(sid)
+        state = await _get_user_state(user_id) if user_id else {}
+        config = state.get("config", {})
+        music_line = ""
+        if active and user_id:
+            if _spotify_configured(config):
+                await _spotify_start_party(user_id, config)
+                music_line = " Music is on."
+            elif _apple_music_configured(config):
+                await _apple_music_start_party(user_id)
+                music_line = " Music is on."
+        token = _create_party_token(user_id) if active and user_id else None
+        if not active and user_id:
+            _clear_party_tokens(user_id)
+        msg = f"Activating party protocols. Excellent taste, sir.{music_line}" if active else "Returning to standard operations. It was fun while it lasted, sir."
+        await sio.emit("status", {"state": "speaking"}, to=sid)
+        await sio.emit("party_mode", {"active": active, "token": token}, to=sid)
+        await sio.emit("speak_sentence", {"text": msg, "seq": 0}, to=sid)
+        await sio.emit("response_done", {"text": msg}, to=sid)
+        await sio.emit("status", {"state": "idle"}, to=sid)
+        return
+    speaker_name: str | None = None
+    speaker_kid_safe = False
+    speaker_id = (data or {}).get("speaker_id", "")
+    if speaker_id and speaker_id != "guest" and _voice_cache:
+        entry = _voice_cache.get(speaker_id)
+        if entry:
+            _, speaker_name, speaker_kid_safe = entry
+    elif speaker_id == "guest":
+        speaker_name = "guest"
+    asyncio.create_task(_process_message(sid, text, speaker_name=speaker_name, speaker_kid_safe=speaker_kid_safe))
 
 
 @sio.on("start_meeting")
@@ -1523,9 +1357,7 @@ async def on_start_meeting(sid, data=None):
     if not user_id:
         return
     if user_id in _active_meetings:
-        await sio.emit(
-            "meeting_error", {"error": "A meeting is already active."}, to=sid
-        )
+        await sio.emit("meeting_error", {"error": "A meeting is already active."}, to=sid)
         return
     meeting_id = await _db_create_meeting(user_id)
     _active_meetings[user_id] = {"meeting_id": meeting_id, "segments": []}
@@ -1535,9 +1367,7 @@ async def on_start_meeting(sid, data=None):
 @sio.on("meeting_audio_chunk")
 async def on_meeting_audio_chunk(sid, data):
     user_id = _sid_to_user.get(sid)
-    if not user_id or user_id not in _active_meetings:
-        return
-    if not data:
+    if not user_id or user_id not in _active_meetings or not data:
         return
     tmp = None
     try:
@@ -1548,13 +1378,7 @@ async def on_meeting_audio_chunk(sid, data):
 
         def _run_meeting_stt():
             m = _get_whisper()
-            segs, _ = m.transcribe(
-                tmp,
-                language="en",
-                beam_size=1,
-                vad_filter=True,
-                no_speech_threshold=0.6,
-            )
+            segs, _ = m.transcribe(tmp, language="en", beam_size=1, vad_filter=True, no_speech_threshold=0.6)
             return " ".join(s.text for s in segs).strip()
 
         async with _whisper_lock:
@@ -1565,12 +1389,7 @@ async def on_meeting_audio_chunk(sid, data):
             if meeting:
                 meeting["segments"].append(text)
                 await _db_append_transcript_segment(meeting["meeting_id"], text)
-                full = " ".join(meeting["segments"])
-                await sio.emit(
-                    "meeting_transcript_update",
-                    {"segment": text, "full": full},
-                    to=sid,
-                )
+                await sio.emit("meeting_transcript_update", {"segment": text, "full": " ".join(meeting["segments"])}, to=sid)
     except Exception as e:
         print(f"[MEETING] chunk error: {e}", flush=True)
     finally:
@@ -1586,28 +1405,18 @@ async def on_end_meeting(sid, data=None):
     user_id = _sid_to_user.get(sid)
     if not user_id or user_id not in _active_meetings:
         return
-
-    # Wait for any in-flight chunk transcription to complete before finalizing
     async with _whisper_lock:
         pass
-
     meeting = _active_meetings.pop(user_id, None)
     if not meeting:
         return
-
     meeting_id = meeting["meeting_id"]
     transcript = " ".join(meeting["segments"]).strip()
-
     if not transcript:
         notes = "No speech was detected during this meeting."
         await _db_finalize_meeting(meeting_id, notes)
-        await sio.emit(
-            "meeting_notes_ready",
-            {"meeting_id": meeting_id, "transcript": "", "notes": notes},
-            to=sid,
-        )
+        await sio.emit("meeting_notes_ready", {"meeting_id": meeting_id, "transcript": "", "notes": notes}, to=sid)
         return
-
     state = _user_states.get(user_id)
     notes = "Notes unavailable — no LLM configured."
     if state and _user_configured(state):
@@ -1616,13 +1425,8 @@ async def on_end_meeting(sid, data=None):
         except Exception as e:
             print(f"[MEETING] notes generation error: {e}", flush=True)
             notes = f"Transcript captured but notes generation failed: {e}"
-
     await _db_finalize_meeting(meeting_id, notes)
-    await sio.emit(
-        "meeting_notes_ready",
-        {"meeting_id": meeting_id, "transcript": transcript, "notes": notes},
-        to=sid,
-    )
+    await sio.emit("meeting_notes_ready", {"meeting_id": meeting_id, "transcript": transcript, "notes": notes}, to=sid)
 
 
 @sio.on("reset_chat")
@@ -1636,16 +1440,144 @@ async def on_reset_chat(sid, data=None):
     await _db_clear_conversation(user_id)
 
 
+@sio.on("start_party_music")
+async def on_start_party_music(sid, data=None):
+    user_id = _sid_to_user.get(sid)
+    if not user_id:
+        return
+    state = await _get_user_state(user_id)
+    config = state.get("config", {})
+    if _spotify_configured(config):
+        await _spotify_start_party(user_id, config)
+    elif _apple_music_configured(config):
+        await _apple_music_start_party(user_id)
+    await sio.emit("party_token", {"token": _create_party_token(user_id)}, to=sid)
+
+
+@sio.on("stop_party_music")
+async def on_stop_party_music(sid, data=None):
+    user_id = _sid_to_user.get(sid)
+    if user_id:
+        _clear_party_tokens(user_id)
+
+
+# ─── PARTY GUEST QUEUE ───────────────────────────────────────────────────────
+def _get_party_base_url() -> str:
+    base = os.getenv("JARVIS_PUBLIC_URL", "").rstrip("/")
+    return base or f"http://{os.getenv('HOST_IP', 'localhost')}:5000"
+
+
+@fast_app.get("/api/party-token")
+async def get_party_token(request: Request):
+    uid = _get_current_user(request)
+    if not uid:
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
+    token = _create_party_token(uid)
+    return JSONResponse({"token": token, "url": f"{_get_party_base_url()}/party/{token}"})
+
+
+@fast_app.get("/party/{token}", response_class=HTMLResponse)
+async def party_guest_page(token: str, request: Request):
+    if token not in _party_tokens:
+        return HTMLResponse("<html><body style='background:#08111e;color:#7fe9ff;font-family:monospace;padding:40px'><h2>Party has ended.</h2></body></html>", status_code=404)
+    return templates.TemplateResponse(request, "party.html")
+
+
+@fast_app.get("/party/{token}/now_playing")
+async def party_now_playing(token: str):
+    user_id = _party_tokens.get(token)
+    if not user_id:
+        raise HTTPException(404)
+    state = await _get_user_state(user_id)
+    config = state.get("config", {})
+    if _spotify_configured(config):
+        try:
+            r = await _spotify_req("get", "/me/player/currently-playing", user_id, config)
+            if r.status_code == 204 or not r.text:
+                return {"title": None, "artist": None}
+            item = r.json().get("item") or {}
+            return {"title": item.get("name"), "artist": ", ".join(a["name"] for a in item.get("artists", []))}
+        except Exception:
+            return {"title": None, "artist": None}
+    if _apple_music_configured(config):
+        sids = [sid for sid, uid in _sid_to_user.items() if uid == user_id]
+        if sids:
+            try:
+                return json.loads(await _am_request_callback(sids[0], "now_playing_data", timeout=4.0))
+            except Exception:
+                pass
+    return {"title": None, "artist": None}
+
+
+@fast_app.get("/party/{token}/search")
+async def party_search(token: str, q: str = ""):
+    user_id = _party_tokens.get(token)
+    if not user_id:
+        raise HTTPException(404)
+    if not q.strip():
+        return {"results": []}
+    state = await _get_user_state(user_id)
+    config = state.get("config", {})
+    if _spotify_configured(config):
+        try:
+            r = await _spotify_req("get", "/search", user_id, config, params={"q": q, "type": "track", "limit": 5})
+            r.raise_for_status()
+            items = r.json().get("tracks", {}).get("items", [])
+            return {"results": [{"id": t["uri"], "title": t["name"], "artist": ", ".join(a["name"] for a in t.get("artists", []))} for t in items]}
+        except Exception:
+            return {"results": []}
+    if _apple_music_configured(config):
+        try:
+            storefront = config.get("apple_music_storefront") or "us"
+            async with httpx.AsyncClient(timeout=10) as c:
+                r = await c.get(
+                    f"https://api.music.apple.com/v1/catalog/{storefront}/search",
+                    headers={"Authorization": f"Bearer {_apple_music_dev_token()}"},
+                    params={"term": q, "types": "songs", "limit": 5},
+                )
+                r.raise_for_status()
+            songs = r.json().get("results", {}).get("songs", {}).get("data", [])
+            return {"results": [{"id": s["id"], "title": s["attributes"].get("name", ""), "artist": s["attributes"].get("artistName", "")} for s in songs]}
+        except Exception:
+            return {"results": []}
+    return {"results": []}
+
+
+@fast_app.post("/party/{token}/add")
+async def party_add_to_queue(token: str, request: Request):
+    user_id = _party_tokens.get(token)
+    if not user_id:
+        raise HTTPException(404)
+    body = await request.json()
+    song_id = (body.get("id") or "").strip()
+    if not song_id:
+        return {"ok": False, "error": "No song ID provided."}
+    state = await _get_user_state(user_id)
+    config = state.get("config", {})
+    if _spotify_configured(config):
+        try:
+            r = await _spotify_req("post", "/me/player/queue", user_id, config, params={"uri": song_id})
+            return {"ok": r.status_code in (200, 204)}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+    if _apple_music_configured(config):
+        sids = [sid for sid, uid in _sid_to_user.items() if uid == user_id]
+        if not sids:
+            return {"ok": False, "error": "Host is not connected."}
+        try:
+            await _am_request_callback(sids[0], "queue_add", {"id": song_id}, timeout=8.0)
+            return {"ok": True}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+    return {"ok": False, "error": "No music service connected."}
+
+
 # ─── BACKGROUND TASKS ────────────────────────────────────────────────────────
 async def _telemetry_loop():
     try:
-        import psutil
-        import time
+        import psutil, time
     except Exception:
-        print(
-            "[TELEMETRY] psutil not installed - HUD panels will show placeholders.",
-            flush=True,
-        )
+        print("[TELEMETRY] psutil not installed - HUD panels will show placeholders.", flush=True)
         return
     boot = psutil.boot_time()
     last_net = psutil.net_io_counters()
@@ -1659,13 +1591,7 @@ async def _telemetry_loop():
             dt = max(now - last_t, 0.1)
             down = (net.bytes_recv - last_net.bytes_recv) * 8 / 1e6 / dt
             up = (net.bytes_sent - last_net.bytes_sent) * 8 / 1e6 / dt
-            pps = int(
-                (
-                    (net.packets_recv + net.packets_sent)
-                    - (last_net.packets_recv + last_net.packets_sent)
-                )
-                / dt
-            )
+            pps = int(((net.packets_recv + net.packets_sent) - (last_net.packets_recv + last_net.packets_sent)) / dt)
             last_net, last_t = net, now
             await sio.emit(
                 "hud_update",
@@ -1687,18 +1613,12 @@ async def _weather_loop():
     while True:
         try:
             async with httpx.AsyncClient(timeout=8) as client:
-                loc_r = await client.get(
-                    "http://ip-api.com/json/",
-                    headers={"User-Agent": "JARVIS-Starter/1.0"},
-                )
+                loc_r = await client.get("http://ip-api.com/json/", headers={"User-Agent": "JARVIS-Starter/1.0"})
                 loc = loc_r.json()
                 lat, lon = loc.get("lat"), loc.get("lon")
                 if lat is not None and lon is not None:
                     wx_r = await client.get(
-                        f"https://api.open-meteo.com/v1/forecast"
-                        f"?latitude={lat}&longitude={lon}"
-                        f"&current=temperature_2m,surface_pressure,weather_code"
-                        f"&temperature_unit=fahrenheit",
+                        f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current=temperature_2m,surface_pressure,weather_code&temperature_unit=fahrenheit",
                         headers={"User-Agent": "JARVIS-Starter/1.0"},
                     )
                     cur = wx_r.json().get("current", {})
@@ -1720,16 +1640,8 @@ async def _weather_loop():
                         95: "Thunderstorm",
                     }.get(code, "—")
                     weather_data = {
-                        "temp_f": (
-                            round(cur["temperature_2m"])
-                            if cur.get("temperature_2m") is not None
-                            else None
-                        ),
-                        "pressure_kpa": (
-                            round(cur["surface_pressure"] / 10, 1)
-                            if cur.get("surface_pressure")
-                            else None
-                        ),
+                        "temp_f": round(cur["temperature_2m"]) if cur.get("temperature_2m") is not None else None,
+                        "pressure_kpa": round(cur["surface_pressure"] / 10, 1) if cur.get("surface_pressure") else None,
                         "city": loc.get("city", "—"),
                         "region": loc.get("region", ""),
                         "condition": cond,
@@ -1741,15 +1653,31 @@ async def _weather_loop():
         await asyncio.sleep(600)
 
 
+async def _timer_reminder_loop():
+    while True:
+        await asyncio.sleep(30)
+        if not _db_ready():
+            continue
+        try:
+            for t in await _db_fire_due_timers():
+                speak = f"Your {t['label']} timer is done, sir."
+                for sid in _sids_for_user(t["user_id"]):
+                    await sio.emit("timer_fired", {"label": t["label"], "speak": speak}, to=sid)
+            for r in await _db_fire_due_reminders():
+                speak = f"Reminder, sir: {r['text']}."
+                for sid in _sids_for_user(r["user_id"]):
+                    await sio.emit("reminder_fired", {"text": r["text"], "speak": speak}, to=sid)
+        except Exception as e:
+            print(f"[TIMER] {e}", flush=True)
+
+
 async def _meeting_cleanup_loop():
     while True:
-        await asyncio.sleep(3600)  # check every hour
+        await asyncio.sleep(3600)
         try:
-            if _db_pool:
+            if _db_ready():
                 async with _pool().acquire() as conn:
-                    result = await conn.execute(
-                        "DELETE FROM meetings WHERE created_at < NOW() - INTERVAL '48 hours'"
-                    )
+                    result = await conn.execute("DELETE FROM meetings WHERE created_at < NOW() - INTERVAL '48 hours'")
                 if result != "DELETE 0":
                     print(f"[MEETING] Cleanup: {result}", flush=True)
         except Exception as e:

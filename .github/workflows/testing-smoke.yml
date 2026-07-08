@@ -1,0 +1,62 @@
+name: Testing Branch Smoke Test
+
+on:
+  push:
+    branches:
+      - testing
+  pull_request:
+    branches:
+      - staging
+
+jobs:
+  smoke-test:
+    runs-on: [self-hosted, homelab]
+    timeout-minutes: 20
+    steps:
+      - name: Require PR source branch to be testing
+        if: github.event_name == 'pull_request' && github.head_ref != 'testing'
+        env:
+          HEAD_REF: ${{ github.head_ref }}
+        run: |
+          echo "Only testing -> staging merges are allowed. This PR is from '$HEAD_REF'."
+          exit 1
+
+      - uses: actions/checkout@v4
+
+      - name: Create .env
+        run: touch .env
+
+      - name: Build and start stack
+        run: docker compose up -d --build
+
+      - name: Wait for app and check /login
+        run: curl --retry 30 --retry-all-errors --retry-delay 5 -sf http://localhost:5000/login -o /dev/null
+
+      - name: Check / does not error
+        run: |
+          status=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:5000/)
+          if [ "$status" -ge 500 ]; then
+            echo "Expected non-5xx from /, got $status"
+            exit 1
+          fi
+
+      - name: Install Playwright test runner
+        run: npm install @playwright/test
+
+      - name: Run browser smoke tests
+        run: npx playwright test
+
+      - name: Upload Playwright report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: playwright-report/
+
+      - name: Dump logs on failure
+        if: failure()
+        run: docker compose logs
+
+      - name: Tear down
+        if: always()
+        run: docker compose down -v
