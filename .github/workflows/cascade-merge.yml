@@ -5,10 +5,19 @@ on:
     branches:
       - staging
       - main
+  workflow_run:
+    workflows:
+      - "Code Quality"
+      - "Testing Branch Smoke Test"
+    types:
+      - completed
+    branches:
+      - testing
 
 jobs:
   cascade:
     runs-on: ubuntu-latest
+    if: github.event_name == 'push' || github.event.workflow_run.conclusion == 'success'
     permissions:
       contents: write
       issues: write
@@ -18,9 +27,19 @@ jobs:
         with:
           fetch-depth: 0
           token: ${{ secrets.GH_PAT }}
+          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.ref }}
 
-      - name: Cascade merge into all branches
+      - name: Check required checks passed for testing
+        if: github.event_name == 'workflow_run'
+        id: gate
         env:
           GH_TOKEN: ${{ secrets.GH_PAT }}
-          SOURCE_BRANCH: ${{ github.ref_name }}
+          SHA: ${{ github.event.workflow_run.head_sha }}
+        run: python3 .github/scripts/check_testing_gate.py
+
+      - name: Cascade merge into all branches
+        if: github.event_name == 'push' || steps.gate.outputs.ready == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+          SOURCE_BRANCH: ${{ github.event_name == 'workflow_run' && 'testing' || github.ref_name }}
         run: python3 .github/scripts/cascade_merge.py
