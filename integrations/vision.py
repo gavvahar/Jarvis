@@ -2,6 +2,8 @@ import asyncio, datetime, httpx
 from fastapi import HTTPException
 
 from config import VISION_AWAY_TIMEOUT, VISION_FACE_THRESHOLD, VISION_POLL_INTERVAL
+from embeddings import average_embedding, best_match
+from tool_schemas import anthropic_tools_to_openai
 from db import (
     _db_add_camera,
     _db_clear_face_embedding,
@@ -86,13 +88,6 @@ def _get_face_app():
     return _face_app_instance
 
 
-def _cosine_distance(a: list, b: list) -> float:
-    av = _np_v.array(a, dtype=float)
-    bv = _np_v.array(b, dtype=float)
-    denom = _np_v.linalg.norm(av) * _np_v.linalg.norm(bv)
-    return float(1.0 - _np_v.dot(av, bv) / denom) if denom > 0 else 2.0
-
-
 def _extract_face_embedding(image_bytes: bytes) -> list | None:
     if not _VISION_OK:
         return None
@@ -123,13 +118,10 @@ def _identify_faces_in_image(image_bytes: bytes) -> list:
     results = []
     for face in faces:
         emb = face.normed_embedding.tolist()
-        best_uid, best_name, best_dist = None, "unknown", 2.0
-        for uid, (stored, name) in _face_cache.items():
-            dist = _cosine_distance(emb, stored)
-            if dist < best_dist:
-                best_uid, best_name, best_dist = uid, name, dist
-        if best_dist <= VISION_FACE_THRESHOLD:
-            results.append({"detected_user_id": best_uid, "name": best_name, "confidence": round(1.0 - best_dist, 3)})
+        best_uid, best_score, meta = best_match(emb, _face_cache)
+        best_dist = 1.0 - best_score
+        if best_uid is not None and best_dist <= VISION_FACE_THRESHOLD:
+            results.append({"detected_user_id": best_uid, "name": meta[0], "confidence": round(1.0 - best_dist, 3)})
         else:
             results.append({"detected_user_id": None, "name": "unknown", "confidence": 0.0})
     return results
@@ -199,43 +191,7 @@ VISION_TOOLS_ANTHROPIC = [
     },
 ]
 
-VISION_TOOLS_OPENAI = [
-    {
-        "type": "function",
-        "function": {
-            "name": "get_who_is_home",
-            "description": "List household members currently home based on camera detections.",
-            "parameters": {"type": "object", "properties": {}},
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "get_security_events",
-            "description": "Get recent security events from cameras.",
-            "parameters": {"type": "object", "properties": {"hours": {"type": "number"}}},
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "manage_camera",
-            "description": "Add, list, remove, enable, disable, or toggle privacy on cameras.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "action": {"type": "string", "enum": ["add", "list", "remove", "enable", "disable", "privacy_on", "privacy_off"]},
-                    "name": {"type": "string"},
-                    "source_type": {"type": "string", "enum": ["ha", "rtsp"]},
-                    "source": {"type": "string"},
-                    "room": {"type": "string"},
-                    "camera_id": {"type": "integer"},
-                },
-                "required": ["action"],
-            },
-        },
-    },
-]
+VISION_TOOLS_OPENAI = anthropic_tools_to_openai(VISION_TOOLS_ANTHROPIC)
 
 _VISION_TOOL_NAMES = {t["name"] for t in VISION_TOOLS_ANTHROPIC}
 
@@ -436,9 +392,7 @@ async def _face_enroll_finish(user_id: str, embeddings: list) -> dict:
         raise HTTPException(400, "Vision unavailable.")
     if not embeddings or len(embeddings) < 1:
         raise HTTPException(400, "At least 1 face sample required.")
-    import numpy as _npf
-
-    avg = _npf.mean([_npf.array(e) for e in embeddings], axis=0).tolist()
+    avg = average_embedding(embeddings)
     await _db_save_face_embedding(user_id, avg)
     await _refresh_face_cache()
     return {"ok": True}
