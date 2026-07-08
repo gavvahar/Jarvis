@@ -13,6 +13,7 @@ from db import (
     _db_update_alert_last_fired,
 )
 from integrations.ha import _ha_call_service, _ha_configured, _ha_get_entity_state
+from tool_schemas import anthropic_tools_to_openai
 
 _sio = None
 _sids_fn = None
@@ -56,24 +57,7 @@ _ROUTINE_TOOL_ANTHROPIC = {
     },
 }
 
-_ROUTINE_TOOL_OPENAI = {
-    "type": "function",
-    "function": {
-        "name": "manage_routine",
-        "description": "Create, list, delete, or run named routines (ha_service/speak/delay steps).",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "action": {"type": "string", "enum": ["create", "list", "delete", "run"]},
-                "name": {"type": "string"},
-                "trigger_phrases": {"type": "array", "items": {"type": "string"}},
-                "steps": {"type": "array", "items": {"type": "object"}},
-                "routine_id": {"type": "integer"},
-            },
-            "required": ["action"],
-        },
-    },
-}
+_ROUTINE_TOOL_OPENAI = anthropic_tools_to_openai([_ROUTINE_TOOL_ANTHROPIC])[0]
 
 _DEVICE_ALERT_TOOL_ANTHROPIC = {
     "name": "manage_device_alert",
@@ -98,27 +82,7 @@ _DEVICE_ALERT_TOOL_ANTHROPIC = {
     },
 }
 
-_DEVICE_ALERT_TOOL_OPENAI = {
-    "type": "function",
-    "function": {
-        "name": "manage_device_alert",
-        "description": "Create, list, or delete proactive HA device alert rules.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "action": {"type": "string", "enum": ["create", "list", "delete"]},
-                "name": {"type": "string"},
-                "entity_id": {"type": "string"},
-                "condition": {"type": "string", "enum": ["equals", "not_equals", "greater_than", "less_than"]},
-                "value": {"type": "string"},
-                "message": {"type": "string"},
-                "cooldown_minutes": {"type": "integer"},
-                "alert_id": {"type": "integer"},
-            },
-            "required": ["action"],
-        },
-    },
-}
+_DEVICE_ALERT_TOOL_OPENAI = anthropic_tools_to_openai([_DEVICE_ALERT_TOOL_ANTHROPIC])[0]
 
 _ZIGBEE_TOOL_ANTHROPIC = {
     "name": "zigbee_control",
@@ -133,27 +97,13 @@ _ZIGBEE_TOOL_ANTHROPIC = {
     },
 }
 
-_ZIGBEE_TOOL_OPENAI = {
-    "type": "function",
-    "function": {
-        "name": "zigbee_control",
-        "description": "Send a command to a Zigbee device via Zigbee2MQTT.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "device": {"type": "string"},
-                "payload": {"type": "object"},
-            },
-            "required": ["device", "payload"],
-        },
-    },
-}
+_ZIGBEE_TOOL_OPENAI = anthropic_tools_to_openai([_ZIGBEE_TOOL_ANTHROPIC])[0]
 
 
 # ── Tool getters ───────────────────────────────────────────────────────────────
 
 
-def _get_phase5_tools(config: dict, provider: str) -> list:
+def _get_automation_tools(config: dict, provider: str) -> list:
     tools = []
     if _ha_configured(config):
         if provider == "anthropic":

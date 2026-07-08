@@ -4,8 +4,9 @@ import xml.etree.ElementTree as ET
 import httpx
 
 from db import _db_cancel_reminder, _db_cancel_timer, _db_list_reminders, _db_list_timers, _db_set_reminder, _db_set_timer
-from integrations.phase1.calendar import _CALENDAR_TOOL_ANTHROPIC, _CALENDAR_TOOL_OPENAI, _calendar_configured
-from integrations.phase1.contacts import _CONTACT_LOOKUP_TOOL_ANTHROPIC, _CONTACT_LOOKUP_TOOL_OPENAI, _contacts_configured
+from integrations.pim.calendar import _CALENDAR_TOOL_ANTHROPIC, _CALENDAR_TOOL_OPENAI, _calendar_configured
+from integrations.pim.contacts import _CONTACT_LOOKUP_TOOL_ANTHROPIC, _CONTACT_LOOKUP_TOOL_OPENAI, _contacts_configured
+from tool_schemas import anthropic_tools_to_openai
 
 # ─── TIMER / REMINDER / NEWS TOOLS ───────────────────────────────────────────
 _TIMER_TOOL_ANTHROPIC = {
@@ -23,23 +24,7 @@ _TIMER_TOOL_ANTHROPIC = {
     },
 }
 
-_TIMER_TOOL_OPENAI = {
-    "type": "function",
-    "function": {
-        "name": "manage_timer",
-        "description": "Set, list, or cancel timers.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "action": {"type": "string", "enum": ["set", "list", "cancel"]},
-                "label": {"type": "string"},
-                "duration_seconds": {"type": "integer"},
-                "timer_id": {"type": "integer"},
-            },
-            "required": ["action"],
-        },
-    },
-}
+_TIMER_TOOL_OPENAI = anthropic_tools_to_openai([_TIMER_TOOL_ANTHROPIC])[0]
 
 _REMINDER_TOOL_ANTHROPIC = {
     "name": "manage_reminder",
@@ -57,24 +42,7 @@ _REMINDER_TOOL_ANTHROPIC = {
     },
 }
 
-_REMINDER_TOOL_OPENAI = {
-    "type": "function",
-    "function": {
-        "name": "manage_reminder",
-        "description": "Set, list, or cancel reminders.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "action": {"type": "string", "enum": ["set", "list", "cancel"]},
-                "text": {"type": "string"},
-                "fire_at": {"type": "string"},
-                "recurring_minutes": {"type": "integer"},
-                "reminder_id": {"type": "integer"},
-            },
-            "required": ["action"],
-        },
-    },
-}
+_REMINDER_TOOL_OPENAI = anthropic_tools_to_openai([_REMINDER_TOOL_ANTHROPIC])[0]
 
 _NEWS_TOOL_ANTHROPIC = {
     "name": "get_news_headlines",
@@ -92,21 +60,7 @@ _NEWS_TOOL_ANTHROPIC = {
     },
 }
 
-_NEWS_TOOL_OPENAI = {
-    "type": "function",
-    "function": {
-        "name": "get_news_headlines",
-        "description": "Fetch latest news headlines by category.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "category": {"type": "string", "enum": ["general", "technology", "science", "health", "business", "sports"]},
-                "count": {"type": "integer"},
-            },
-            "required": [],
-        },
-    },
-}
+_NEWS_TOOL_OPENAI = anthropic_tools_to_openai([_NEWS_TOOL_ANTHROPIC])[0]
 
 _NEWS_RSS = {
     "general": "https://feeds.bbci.co.uk/news/rss.xml",
@@ -124,7 +78,7 @@ def _get_parity_tools(provider: str) -> list:
     return [_TIMER_TOOL_OPENAI, _REMINDER_TOOL_OPENAI, _NEWS_TOOL_OPENAI]
 
 
-def _get_phase1_tools(config: dict, provider: str) -> list:
+def _get_pim_tools(config: dict, provider: str) -> list:
     tools = _get_parity_tools(provider)
     if _calendar_configured(config):
         tools.append(_CALENDAR_TOOL_ANTHROPIC if provider == "anthropic" else _CALENDAR_TOOL_OPENAI)
