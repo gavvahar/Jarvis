@@ -13,6 +13,7 @@ from integrations.pim.calendar import _calendar_configured, _execute_calendar_to
 from integrations.pim.contacts import _contacts_configured, _execute_contact_lookup_tool
 from integrations.pim.timers import _execute_news_tool, _execute_reminder_tool, _execute_timer_tool, _get_pim_tools
 from integrations.automation import _execute_device_alert_tool, _execute_routine_tool, _execute_zigbee_tool, _get_automation_tools
+from integrations.matter import _execute_matter_tool, _get_matter_tools, _matter_configured
 from integrations.shared_lists import _execute_shared_list_tool, _get_shared_list_tools
 from integrations.tesla import _TESLA_TOOL_NAMES, _execute_tesla_tool, _get_tesla_tools, _tesla_configured
 from integrations.vision import _VISION_TOOL_NAMES, _execute_vision_tool, _get_presence_prompt_context, _get_vision_tools
@@ -283,6 +284,11 @@ def _build_system_prompt(config: dict, speaker_name: str | None = None, is_kid_s
         system += (
             '\n\nZIGBEE — use zigbee_control to send commands directly to Zigbee devices via MQTT. Payload examples: {"state": "ON"}, {"brightness": 128}, {"color_temp": 300}.'
         )
+    if _matter_configured():
+        system += (
+            "\n\nMATTER/THREAD — use matter_control for Matter/Thread devices not exposed through Home Assistant. "
+            "Call action='list_nodes' first to find node_ids, then 'get_state', 'on', 'off', 'toggle', or 'set_level'."
+        )
     if _snapcast_configured():
         system += (
             "\n\nMULTI-ROOM AUDIO (Snapcast) — use snapcast_status to see all rooms and clients, "
@@ -338,6 +344,7 @@ async def _stream_reply(state: dict, on_text):
         + _get_shared_list_tools(provider)
         + _get_pim_tools(config, provider)
         + _get_automation_tools(config, provider)
+        + _get_matter_tools(provider)
         + _get_vision_tools(provider)
         + _get_snapcast_tools(provider)
         + finance_tools
@@ -390,6 +397,8 @@ async def _stream_reply(state: dict, on_text):
                         result = await _execute_device_alert_tool(uid, dict(block.input))
                     elif block.name == "zigbee_control":
                         result = await _execute_zigbee_tool(dict(block.input))
+                    elif block.name == "matter_control":
+                        result = await _execute_matter_tool(dict(block.input))
                     else:
                         result = await _execute_ha_tool(config, block.name, dict(block.input), uid)
                     results.append(
@@ -460,6 +469,8 @@ async def _stream_reply(state: dict, on_text):
                     result = await _execute_device_alert_tool(uid, args)
                 elif acc["name"] == "zigbee_control":
                     result = await _execute_zigbee_tool(args)
+                elif acc["name"] == "matter_control":
+                    result = await _execute_matter_tool(args)
                 else:
                     result = await _execute_ha_tool(config, acc["name"], args, uid)
                 tc_list.append(
