@@ -80,7 +80,7 @@ Deploy Jarvis on dedicated always-on hardware around the home.
 
 Extend beyond Home Assistant to cover all major smart home ecosystems.
 
-- [ ] **Matter/Thread support** — native Matter controller alongside Home Assistant
+- [x] **Matter/Thread support** — `matter_control` tool talks directly to a self-hosted python-matter-server over its WebSocket JSON API (`integrations/matter.py`); list_nodes/get_state/on/off/toggle/set_level, no Home Assistant required
 - [x] **Zigbee direct** — zigbee2mqtt integration via MQTT (`zigbee_control` tool)
 - [ ] **Z-Wave** — Z-Wave JS integration
 - [ ] **Apple HomeKit** — read/write HomeKit accessories via HAP-python
