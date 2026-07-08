@@ -3,6 +3,8 @@
 # docker-language-server: ignore=DS002
 FROM python:3-slim
 
+ENV PYTHONDONTWRITEBYTECODE=1
+
 WORKDIR /app
 
 RUN apt-get update && apt-get upgrade -y \

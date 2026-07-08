@@ -1,9 +1,9 @@
-# Contributing to J.A.R.V.I.S.
+# Contributing to J.A.R.V.I.S
 
 ## Getting started
 
 ```bash
-pip install -r requirements.txt
+pip3 install -r requirements/local/requirements.txt
 cp .env.example .env   # fill in credentials
 uvicorn app:app --reload --port 5000
 ```
@@ -14,7 +14,7 @@ You still need a running Postgres and a `.env` file — see the README.
 
 Changes reach `main` through a two-stage pipeline:
 
-```
+```text
 feature branch → testing → staging → main (auto)
 ```
 
