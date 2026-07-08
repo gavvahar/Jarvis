@@ -327,9 +327,7 @@ async def _db_list_timers(user_id: str) -> list:
 
 
 async def _db_cancel_timer(user_id: str, timer_id: int) -> bool:
-    return await db_exec_affected(
-        _pool(), "UPDATE timers SET fired = TRUE WHERE id = $1 AND user_id = $2 AND fired = FALSE", timer_id, user_id
-    )
+    return await db_exec_affected(_pool(), "UPDATE timers SET fired = TRUE WHERE id = $1 AND user_id = $2 AND fired = FALSE", timer_id, user_id)
 
 
 async def _db_fire_due_timers() -> list:
