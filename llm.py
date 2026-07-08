@@ -3,6 +3,7 @@ import json
 
 from config import DEFAULT_MODELS, MQTT_BROKER
 from db import _db_get_recent_doorbell_events
+from llm_client import build_llm_client
 from integrations.finance import _FINANCE_TOOL_NAMES, _execute_finance_tool, _get_finance_tools
 from integrations.ha import _get_ha_tools, _ha_call_service, _ha_configured, _ha_get_states
 from integrations.music.apple_music import _AM_TOOL_NAMES, _apple_music_configured, _execute_apple_music_tool, _get_apple_music_tools
@@ -23,41 +24,11 @@ _location_context: dict = {}
 
 # ─── LLM CLIENTS ─────────────────────────────────────────────────────────────
 def _build_client(provider, api_key, base_url=""):
-    if not api_key and provider != "openai_compatible":
-        return None
-    try:
-        if provider == "anthropic":
-            import anthropic
-
-            return anthropic.AsyncAnthropic(api_key=api_key)
-        import openai
-
-        kwargs = {"api_key": api_key or "ollama"}
-        if provider == "openai_compatible" and base_url:
-            kwargs["base_url"] = base_url.strip()
-        return openai.AsyncOpenAI(**kwargs)
-    except Exception as e:
-        print(f"[CLIENT] Failed to build {provider} client: {e}", flush=True)
-        return None
+    return build_llm_client(provider, api_key, base_url, is_async=True)
 
 
 def _build_sync_client(provider, api_key, base_url=""):
-    if not api_key and provider != "openai_compatible":
-        return None
-    try:
-        if provider == "anthropic":
-            import anthropic
-
-            return anthropic.Anthropic(api_key=api_key)
-        import openai
-
-        kwargs = {"api_key": api_key or "ollama"}
-        if provider == "openai_compatible" and base_url:
-            kwargs["base_url"] = base_url.strip()
-        return openai.OpenAI(**kwargs)
-    except Exception as e:
-        print(f"[CLIENT] Failed to build sync {provider} client: {e}", flush=True)
-        return None
+    return build_llm_client(provider, api_key, base_url, is_async=False)
 
 
 # ─── TOOL DISPATCH ────────────────────────────────────────────────────────────
