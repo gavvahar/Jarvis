@@ -7,6 +7,7 @@ from fastapi import HTTPException
 
 from config import APP_URL, SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET
 from db import _pool
+from oauth_client import refresh_oauth_token
 from tool_schemas import anthropic_tools_to_openai
 
 _SPOTIFY_AUTH_BASE = "https://accounts.spotify.com"
@@ -42,18 +43,16 @@ async def _spotify_access_token(user_id: str, config: dict) -> str:
     if not refresh:
         raise ValueError("Spotify not connected")
 
-    async with httpx.AsyncClient(timeout=15) as c:
-        r = await c.post(
-            f"{_SPOTIFY_AUTH_BASE}/api/token",
-            data={
-                "grant_type": "refresh_token",
-                "refresh_token": refresh,
-                "client_id": SPOTIFY_CLIENT_ID,
-                "client_secret": SPOTIFY_CLIENT_SECRET,
-            },
-        )
-        r.raise_for_status()
-        data = r.json()
+    data = await refresh_oauth_token(
+        f"{_SPOTIFY_AUTH_BASE}/api/token",
+        {
+            "grant_type": "refresh_token",
+            "refresh_token": refresh,
+            "client_id": SPOTIFY_CLIENT_ID,
+            "client_secret": SPOTIFY_CLIENT_SECRET,
+        },
+        as_json=False,
+    )
 
     access = data["access_token"]
     expiry = now + data.get("expires_in", 3600)
