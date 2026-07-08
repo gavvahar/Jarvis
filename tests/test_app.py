@@ -11,6 +11,7 @@ import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import app as jarvis
+import auth
 from app import (
     _build_client,
     _calendar_configured,
@@ -25,16 +26,40 @@ from app import (
     _tesla_configured,
     _user_configured,
 )
-from integrations.ha import _ha_headers
+from integrations.ha import _ha_call_service, _ha_get_entity_state, _ha_get_states, _ha_headers, _validate_ha
 from integrations.music.spotify import _execute_spotify_tool, _get_spotify_tools
+from integrations.music import apple_music as apple_music_mod
+from integrations.music.apple_music import (
+    _am_callbacks,
+    _apple_music_configured,
+    _apple_music_server_configured,
+    _execute_apple_music_tool,
+    _get_apple_music_tools,
+    _require_runtime,
+    _resolve_apple_music_callback,
+)
 from integrations.myq import _get_myq_tools, _myq_set_door
 from integrations.pim.calendar import _execute_calendar_tool, _parse_ical_events
 from integrations.pim.contacts import _execute_contact_lookup_tool, _parse_vcards
-from integrations.pim.dav import _pick_best_dav_collection
+from integrations.pim.dav import (
+    _dav_display_name,
+    _dav_href,
+    _dav_multistatus_responses,
+    _dav_prop_href,
+    _dav_propfind_body,
+    _dav_raise_for_status,
+    _dav_resource_types,
+    _dav_response_for_url,
+    _dav_response_prop,
+    _dav_join,
+    _ensure_trailing_slash,
+    _pick_best_dav_collection,
+)
 from integrations.pim.timers import _duration_str, _execute_news_tool, _execute_reminder_tool, _execute_timer_tool, _get_pim_tools
 from integrations.automation import _evaluate_alert_condition, _execute_device_alert_tool, _execute_routine_tool, _get_automation_tools
 from integrations.shared_lists import _execute_shared_list_tool
-from integrations.tesla import _get_tesla_tools
+from integrations.multiroom.snapcast import _execute_snapcast_tool, _get_snapcast_tools, _snapcast_get_status
+from integrations.tesla import _execute_tesla_tool, _get_tesla_tools, _tesla_base_url, _tesla_pick_vehicle
 from llm import _build_system_prompt
 from integrations.tesla import _c_to_f
 from integrations.finance import _execute_finance_tool, _finance_configured, _get_finance_tools, _normalize_account, _normalize_transaction
@@ -1210,3 +1235,662 @@ class TestNormalizeAccount:
         assert result["balance_current"] == 100.0
         assert result["balance_available"] == 90.0
         assert result["iso_currency"] == "USD"
+
+
+# ── auth.py ─────────────────────────────────────────────────────────────────
+
+
+class TestAuthSession:
+    def test_sign_and_verify_roundtrip(self):
+        auth.init_signer("test-secret-key")
+        token = auth._sign_session("user-123")
+        assert auth._verify_session(token) == "user-123"
+
+    def test_verify_rejects_tampered_token(self):
+        auth.init_signer("test-secret-key")
+        token = auth._sign_session("user-123")
+        assert auth._verify_session(token + "x") is None
+
+    def test_verify_rejects_garbage(self):
+        auth.init_signer("test-secret-key")
+        assert auth._verify_session("not-a-real-token") is None
+
+    def test_get_current_user_no_oidc_returns_local(self):
+        with patch.object(auth, "_oidc_config", None):
+            request = MagicMock()
+            request.cookies = {}
+            assert auth._get_current_user(request) == "local"
+
+    def test_get_current_user_with_oidc_no_cookie(self):
+        with patch.object(auth, "_oidc_config", {"issuer": "x"}):
+            request = MagicMock()
+            request.cookies = {}
+            assert auth._get_current_user(request) is None
+
+    def test_get_current_user_with_oidc_valid_cookie(self):
+        auth.init_signer("test-secret-key")
+        token = auth._sign_session("user-456")
+        with patch.object(auth, "_oidc_config", {"issuer": "x"}):
+            request = MagicMock()
+            request.cookies = {"jarvis_session": token}
+            assert auth._get_current_user(request) == "user-456"
+
+    def test_get_user_from_environ_no_oidc_returns_local(self):
+        with patch.object(auth, "_oidc_config", None):
+            assert auth._get_user_from_environ({}) == "local"
+
+    def test_get_user_from_environ_missing_cookie_header(self):
+        with patch.object(auth, "_oidc_config", {"issuer": "x"}):
+            assert auth._get_user_from_environ({}) is None
+
+    def test_get_user_from_environ_parses_cookie(self):
+        auth.init_signer("test-secret-key")
+        token = auth._sign_session("user-789")
+        environ = {"headers": [(b"cookie", f"other=1; jarvis_session={token}".encode())]}
+        with patch.object(auth, "_oidc_config", {"issuer": "x"}):
+            assert auth._get_user_from_environ(environ) == "user-789"
+
+    def test_fetch_oidc_config_noop_when_no_discovery_url(self):
+        with patch("auth.OIDC_DISCOVERY_URL", ""):
+            asyncio.run(auth._fetch_oidc_config())
+
+    def test_fetch_oidc_config_success(self):
+        mock_resp = MagicMock()
+        mock_resp.raise_for_status = MagicMock()
+        mock_resp.json = MagicMock(return_value={"issuer": "https://auth.example.com"})
+        mock_client = MagicMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.get = AsyncMock(return_value=mock_resp)
+        with (
+            patch("auth.OIDC_DISCOVERY_URL", "https://auth.example.com/.well-known/openid-configuration"),
+            patch("httpx.AsyncClient", return_value=mock_client),
+        ):
+            asyncio.run(auth._fetch_oidc_config())
+        assert auth._oidc_config == {"issuer": "https://auth.example.com"}
+        auth._oidc_config = None
+
+    def test_fetch_oidc_config_handles_failure(self):
+        mock_client = MagicMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.get = AsyncMock(side_effect=Exception("timeout"))
+        with (
+            patch("auth.OIDC_DISCOVERY_URL", "https://auth.example.com/.well-known/openid-configuration"),
+            patch("httpx.AsyncClient", return_value=mock_client),
+        ):
+            asyncio.run(auth._fetch_oidc_config())  # should not raise
+
+
+# ── integrations/ha.py ───────────────────────────────────────────────────────
+
+
+class TestHaIntegration:
+    def _mock_client(self, get_return=None, post_return=None, get_side_effect=None):
+        mock_client = MagicMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        if get_side_effect is not None:
+            mock_client.get = AsyncMock(side_effect=get_side_effect)
+        else:
+            mock_client.get = AsyncMock(return_value=get_return)
+        mock_client.post = AsyncMock(return_value=post_return)
+        return mock_client
+
+    def test_validate_ha_success(self):
+        resp = MagicMock(status_code=200)
+        with patch("httpx.AsyncClient", return_value=self._mock_client(get_return=resp)):
+            ok, msg = asyncio.run(_validate_ha("http://ha.local", "tok"))
+        assert ok is True
+        assert msg == ""
+
+    def test_validate_ha_rejected_token(self):
+        resp = MagicMock(status_code=401)
+        with patch("httpx.AsyncClient", return_value=self._mock_client(get_return=resp)):
+            ok, msg = asyncio.run(_validate_ha("http://ha.local", "bad"))
+        assert ok is False
+        assert "rejected" in msg
+
+    def test_validate_ha_other_status(self):
+        resp = MagicMock(status_code=500)
+        with patch("httpx.AsyncClient", return_value=self._mock_client(get_return=resp)):
+            ok, msg = asyncio.run(_validate_ha("http://ha.local", "tok"))
+        assert ok is False
+        assert "500" in msg
+
+    def test_validate_ha_connection_error(self):
+        with patch("httpx.AsyncClient", return_value=self._mock_client(get_side_effect=Exception("refused"))):
+            ok, msg = asyncio.run(_validate_ha("http://ha.local", "tok"))
+        assert ok is False
+        assert "Could not reach" in msg
+
+    def test_get_entity_state_found(self):
+        resp = MagicMock(status_code=200)
+        resp.json = MagicMock(return_value={"state": "on"})
+        cfg = {"ha_url": "http://ha.local", "ha_token": "tok"}
+        with patch("httpx.AsyncClient", return_value=self._mock_client(get_return=resp)):
+            state = asyncio.run(_ha_get_entity_state(cfg, "light.kitchen"))
+        assert state == "on"
+
+    def test_get_entity_state_not_found(self):
+        resp = MagicMock(status_code=404)
+        cfg = {"ha_url": "http://ha.local", "ha_token": "tok"}
+        with patch("httpx.AsyncClient", return_value=self._mock_client(get_return=resp)):
+            state = asyncio.run(_ha_get_entity_state(cfg, "light.kitchen"))
+        assert state is None
+
+    def test_get_entity_state_exception_returns_none(self):
+        cfg = {"ha_url": "http://ha.local", "ha_token": "tok"}
+        with patch("httpx.AsyncClient", return_value=self._mock_client(get_side_effect=Exception("boom"))):
+            state = asyncio.run(_ha_get_entity_state(cfg, "light.kitchen"))
+        assert state is None
+
+    def test_get_states_filters_by_domain_and_formats(self):
+        resp = MagicMock(status_code=200)
+        resp.raise_for_status = MagicMock()
+        resp.json = MagicMock(
+            return_value=[
+                {"entity_id": "light.kitchen", "state": "on", "attributes": {"friendly_name": "Kitchen Light"}},
+                {"entity_id": "switch.fan", "state": "off", "attributes": {}},
+            ]
+        )
+        cfg = {"ha_url": "http://ha.local", "ha_token": "tok"}
+        with patch("httpx.AsyncClient", return_value=self._mock_client(get_return=resp)):
+            result = asyncio.run(_ha_get_states(cfg, domain="light"))
+        assert "light.kitchen: on (Kitchen Light)" in result
+        assert "switch.fan" not in result
+
+    def test_get_states_no_entities(self):
+        resp = MagicMock(status_code=200)
+        resp.raise_for_status = MagicMock()
+        resp.json = MagicMock(return_value=[])
+        cfg = {"ha_url": "http://ha.local", "ha_token": "tok"}
+        with patch("httpx.AsyncClient", return_value=self._mock_client(get_return=resp)):
+            result = asyncio.run(_ha_get_states(cfg))
+        assert result == "No entities found."
+
+    def test_call_service_success(self):
+        resp = MagicMock(status_code=200)
+        cfg = {"ha_url": "http://ha.local", "ha_token": "tok"}
+        with patch("httpx.AsyncClient", return_value=self._mock_client(post_return=resp)):
+            result = asyncio.run(_ha_call_service(cfg, "light", "turn_on", "light.kitchen", {"brightness_pct": 50}))
+        assert result == "Done."
+
+    def test_call_service_failure(self):
+        resp = MagicMock(status_code=400, text="bad request")
+        cfg = {"ha_url": "http://ha.local", "ha_token": "tok"}
+        with patch("httpx.AsyncClient", return_value=self._mock_client(post_return=resp)):
+            result = asyncio.run(_ha_call_service(cfg, "light", "turn_on"))
+        assert "400" in result
+
+
+# ── integrations/multiroom/snapcast.py ───────────────────────────────────────
+
+
+class TestSnapcastTool:
+    def test_not_configured_no_tools(self):
+        with patch("integrations.multiroom.snapcast.SNAPCAST_URL", ""):
+            assert _get_snapcast_tools("anthropic") == []
+
+    def test_configured_returns_tools(self):
+        with patch("integrations.multiroom.snapcast.SNAPCAST_URL", "http://snap.local:1780"):
+            tools = _get_snapcast_tools("anthropic")
+        names = {t["name"] for t in tools}
+        assert names == {"snapcast_status", "snapcast_set_volume", "snapcast_mute", "snapcast_set_stream"}
+
+    def test_openai_format(self):
+        with patch("integrations.multiroom.snapcast.SNAPCAST_URL", "http://snap.local:1780"):
+            tools = _get_snapcast_tools("openai")
+        assert all(t["type"] == "function" for t in tools)
+
+    def _mock_client(self, result_json):
+        mock_resp = MagicMock()
+        mock_resp.raise_for_status = MagicMock()
+        mock_resp.json = MagicMock(return_value=result_json)
+        mock_client = MagicMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.post = AsyncMock(return_value=mock_resp)
+        return mock_client
+
+    def test_status_formats_groups_and_clients(self):
+        server_status = {
+            "result": {
+                "server": {
+                    "streams": [{"id": "stream1", "status": {"stream": {"meta": {"TITLE": "Radio"}}}}],
+                    "groups": [
+                        {
+                            "id": "group1",
+                            "stream_id": "stream1",
+                            "muted": False,
+                            "clients": [
+                                {
+                                    "id": "client1",
+                                    "host": {"name": "Kitchen"},
+                                    "config": {"volume": {"percent": 60, "muted": False}},
+                                    "connected": True,
+                                },
+                            ],
+                        }
+                    ],
+                }
+            }
+        }
+        with patch("httpx.AsyncClient", return_value=self._mock_client(server_status)):
+            result = asyncio.run(_execute_snapcast_tool("snapcast_status", {}))
+        assert "Radio" in result
+        assert "Kitchen" in result
+        assert "vol=60%" in result
+
+    def test_status_no_groups(self):
+        with patch("httpx.AsyncClient", return_value=self._mock_client({"result": {"server": {}}})):
+            result = asyncio.run(_execute_snapcast_tool("snapcast_status", {}))
+        assert "No Snapcast groups" in result
+
+    def test_set_volume(self):
+        with patch("httpx.AsyncClient", return_value=self._mock_client({"result": {}})):
+            result = asyncio.run(_execute_snapcast_tool("snapcast_set_volume", {"client_id": "client1", "volume": 75}))
+        assert "75%" in result
+
+    def test_mute_preserves_volume(self):
+        status_result = {"result": {"server": {"groups": [{"clients": [{"id": "client1", "config": {"volume": {"percent": 42}}}]}]}}}
+        with patch("httpx.AsyncClient", return_value=self._mock_client(status_result)):
+            result = asyncio.run(_execute_snapcast_tool("snapcast_mute", {"client_id": "client1", "muted": True}))
+        assert "Muted 'client1'" in result
+
+    def test_set_stream(self):
+        with patch("httpx.AsyncClient", return_value=self._mock_client({"result": {}})):
+            result = asyncio.run(_execute_snapcast_tool("snapcast_set_stream", {"group_id": "g1", "stream_id": "s2"}))
+        assert "g1" in result and "s2" in result
+
+    def test_unknown_tool(self):
+        result = asyncio.run(_execute_snapcast_tool("snapcast_bogus", {}))
+        assert "Unknown Snapcast tool" in result
+
+    def test_rpc_error_wrapped(self):
+        with patch("httpx.AsyncClient", return_value=self._mock_client({"error": {"message": "boom"}})):
+            result = asyncio.run(_execute_snapcast_tool("snapcast_status", {}))
+        assert "Snapcast error: boom" in result
+
+    def test_get_status_direct(self):
+        with patch("httpx.AsyncClient", return_value=self._mock_client({"result": {"server": {}}})):
+            result = asyncio.run(_snapcast_get_status())
+        assert "No Snapcast groups" in result
+
+
+# ── integrations/music/apple_music.py ────────────────────────────────────────
+
+
+class TestAppleMusicTool:
+    def test_server_not_configured(self):
+        with patch("integrations.music.apple_music.APPLE_MUSIC_TEAM_ID", ""):
+            assert _apple_music_server_configured() is False
+
+    def test_server_configured(self):
+        with (
+            patch("integrations.music.apple_music.APPLE_MUSIC_TEAM_ID", "team"),
+            patch("integrations.music.apple_music.APPLE_MUSIC_KEY_ID", "key"),
+            patch("integrations.music.apple_music.APPLE_MUSIC_PRIVATE_KEY", "pk"),
+        ):
+            assert _apple_music_server_configured() is True
+
+    def test_user_configured_requires_token(self):
+        with (
+            patch("integrations.music.apple_music.APPLE_MUSIC_TEAM_ID", "team"),
+            patch("integrations.music.apple_music.APPLE_MUSIC_KEY_ID", "key"),
+            patch("integrations.music.apple_music.APPLE_MUSIC_PRIVATE_KEY", "pk"),
+        ):
+            assert _apple_music_configured({}) is False
+            assert _apple_music_configured({"apple_music_user_token": "tok"}) is True
+
+    def test_get_tools_gated(self):
+        with patch("integrations.music.apple_music.APPLE_MUSIC_TEAM_ID", ""):
+            assert _get_apple_music_tools({}, "anthropic") == []
+
+    def test_get_tools_returns_when_configured(self):
+        with (
+            patch("integrations.music.apple_music.APPLE_MUSIC_TEAM_ID", "team"),
+            patch("integrations.music.apple_music.APPLE_MUSIC_KEY_ID", "key"),
+            patch("integrations.music.apple_music.APPLE_MUSIC_PRIVATE_KEY", "pk"),
+        ):
+            tools = _get_apple_music_tools({"apple_music_user_token": "tok"}, "openai")
+        assert all(t["type"] == "function" for t in tools)
+
+    def test_require_runtime_raises_before_init(self):
+        with patch.object(apple_music_mod, "_sio", None), patch.object(apple_music_mod, "_sid_to_user", None):
+            try:
+                _require_runtime()
+                raise AssertionError("expected RuntimeError")
+            except RuntimeError:
+                pass
+
+    def _init_am(self, user_id="u1", sid="sid1"):
+        sio = MagicMock()
+        sio.emit = AsyncMock()
+        apple_music_mod.init(sio, {sid: user_id})
+        return sio
+
+    def test_no_active_session(self):
+        apple_music_mod.init(MagicMock(), {})
+        result = asyncio.run(_execute_apple_music_tool("apple_music_play", {}, "u1"))
+        assert "No active Apple Music session" in result
+
+    def test_simple_actions_emit_and_return_message(self):
+        sio = self._init_am()
+        result = asyncio.run(_execute_apple_music_tool("apple_music_pause", {}, "u1"))
+        assert "paused" in result.lower()
+        sio.emit.assert_awaited_once_with("apple_music_cmd", {"action": "pause"}, to="sid1")
+
+    def test_volume_clamped(self):
+        sio = self._init_am()
+        result = asyncio.run(_execute_apple_music_tool("apple_music_volume", {"volume_percent": 150}, "u1"))
+        assert "100%" in result
+        sio.emit.assert_awaited_once_with("apple_music_cmd", {"action": "volume", "value": 1.0}, to="sid1")
+
+    def test_unknown_tool(self):
+        self._init_am()
+        result = asyncio.run(_execute_apple_music_tool("apple_music_bogus", {}, "u1"))
+        assert "Unknown Apple Music tool" in result
+
+    def test_now_playing_resolves_via_callback(self):
+        sio = self._init_am()
+
+        async def fake_emit(event, data, to):
+            _resolve_apple_music_callback({"cb": data["cb"], "result": "Song XYZ"})
+
+        sio.emit = fake_emit
+        result = asyncio.run(_execute_apple_music_tool("apple_music_now_playing", {}, "u1"))
+        assert result == "Song XYZ"
+        assert _am_callbacks == {}
+
+    def test_search_and_play(self):
+        sio = self._init_am()
+
+        async def fake_emit(event, data, to):
+            _resolve_apple_music_callback({"cb": data["cb"], "result": "Playing Track"})
+
+        sio.emit = fake_emit
+        result = asyncio.run(_execute_apple_music_tool("apple_music_search_and_play", {"query": "Yesterday", "type": "track"}, "u1"))
+        assert result == "Playing Track"
+
+    def test_resolve_callback_noop_when_missing(self):
+        _resolve_apple_music_callback({"cb": "does-not-exist", "result": "x"})
+
+
+# ── integrations/pim/dav.py ───────────────────────────────────────────────────
+
+
+class TestDavHelpers:
+    _MULTISTATUS_XML = """<?xml version="1.0" encoding="utf-8"?>
+<D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">
+  <D:response>
+    <D:href>/dav/calendars/user/personal/</D:href>
+    <D:propstat>
+      <D:prop>
+        <D:resourcetype><D:collection/><C:calendar/></D:resourcetype>
+        <D:displayname>Personal</D:displayname>
+      </D:prop>
+      <D:status>HTTP/1.1 200 OK</D:status>
+    </D:propstat>
+  </D:response>
+  <D:response>
+    <D:href>/dav/calendars/user/inbox/</D:href>
+    <D:propstat>
+      <D:prop>
+        <D:resourcetype><D:collection/></D:resourcetype>
+      </D:prop>
+      <D:status>HTTP/1.1 200 OK</D:status>
+    </D:propstat>
+  </D:response>
+</D:multistatus>"""
+
+    _PRINCIPAL_XML = """<?xml version="1.0" encoding="utf-8"?>
+<D:multistatus xmlns:D="DAV:">
+  <D:response>
+    <D:href>/dav/</D:href>
+    <D:propstat>
+      <D:prop>
+        <D:current-user-principal><D:href>/dav/principals/user/</D:href></D:current-user-principal>
+      </D:prop>
+      <D:status>HTTP/1.1 200 OK</D:status>
+    </D:propstat>
+  </D:response>
+</D:multistatus>"""
+
+    def test_ensure_trailing_slash_adds_slash(self):
+        assert _ensure_trailing_slash("https://example.com/dav") == "https://example.com/dav/"
+
+    def test_ensure_trailing_slash_noop_when_present(self):
+        assert _ensure_trailing_slash("https://example.com/dav/") == "https://example.com/dav/"
+
+    def test_dav_join_relative(self):
+        assert _dav_join("https://example.com/dav", "calendars/personal/") == "https://example.com/dav/calendars/personal/"
+
+    def test_dav_join_absolute_path_replaces_base_path(self):
+        assert _dav_join("https://example.com/dav/", "/other/path/") == "https://example.com/other/path/"
+
+    def test_propfind_body_contains_requested_props(self):
+        body = _dav_propfind_body([("DAV:", "resourcetype"), ("DAV:", "displayname")])
+        assert body.startswith(b"<?xml")
+        assert b"resourcetype" in body
+        assert b"displayname" in body
+
+    def test_raise_for_status_ok_codes_noop(self):
+        for code in (200, 201, 204, 207):
+            _dav_raise_for_status(MagicMock(status_code=code), "test")
+
+    def test_raise_for_status_auth_failure(self):
+        try:
+            _dav_raise_for_status(MagicMock(status_code=401, text=""), "DAV discovery")
+            raise AssertionError("expected ValueError")
+        except ValueError as e:
+            assert "authentication failed" in str(e)
+
+    def test_raise_for_status_other_error_includes_detail(self):
+        try:
+            _dav_raise_for_status(MagicMock(status_code=500, text="Internal Server Error"), "DAV discovery")
+            raise AssertionError("expected ValueError")
+        except ValueError as e:
+            assert "500" in str(e) and "Internal Server Error" in str(e)
+
+    def test_raise_for_status_no_detail(self):
+        try:
+            _dav_raise_for_status(MagicMock(status_code=500, text=""), "DAV discovery")
+            raise AssertionError("expected ValueError")
+        except ValueError as e:
+            assert str(e) == "DAV discovery: server returned 500."
+
+    def test_multistatus_responses_parses(self):
+        responses = _dav_multistatus_responses(self._MULTISTATUS_XML)
+        assert len(responses) == 2
+
+    def test_multistatus_responses_malformed_raises(self):
+        try:
+            _dav_multistatus_responses("<not><valid>xml")
+            raise AssertionError("expected ValueError")
+        except ValueError as e:
+            assert "malformed XML" in str(e)
+
+    def test_href_and_resource_types_and_display_name(self):
+        responses = _dav_multistatus_responses(self._MULTISTATUS_XML)
+        first, second = responses
+        assert _dav_href(first) == "/dav/calendars/user/personal/"
+        assert _dav_resource_types(first) == {"collection", "calendar"}
+        assert _dav_display_name(first) == "Personal"
+        assert _dav_resource_types(second) == {"collection"}
+        assert _dav_display_name(second) == ""
+
+    def test_response_for_url_matches_by_path(self):
+        responses = _dav_multistatus_responses(self._MULTISTATUS_XML)
+        match = _dav_response_for_url(responses, "https://example.com/dav/calendars/user/inbox/")
+        assert _dav_href(match) == "/dav/calendars/user/inbox/"
+
+    def test_response_for_url_falls_back_to_first(self):
+        responses = _dav_multistatus_responses(self._MULTISTATUS_XML)
+        match = _dav_response_for_url(responses, "https://example.com/nonexistent/")
+        assert match is responses[0]
+
+    def test_response_prop_selects_200_status(self):
+        responses = _dav_multistatus_responses(self._MULTISTATUS_XML)
+        assert _dav_response_prop(responses[0]) is not None
+
+    def test_prop_href_extracts_nested_href(self):
+        responses = _dav_multistatus_responses(self._PRINCIPAL_XML)
+        href = _dav_prop_href(responses[0], "D:current-user-principal")
+        assert href == "/dav/principals/user/"
+
+    def test_prop_href_missing_returns_none(self):
+        responses = _dav_multistatus_responses(self._MULTISTATUS_XML)
+        assert _dav_prop_href(responses[1], "D:current-user-principal") is None
+
+
+# ── integrations/tesla.py ─────────────────────────────────────────────────────
+
+
+class TestTeslaBaseUrl:
+    def test_unofficial(self):
+        assert _tesla_base_url("unofficial") == "https://owner-api.teslamotors.com"
+
+    def test_fleet(self):
+        assert "fleet-api" in _tesla_base_url("fleet")
+
+
+class TestExecuteTeslaTool:
+    _cfg = {"tesla_method": "unofficial", "tesla_refresh_token": "rt"}
+
+    def test_pick_vehicle_error_surfaced(self):
+        with patch("integrations.tesla._tesla_pick_vehicle", new=AsyncMock(side_effect=ValueError("No Tesla vehicle found in your account."))):
+            result = asyncio.run(_execute_tesla_tool(self._cfg, "get_vehicle_status", {}, "u1"))
+        assert "Tesla error: No Tesla vehicle found" in result
+
+    def test_status_asleep(self):
+        vehicle = {"id": 1, "display_name": "Model 3", "state": "asleep"}
+        with (
+            patch("integrations.tesla._tesla_pick_vehicle", new=AsyncMock(return_value=("unofficial", vehicle))),
+            patch("integrations.tesla._tesla_access_token", new=AsyncMock(return_value="tok")),
+        ):
+            result = asyncio.run(_execute_tesla_tool(self._cfg, "get_vehicle_status", {}, "u1"))
+        assert "asleep" in result
+
+    def test_status_online(self):
+        vehicle = {"id": 1, "display_name": "Model 3", "state": "online"}
+        vehicle_data = {
+            "response": {
+                "charge_state": {"battery_level": 80, "est_battery_range": 250, "charging_state": "Disconnected"},
+                "climate_state": {"inside_temp": 22, "is_climate_on": True, "outside_temp": 10},
+                "vehicle_state": {"locked": True, "odometer": 12345},
+            }
+        }
+        resp = MagicMock(status_code=200)
+        resp.raise_for_status = MagicMock()
+        resp.json = MagicMock(return_value=vehicle_data)
+        mock_client = MagicMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.get = AsyncMock(return_value=resp)
+        with (
+            patch("integrations.tesla._tesla_pick_vehicle", new=AsyncMock(return_value=("unofficial", vehicle))),
+            patch("integrations.tesla._tesla_access_token", new=AsyncMock(return_value="tok")),
+            patch("httpx.AsyncClient", return_value=mock_client),
+        ):
+            result = asyncio.run(_execute_tesla_tool(self._cfg, "get_vehicle_status", {}, "u1"))
+        assert "Battery: 80%" in result
+        assert "Locked" in result
+        assert "72°F inside" in result
+
+    def test_lock_vehicle(self):
+        vehicle = {"id": 1, "display_name": "Model 3", "state": "online"}
+        with (
+            patch("integrations.tesla._tesla_pick_vehicle", new=AsyncMock(return_value=("unofficial", vehicle))),
+            patch("integrations.tesla._tesla_access_token", new=AsyncMock(return_value="tok")),
+            patch("integrations.tesla._tesla_cmd", new=AsyncMock(return_value={"result": True})),
+        ):
+            result = asyncio.run(_execute_tesla_tool(self._cfg, "lock_vehicle", {}, "u1"))
+        assert result == "Doors locked on Model 3."
+
+    def test_command_failure_message(self):
+        vehicle = {"id": 1, "display_name": "Model 3", "state": "online"}
+        with (
+            patch("integrations.tesla._tesla_pick_vehicle", new=AsyncMock(return_value=("unofficial", vehicle))),
+            patch("integrations.tesla._tesla_access_token", new=AsyncMock(return_value="tok")),
+            patch("integrations.tesla._tesla_cmd", new=AsyncMock(return_value={"result": False, "reason": "vehicle_unavailable"})),
+        ):
+            result = asyncio.run(_execute_tesla_tool(self._cfg, "unlock_vehicle", {}, "u1"))
+        assert "Command failed: vehicle_unavailable" in result
+
+    def test_set_climate_start_with_temperature(self):
+        vehicle = {"id": 1, "display_name": "Model 3", "state": "online"}
+        mock_cmd = AsyncMock(return_value={"result": True})
+        with (
+            patch("integrations.tesla._tesla_pick_vehicle", new=AsyncMock(return_value=("unofficial", vehicle))),
+            patch("integrations.tesla._tesla_access_token", new=AsyncMock(return_value="tok")),
+            patch("integrations.tesla._tesla_cmd", new=mock_cmd),
+        ):
+            result = asyncio.run(_execute_tesla_tool(self._cfg, "set_climate", {"action": "start", "temperature_f": 72}, "u1"))
+        assert "Climate started" in result
+        assert mock_cmd.await_count == 2
+
+    def test_actuate_trunk_frunk(self):
+        vehicle = {"id": 1, "display_name": "Model 3", "state": "online"}
+        with (
+            patch("integrations.tesla._tesla_pick_vehicle", new=AsyncMock(return_value=("unofficial", vehicle))),
+            patch("integrations.tesla._tesla_access_token", new=AsyncMock(return_value="tok")),
+            patch("integrations.tesla._tesla_cmd", new=AsyncMock(return_value={"result": True})),
+        ):
+            result = asyncio.run(_execute_tesla_tool(self._cfg, "actuate_trunk", {"which": "front"}, "u1"))
+        assert result == "Frunk opened on Model 3."
+
+    def test_unknown_tool(self):
+        vehicle = {"id": 1, "display_name": "Model 3", "state": "online"}
+        with (
+            patch("integrations.tesla._tesla_pick_vehicle", new=AsyncMock(return_value=("unofficial", vehicle))),
+            patch("integrations.tesla._tesla_access_token", new=AsyncMock(return_value="tok")),
+        ):
+            result = asyncio.run(_execute_tesla_tool(self._cfg, "bogus_tool", {}, "u1"))
+        assert "Unknown Tesla tool" in result
+
+    def test_fleet_lock_vehicle(self):
+        vehicle = {"vin": "5YJ123", "display_name": "Model Y", "state": "online"}
+        with (
+            patch("integrations.tesla._tesla_pick_vehicle", new=AsyncMock(return_value=("fleet", vehicle))),
+            patch("integrations.tesla._tesla_access_token", new=AsyncMock(return_value="tok")),
+            patch("integrations.tesla._tesla_cmd", new=AsyncMock(return_value={"result": True})),
+        ):
+            result = asyncio.run(_execute_tesla_tool({"tesla_method": "fleet", "tesla_fleet_refresh_token": "ft"}, "lock_vehicle", {}, "u1"))
+        assert result == "Doors locked on Model Y."
+
+
+class TestTeslaPickVehicle:
+    def test_prefers_unofficial_when_available(self):
+        vehicles = [{"id": 1, "display_name": "Model 3"}]
+        with patch("integrations.tesla._tesla_vehicles", new=AsyncMock(return_value=vehicles)):
+            method, vehicle = asyncio.run(_tesla_pick_vehicle("u1", {"tesla_method": "unofficial"}))
+        assert method == "unofficial"
+        assert vehicle["display_name"] == "Model 3"
+
+    def test_falls_back_to_fleet_when_both_and_unofficial_fails(self):
+        vehicles_fleet = [{"vin": "v1", "display_name": "Model Y"}]
+
+        async def fake_vehicles(method, user_id, config):
+            if method == "unofficial":
+                raise Exception("unofficial down")
+            return vehicles_fleet
+
+        with patch("integrations.tesla._tesla_vehicles", new=fake_vehicles):
+            method, vehicle = asyncio.run(_tesla_pick_vehicle("u1", {"tesla_method": "both"}))
+        assert method == "fleet"
+        assert vehicle["vin"] == "v1"
+
+    def test_no_vehicles_raises(self):
+        with patch("integrations.tesla._tesla_vehicles", new=AsyncMock(return_value=[])):
+            try:
+                asyncio.run(_tesla_pick_vehicle("u1", {"tesla_method": "fleet"}))
+                raise AssertionError("expected ValueError")
+            except ValueError as e:
+                assert "No Tesla vehicle found" in str(e)
+
+    def test_matches_by_name_hint(self):
+        vehicles = [{"id": 1, "display_name": "Model 3"}, {"id": 2, "display_name": "Model Y"}]
+        with patch("integrations.tesla._tesla_vehicles", new=AsyncMock(return_value=vehicles)):
+            method, vehicle = asyncio.run(_tesla_pick_vehicle("u1", {"tesla_method": "unofficial"}, name_hint="Y"))
+        assert vehicle["display_name"] == "Model Y"
