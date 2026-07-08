@@ -32,7 +32,7 @@ import integrations.tesla as _tesla_mod
 import integrations.vision as _vision_mod
 import integrations.finance as _finance_mod
 from integrations.finance import _finance_configured, _plaid_create_link_token, _plaid_exchange_public_token, _plaid_remove_item
-from integrations.tesla import _tesla_configured, _tesla_unofficial_access_token
+from integrations.tesla import _tesla_access_token, _tesla_configured
 from integrations.vision import (
     _list_cameras,
     _add_camera,
@@ -1011,7 +1011,7 @@ async def api_tesla_save_unofficial(request: Request):
         return {"ok": False, "error": "No refresh token provided."}
     _tesla_mod._tesla_tokens.pop(user_id, None)
     try:
-        token = await _tesla_unofficial_access_token(user_id, {"tesla_refresh_token": refresh_token})
+        token = await _tesla_access_token("unofficial", user_id, {"tesla_refresh_token": refresh_token})
         async with httpx.AsyncClient(timeout=10) as c:
             r = await c.get(f"{_tesla_mod._TESLA_OWNER_BASE}/api/1/vehicles", headers={"Authorization": f"Bearer {token}"})
             r.raise_for_status()
