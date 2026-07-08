@@ -127,7 +127,7 @@ every connected browser session simultaneously.
 ### Install the daemon
 
 ```bash
-pip install -r requirements-daemon.txt
+pip install -r requirements/daemon/requirements.txt
 ```
 
 ### Configure
@@ -435,7 +435,7 @@ This runs ruff, ty, prettier, and pytest (coverage threshold: 25%).
 Run with hot-reload (no Docker):
 
 ```bash
-pip install -r requirements.txt
+pip install -r requirements/local/requirements.txt
 uvicorn app:app --reload --port 5000
 ```
 
@@ -444,9 +444,6 @@ Note: you'll still need a running Postgres and `.env` set up.
 The frontend (`templates/`, `static/v2/`) is split into one file per feature
 panel — see [CONTRIBUTING.md](CONTRIBUTING.md#frontend-structure) for the
 layout before adding a new one.
-
-Pushes to `main` auto-deploy to your server — see [DEPLOYMENT.md](DEPLOYMENT.md)
-to set it up.
 
 ## TROUBLESHOOTING
 
