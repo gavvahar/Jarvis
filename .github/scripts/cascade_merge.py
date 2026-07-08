@@ -11,6 +11,12 @@ from datetime import datetime, timezone
 
 SKIP_BRANCHES = {"main", "staging", "HEAD", "testing"}
 
+# Branches that should only receive a cascade from specific source branches.
+# "tests" is used to validate this script itself, so it should only track main.
+RESTRICTED_TARGETS = {
+    "tests": {"main"},
+}
+
 
 def run(cmd):
     return subprocess.run(cmd, capture_output=True, text=True)
@@ -170,6 +176,8 @@ def main():
             continue
         name = b[len("origin/") :]
         if name in SKIP_BRANCHES or name == source or name.endswith("/HEAD"):
+            continue
+        if name in RESTRICTED_TARGETS and source not in RESTRICTED_TARGETS[name]:
             continue
         branches.append(name)
 
