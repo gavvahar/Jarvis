@@ -2,6 +2,7 @@ import asyncio, datetime, httpx
 
 from config import TESLA_CLIENT_ID, TESLA_CLIENT_SECRET
 from db import _pool
+from oauth_client import refresh_oauth_token
 from tool_schemas import anthropic_tools_to_openai
 
 _TESLA_AUTH_BASE = "https://auth.tesla.com/oauth2/v3"
@@ -28,18 +29,15 @@ async def _tesla_unofficial_access_token(user_id: str, config: dict) -> str:
     expiry = cached.get("unofficial_expiry")
     if cached.get("unofficial_access") and expiry and expiry > datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(minutes=5):
         return cached["unofficial_access"]
-    async with httpx.AsyncClient(timeout=15) as c:
-        r = await c.post(
-            f"{_TESLA_AUTH_BASE}/token",
-            json={
-                "grant_type": "refresh_token",
-                "client_id": "ownerapi",
-                "refresh_token": config["tesla_refresh_token"],
-                "scope": "openid email offline_access",
-            },
-        )
-        r.raise_for_status()
-        data = r.json()
+    data = await refresh_oauth_token(
+        f"{_TESLA_AUTH_BASE}/token",
+        {
+            "grant_type": "refresh_token",
+            "client_id": "ownerapi",
+            "refresh_token": config["tesla_refresh_token"],
+            "scope": "openid email offline_access",
+        },
+    )
     access_token = data["access_token"]
     new_refresh = data.get("refresh_token")
     expiry_dt = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(seconds=data.get("expires_in", 28800))
@@ -61,18 +59,15 @@ async def _tesla_fleet_access_token(user_id: str, config: dict) -> str:
     expiry = cached.get("fleet_expiry")
     if cached.get("fleet_access") and expiry and expiry > datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(minutes=5):
         return cached["fleet_access"]
-    async with httpx.AsyncClient(timeout=15) as c:
-        r = await c.post(
-            f"{_TESLA_AUTH_BASE}/token",
-            json={
-                "grant_type": "refresh_token",
-                "client_id": TESLA_CLIENT_ID,
-                "client_secret": TESLA_CLIENT_SECRET,
-                "refresh_token": config["tesla_fleet_refresh_token"],
-            },
-        )
-        r.raise_for_status()
-        data = r.json()
+    data = await refresh_oauth_token(
+        f"{_TESLA_AUTH_BASE}/token",
+        {
+            "grant_type": "refresh_token",
+            "client_id": TESLA_CLIENT_ID,
+            "client_secret": TESLA_CLIENT_SECRET,
+            "refresh_token": config["tesla_fleet_refresh_token"],
+        },
+    )
     access_token = data["access_token"]
     new_refresh = data.get("refresh_token")
     expiry_dt = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(seconds=data.get("expires_in", 28800))
