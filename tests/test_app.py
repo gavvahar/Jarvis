@@ -28,11 +28,11 @@ from app import (
 from integrations.ha import _ha_headers
 from integrations.music.spotify import _execute_spotify_tool, _get_spotify_tools
 from integrations.myq import _get_myq_tools, _myq_set_door
-from integrations.phase1.calendar import _execute_calendar_tool, _parse_ical_events
-from integrations.phase1.contacts import _execute_contact_lookup_tool, _parse_vcards
-from integrations.phase1.dav import _pick_best_dav_collection
-from integrations.phase1.timers import _duration_str, _execute_news_tool, _execute_reminder_tool, _execute_timer_tool, _get_phase1_tools
-from integrations.phase5 import _evaluate_alert_condition, _execute_device_alert_tool, _execute_routine_tool, _get_phase5_tools
+from integrations.pim.calendar import _execute_calendar_tool, _parse_ical_events
+from integrations.pim.contacts import _execute_contact_lookup_tool, _parse_vcards
+from integrations.pim.dav import _pick_best_dav_collection
+from integrations.pim.timers import _duration_str, _execute_news_tool, _execute_reminder_tool, _execute_timer_tool, _get_pim_tools
+from integrations.automation import _evaluate_alert_condition, _execute_device_alert_tool, _execute_routine_tool, _get_automation_tools
 from integrations.shared_lists import _execute_shared_list_tool
 from integrations.tesla import _get_tesla_tools
 from llm import _build_system_prompt
@@ -362,7 +362,7 @@ class TestSpotifyConfigured:
 
 class TestGetPhase1Tools:
     def test_base_tools_present_without_dav(self):
-        names = {tool["name"] for tool in _get_phase1_tools({}, "anthropic")}
+        names = {tool["name"] for tool in _get_pim_tools({}, "anthropic")}
         assert {"manage_timer", "manage_reminder", "get_news_headlines"} <= names
         assert "manage_calendar" not in names
         assert "lookup_contact" not in names
@@ -376,7 +376,7 @@ class TestGetPhase1Tools:
             "contacts_username": "me",
             "contacts_password": "secret",
         }
-        names = {tool["function"]["name"] for tool in _get_phase1_tools(cfg, "openai")}
+        names = {tool["function"]["name"] for tool in _get_pim_tools(cfg, "openai")}
         assert "manage_calendar" in names
         assert "lookup_contact" in names
 
@@ -588,14 +588,14 @@ class TestExecuteCalendarTool:
             "location": "Main Street",
             "all_day": False,
         }
-        with patch("integrations.phase1.calendar._calendar_events_between", new=AsyncMock(return_value=[event])):
+        with patch("integrations.pim.calendar._calendar_events_between", new=AsyncMock(return_value=[event])):
             result = asyncio.run(_execute_calendar_tool(self._cfg, {"action": "list"}))
         assert "Dentist" in result
         assert "Main Street" in result
 
     def test_create_puts_event(self):
         mock_req = AsyncMock(return_value=self._mock_resp(status=201))
-        with patch("integrations.phase1.calendar._dav_request", new=mock_req):
+        with patch("integrations.pim.calendar._dav_request", new=mock_req):
             result = asyncio.run(
                 _execute_calendar_tool(
                     self._cfg,
@@ -636,13 +636,13 @@ class TestExecuteContactLookupTool:
 
     def test_formats_contact_matches(self):
         match = {"name": "Mom", "phones": ["+15551234567"], "emails": ["mom@example.com"], "nicknames": []}
-        with patch("integrations.phase1.contacts._lookup_contacts", new=AsyncMock(return_value=[match])):
+        with patch("integrations.pim.contacts._lookup_contacts", new=AsyncMock(return_value=[match])):
             result = asyncio.run(_execute_contact_lookup_tool(self._cfg, {"query": "Mom", "preferred_channel": "phone"}))
         assert "Mom" in result
         assert "+15551234567" in result
 
     def test_returns_not_found_message(self):
-        with patch("integrations.phase1.contacts._lookup_contacts", new=AsyncMock(return_value=[])):
+        with patch("integrations.pim.contacts._lookup_contacts", new=AsyncMock(return_value=[])):
             result = asyncio.run(_execute_contact_lookup_tool(self._cfg, {"query": "Nobody"}))
         assert "No contacts matched" in result
 
@@ -832,25 +832,25 @@ class TestGetPhase5Tools:
     _no_ha = {"ha_url": "", "ha_token": ""}
 
     def test_empty_when_no_ha_and_no_mqtt(self):
-        with patch("integrations.phase5.MQTT_BROKER", ""):
-            tools = _get_phase5_tools(self._no_ha, "anthropic")
+        with patch("integrations.automation.MQTT_BROKER", ""):
+            tools = _get_automation_tools(self._no_ha, "anthropic")
         assert tools == []
 
     def test_ha_tools_included_when_configured(self):
-        with patch("integrations.phase5.MQTT_BROKER", ""):
-            tools = _get_phase5_tools(self._ha_cfg, "anthropic")
+        with patch("integrations.automation.MQTT_BROKER", ""):
+            tools = _get_automation_tools(self._ha_cfg, "anthropic")
         names = {t["name"] for t in tools}
         assert "manage_routine" in names
         assert "manage_device_alert" in names
 
     def test_openai_format_when_provider_openai(self):
-        with patch("integrations.phase5.MQTT_BROKER", ""):
-            tools = _get_phase5_tools(self._ha_cfg, "openai")
+        with patch("integrations.automation.MQTT_BROKER", ""):
+            tools = _get_automation_tools(self._ha_cfg, "openai")
         assert all(t["type"] == "function" for t in tools)
 
     def test_zigbee_tool_added_when_mqtt_configured(self):
-        with patch("integrations.phase5.MQTT_BROKER", "mqtt.local"):
-            tools = _get_phase5_tools(self._no_ha, "anthropic")
+        with patch("integrations.automation.MQTT_BROKER", "mqtt.local"):
+            tools = _get_automation_tools(self._no_ha, "anthropic")
         names = {t["name"] for t in tools}
         assert "zigbee_control" in names
 
@@ -892,7 +892,7 @@ class TestExecuteNewsToolMocked:
 
 class TestExecuteTimerToolMocked:
     def test_set_timer(self):
-        with patch("integrations.phase1.timers._db_set_timer", new=AsyncMock(return_value=42)):
+        with patch("integrations.pim.timers._db_set_timer", new=AsyncMock(return_value=42)):
             result = asyncio.run(_execute_timer_tool("u1", {"action": "set", "label": "Pasta", "duration_seconds": 300}))
         assert "Pasta" in result
         assert "42" in result
@@ -902,19 +902,19 @@ class TestExecuteTimerToolMocked:
         assert "greater than zero" in result
 
     def test_list_no_timers(self):
-        with patch("integrations.phase1.timers._db_list_timers", new=AsyncMock(return_value=[])):
+        with patch("integrations.pim.timers._db_list_timers", new=AsyncMock(return_value=[])):
             result = asyncio.run(_execute_timer_tool("u1", {"action": "list"}))
         assert "No active timers" in result
 
     def test_list_with_timers(self):
         fire_at = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None) + datetime.timedelta(minutes=5)
         timers = [{"id": 1, "label": "Laundry", "fire_at": fire_at}]
-        with patch("integrations.phase1.timers._db_list_timers", new=AsyncMock(return_value=timers)):
+        with patch("integrations.pim.timers._db_list_timers", new=AsyncMock(return_value=timers)):
             result = asyncio.run(_execute_timer_tool("u1", {"action": "list"}))
         assert "Laundry" in result
 
     def test_cancel_timer(self):
-        with patch("integrations.phase1.timers._db_cancel_timer", new=AsyncMock(return_value=True)):
+        with patch("integrations.pim.timers._db_cancel_timer", new=AsyncMock(return_value=True)):
             result = asyncio.run(_execute_timer_tool("u1", {"action": "cancel", "timer_id": 1}))
         assert "cancelled" in result.lower()
 
@@ -929,7 +929,7 @@ class TestExecuteTimerToolMocked:
 
 class TestExecuteReminderToolMocked:
     def test_set_reminder(self):
-        with patch("integrations.phase1.timers._db_set_reminder", new=AsyncMock(return_value=7)):
+        with patch("integrations.pim.timers._db_set_reminder", new=AsyncMock(return_value=7)):
             result = asyncio.run(_execute_reminder_tool("u1", {"action": "set", "text": "Call Mom", "fire_at": "2030-01-01T09:00:00"}))
         assert "Call Mom" in result
 
@@ -942,12 +942,12 @@ class TestExecuteReminderToolMocked:
         assert "Specify" in result
 
     def test_list_no_reminders(self):
-        with patch("integrations.phase1.timers._db_list_reminders", new=AsyncMock(return_value=[])):
+        with patch("integrations.pim.timers._db_list_reminders", new=AsyncMock(return_value=[])):
             result = asyncio.run(_execute_reminder_tool("u1", {"action": "list"}))
         assert "No upcoming" in result
 
     def test_cancel_reminder(self):
-        with patch("integrations.phase1.timers._db_cancel_reminder", new=AsyncMock(return_value=True)):
+        with patch("integrations.pim.timers._db_cancel_reminder", new=AsyncMock(return_value=True)):
             result = asyncio.run(_execute_reminder_tool("u1", {"action": "cancel", "reminder_id": 3}))
         assert "cancelled" in result.lower()
 
@@ -992,7 +992,7 @@ class TestExecuteRoutineToolMocked:
     _cfg = {"ha_url": "http://ha.local", "ha_token": "tok"}
 
     def test_create_routine(self):
-        with patch("integrations.phase5._db_create_routine", new=AsyncMock(return_value=5)):
+        with patch("integrations.automation._db_create_routine", new=AsyncMock(return_value=5)):
             result = asyncio.run(
                 _execute_routine_tool(
                     "u1",
@@ -1012,24 +1012,24 @@ class TestExecuteRoutineToolMocked:
         assert "step" in result.lower()
 
     def test_list_no_routines(self):
-        with patch("integrations.phase5._db_list_routines", new=AsyncMock(return_value=[])):
+        with patch("integrations.automation._db_list_routines", new=AsyncMock(return_value=[])):
             result = asyncio.run(_execute_routine_tool("u1", {"action": "list"}, self._cfg))
         assert "No routines" in result
 
     def test_delete_routine(self):
-        with patch("integrations.phase5._db_delete_routine", new=AsyncMock(return_value=True)):
+        with patch("integrations.automation._db_delete_routine", new=AsyncMock(return_value=True)):
             result = asyncio.run(_execute_routine_tool("u1", {"action": "delete", "routine_id": 1}, self._cfg))
         assert "deleted" in result.lower()
 
     def test_run_routine_not_found(self):
-        with patch("integrations.phase5._db_list_routines", new=AsyncMock(return_value=[])):
+        with patch("integrations.automation._db_list_routines", new=AsyncMock(return_value=[])):
             result = asyncio.run(_execute_routine_tool("u1", {"action": "run", "name": "Nonexistent"}, self._cfg))
         assert "No routine" in result
 
 
 class TestExecuteDeviceAlertToolMocked:
     def test_create_alert(self):
-        with patch("integrations.phase5._db_create_device_alert", new=AsyncMock(return_value=3)):
+        with patch("integrations.automation._db_create_device_alert", new=AsyncMock(return_value=3)):
             result = asyncio.run(
                 _execute_device_alert_tool(
                     "u1",
@@ -1051,12 +1051,12 @@ class TestExecuteDeviceAlertToolMocked:
         assert "Specify" in result
 
     def test_list_no_alerts(self):
-        with patch("integrations.phase5._db_list_device_alerts", new=AsyncMock(return_value=[])):
+        with patch("integrations.automation._db_list_device_alerts", new=AsyncMock(return_value=[])):
             result = asyncio.run(_execute_device_alert_tool("u1", {"action": "list"}))
         assert "No alert" in result
 
     def test_delete_alert(self):
-        with patch("integrations.phase5._db_delete_device_alert", new=AsyncMock(return_value=True)):
+        with patch("integrations.automation._db_delete_device_alert", new=AsyncMock(return_value=True)):
             result = asyncio.run(_execute_device_alert_tool("u1", {"action": "delete", "alert_id": 2}))
         assert "deleted" in result.lower()
 
