@@ -3,7 +3,7 @@
 ## Getting started
 
 ```bash
-pip install -r requirements.txt
+pip3 install -r requirements/local/requirements.txt
 cp .env.example .env   # fill in credentials
 uvicorn app:app --reload --port 5000
 ```
