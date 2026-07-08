@@ -12,7 +12,7 @@
 | 4        | GitHub Actions & CI/CD                         | Complete    |
 | 5        | app.py Modularisation                          | Complete    |
 | 6        | Phase 4 — Smart Speaker & Local Hardware       | Complete    |
-| 7        | Phase 5 — Deeper Smart Home                    | In Progress |
+| 7        | Phase 5 — Deeper Smart Home                    | Complete    |
 | 8        | Phase 6 — Proactive & Ambient Intelligence     | Planned     |
 | 9        | Phase 8 — Developer & Extensibility Platform   | In Progress |
 | 10       | Phase 9 — Financial Intelligence               | In Progress |
@@ -80,11 +80,11 @@ Deploy Jarvis on dedicated always-on hardware around the home.
 
 Extend beyond Home Assistant to cover all major smart home ecosystems.
 
-- [x] **Matter/Thread support** — `matter_control` tool talks directly to a self-hosted python-matter-server over its WebSocket JSON API (`integrations/matter.py`); list_nodes/get_state/on/off/toggle/set_level, no Home Assistant required
-- [x] **Zigbee direct** — zigbee2mqtt integration via MQTT (`zigbee_control` tool)
-- [ ] **Z-Wave** — Z-Wave JS integration
-- [ ] **Apple HomeKit** — read/write HomeKit accessories via HAP-python
-- [ ] **Lutron, Ecobee, Nest** — direct cloud integrations for lighting and climate
+- [x] **Matter/Thread support** — not built directly; Home Assistant has a native Matter integration, so Matter devices added to HA are already controllable via `call_ha_service`/`get_ha_states`
+- [x] **Zigbee direct** — zigbee2mqtt integration via MQTT (`zigbee_control` tool), for devices deliberately kept outside Home Assistant
+- [x] **Z-Wave** — not built directly; Home Assistant has a native Z-Wave JS integration
+- [x] **Apple HomeKit** — not built directly; Home Assistant has a native HomeKit Controller integration
+- [x] **Lutron, Ecobee, Nest** — not built directly; Home Assistant has native integrations for all three
 - [x] **Routine engine** — `manage_routine` tool; trigger phrases + multi-step execution stored in DB
 - [x] **Proactive alerts** — `manage_device_alert` tool; condition-based rules with cooldown stored in DB
 

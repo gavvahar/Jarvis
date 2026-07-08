@@ -33,7 +33,6 @@ from integrations.pim.contacts import _execute_contact_lookup_tool, _parse_vcard
 from integrations.pim.dav import _pick_best_dav_collection
 from integrations.pim.timers import _duration_str, _execute_news_tool, _execute_reminder_tool, _execute_timer_tool, _get_pim_tools
 from integrations.automation import _evaluate_alert_condition, _execute_device_alert_tool, _execute_routine_tool, _get_automation_tools
-from integrations.matter import _execute_matter_tool, _get_matter_tools
 from integrations.shared_lists import _execute_shared_list_tool
 from integrations.tesla import _get_tesla_tools
 from llm import _build_system_prompt
@@ -854,65 +853,6 @@ class TestGetPhase5Tools:
             tools = _get_automation_tools(self._no_ha, "anthropic")
         names = {t["name"] for t in tools}
         assert "zigbee_control" in names
-
-
-class TestMatterTool:
-    def test_no_tools_when_not_configured(self):
-        with patch("integrations.matter.MATTER_SERVER_URL", ""):
-            assert _get_matter_tools("anthropic") == []
-
-    def test_tool_added_when_configured(self):
-        with patch("integrations.matter.MATTER_SERVER_URL", "ws://matter.local:5580/ws"):
-            tools = _get_matter_tools("anthropic")
-        assert {t["name"] for t in tools} == {"matter_control"}
-
-    def test_openai_format_when_configured(self):
-        with patch("integrations.matter.MATTER_SERVER_URL", "ws://matter.local:5580/ws"):
-            tools = _get_matter_tools("openai")
-        assert all(t["type"] == "function" for t in tools)
-
-    def test_not_configured_message(self):
-        with patch("integrations.matter.MATTER_SERVER_URL", ""):
-            result = asyncio.run(_execute_matter_tool({"action": "list_nodes"}))
-        assert "not configured" in result
-
-    def test_missing_node_id(self):
-        with patch("integrations.matter.MATTER_SERVER_URL", "ws://matter.local:5580/ws"):
-            result = asyncio.run(_execute_matter_tool({"action": "on"}))
-        assert "node_id" in result
-
-    def test_list_nodes_formats_labels(self):
-        nodes = [
-            {"node_id": 7, "available": True, "attributes": {"0/40/5": "Living Room Lamp"}},
-            {"node_id": 8, "available": False, "attributes": {}},
-        ]
-        with (
-            patch("integrations.matter.MATTER_SERVER_URL", "ws://matter.local:5580/ws"),
-            patch("integrations.matter._matter_ws_command", new=AsyncMock(return_value=nodes)),
-        ):
-            result = asyncio.run(_execute_matter_tool({"action": "list_nodes"}))
-        assert "[7] Living Room Lamp (online)" in result
-        assert "[8] node 8 (offline)" in result
-
-    def test_on_sends_device_command(self):
-        with (
-            patch("integrations.matter.MATTER_SERVER_URL", "ws://matter.local:5580/ws"),
-            patch("integrations.matter._matter_ws_command", new=AsyncMock(return_value=None)) as mock_cmd,
-        ):
-            result = asyncio.run(_execute_matter_tool({"action": "on", "node_id": 7}))
-        assert "turned on" in result
-        mock_cmd.assert_awaited_once_with(
-            "device_command",
-            {"node_id": 7, "endpoint_id": 1, "cluster_id": 6, "command_name": "On", "payload": {}},
-        )
-
-    def test_matter_server_error_surfaced(self):
-        with (
-            patch("integrations.matter.MATTER_SERVER_URL", "ws://matter.local:5580/ws"),
-            patch("integrations.matter._matter_ws_command", new=AsyncMock(side_effect=RuntimeError("boom"))),
-        ):
-            result = asyncio.run(_execute_matter_tool({"action": "on", "node_id": 7}))
-        assert "Matter error: boom" in result
 
 
 class TestExecuteNewsToolMocked:

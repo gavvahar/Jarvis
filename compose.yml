@@ -19,15 +19,6 @@ services:
   #     - snapcast_data:/var/lib/snapserver
   #   restart: unless-stopped
 
-  # ─── Matter/Thread controller — uncomment to add alongside Jarvis ────────────
-  # matter-server:
-  #   image: ghcr.io/home-assistant-libs/python-matter-server:stable
-  #   network_mode: host  # required for mDNS device discovery and BLE commissioning
-  #   volumes:
-  #     - matter_data:/data
-  #   restart: unless-stopped
-  #   # Then set MATTER_SERVER_URL=ws://localhost:5580/ws in .env
-
   jarvis:
     build: .
     pull_policy: build
@@ -68,4 +59,3 @@ volumes:
   postgres_data:
   ollama_data:
   # snapcast_data:
-  # matter_data:
