@@ -1,7 +1,7 @@
 import re
 
-from integrations.phase1.calendar import _parse_ical_line, _unescape_ical_text, _unfold_ical_lines
-from integrations.phase1.dav import _DAV_NS, _dav_multistatus_responses, _dav_raise_for_status, _dav_request, _dav_response_prop
+from integrations.pim.calendar import _parse_ical_line, _unescape_ical_text, _unfold_ical_lines
+from integrations.pim.dav import _DAV_NS, _dav_multistatus_responses, _dav_raise_for_status, _dav_request, _dav_response_prop
 from tool_schemas import anthropic_tools_to_openai
 
 type _ContactCard = dict[str, str | list[str]]

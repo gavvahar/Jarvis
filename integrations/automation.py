@@ -103,7 +103,7 @@ _ZIGBEE_TOOL_OPENAI = anthropic_tools_to_openai([_ZIGBEE_TOOL_ANTHROPIC])[0]
 # ── Tool getters ───────────────────────────────────────────────────────────────
 
 
-def _get_phase5_tools(config: dict, provider: str) -> list:
+def _get_automation_tools(config: dict, provider: str) -> list:
     tools = []
     if _ha_configured(config):
         if provider == "anthropic":

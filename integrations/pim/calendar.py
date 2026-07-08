@@ -2,7 +2,7 @@ import datetime
 import re
 import uuid
 
-from integrations.phase1.dav import (
+from integrations.pim.dav import (
     _DAV_NS,
     _dav_join,
     _dav_multistatus_responses,
