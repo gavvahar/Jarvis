@@ -24,11 +24,14 @@ Beyond conversation, J.A.R.V.I.S. can:
 - Run named routines (a sequence of smart-home actions)
 - Alert you proactively when a device changes state
 - Control Zigbee devices directly via Zigbee2MQTT
+- Control multi-room audio via Snapcast
 - Monitor your garage (MyQ/Chamberlain)
 - Check and control your Tesla by voice
 - Play music through Spotify or Apple Music
 - Receive and triage your phone messages
 - Alert you when someone is at the door
+- Recognize who's home via camera-based face detection, and flag security events
+- Track balances, transactions, and spending by category from your linked bank accounts
 - Transcribe meetings and generate structured notes
 - Read the latest news headlines by category
 
@@ -71,15 +74,23 @@ Required variables:
 
 Optional:
 
-| Variable             | What it is                                                                  |
-| -------------------- | --------------------------------------------------------------------------- |
-| `OIDC_DISCOVERY_URL` | Override the OIDC discovery URL if it doesn't follow the Authentik pattern  |
-| `OIDC_ADMIN_GROUP`   | Authentik group whose members get the admin role (default: `jarvis-admins`) |
-| `MQTT_BROKER`        | Hostname/IP of your Zigbee2MQTT MQTT broker (enables Zigbee control)        |
-| `MQTT_PORT`          | MQTT broker port (default: `1883`)                                          |
-| `MQTT_USER`          | MQTT username (optional)                                                    |
-| `MQTT_PASSWORD`      | MQTT password (optional)                                                    |
-| `Z2M_BASE_TOPIC`     | Zigbee2MQTT base topic (default: `zigbee2mqtt`)                             |
+| Variable                | What it is                                                                  |
+| ----------------------- | --------------------------------------------------------------------------- |
+| `OIDC_DISCOVERY_URL`    | Override the OIDC discovery URL if it doesn't follow the Authentik pattern  |
+| `OIDC_ADMIN_GROUP`      | Authentik group whose members get the admin role (default: `jarvis-admins`) |
+| `MQTT_BROKER`           | Hostname/IP of your Zigbee2MQTT MQTT broker (enables Zigbee control)        |
+| `MQTT_PORT`             | MQTT broker port (default: `1883`)                                          |
+| `MQTT_USER`             | MQTT username (optional)                                                    |
+| `MQTT_PASSWORD`         | MQTT password (optional)                                                    |
+| `Z2M_BASE_TOPIC`        | Zigbee2MQTT base topic (default: `zigbee2mqtt`)                             |
+| `SNAPCAST_URL`          | Snapcast server JSON-RPC URL, e.g. `http://192.168.1.100:1780`              |
+| `PLAID_CLIENT_ID`       | Plaid client ID (enables the FINANCE panel)                                 |
+| `PLAID_SECRET`          | Plaid secret matching `PLAID_ENV`                                           |
+| `PLAID_ENV`             | `sandbox` (default, no real bank needed) or `production`                    |
+| `FINANCE_POLL_INTERVAL` | Seconds between background transaction syncs (default: `14400`, 4h)         |
+| `VISION_POLL_INTERVAL`  | Seconds between camera presence checks (default: `30`)                      |
+| `VISION_AWAY_TIMEOUT`   | Seconds without a detection before someone is marked away (default: `1800`) |
+| `VISION_FACE_THRESHOLD` | Face-match distance threshold, lower = stricter (default: `0.4`)            |
 
 **Step 2 — Set up Authentik.** In your Authentik admin panel:
 
@@ -299,6 +310,19 @@ enable this.
 The `zigbee_control` tool sends a JSON payload to
 `{Z2M_BASE_TOPIC}/{device_name}/set`.
 
+## MULTI-ROOM AUDIO (SNAPCAST)
+
+If you run a [Snapcast](https://github.com/badaix/snapcast) server, set
+`SNAPCAST_URL` in `.env` to control it by room:
+
+- "What's playing in the living room?"
+- "Set the kitchen volume to 40."
+- "Mute the bedroom."
+- "Switch the office to the TV stream."
+
+If you tell J.A.R.V.I.S. which room you're in (via the `ROOM` env var on the
+wake daemon), room-specific commands default to that room.
+
 ## GARAGE DOOR (MYQ / CHAMBERLAIN)
 
 Connect your MyQ Chamberlain smart garage from the settings panel using your
@@ -361,6 +385,28 @@ Connect Spotify from the settings panel via OAuth. Once connected:
 Connect Apple Music by providing your MusicKit user token in the settings panel.
 Once connected, all the same playback controls work as with Spotify.
 
+## FINANCE (PLAID)
+
+Connect your bank and credit card accounts from the **FINANCE** settings
+panel. The admin needs `PLAID_CLIENT_ID` and `PLAID_SECRET` set in `.env`
+first — Plaid provides these free for their `sandbox` environment, no real
+bank required to try it out. Set `PLAID_ENV=production` (with production
+credentials) to link real accounts.
+
+In sandbox mode, use Plaid's test institution ("Platypus Bank") with username
+`user_good` and password `pass_good`.
+
+Once linked:
+
+- "What's my checking account balance?"
+- "Show me my recent transactions."
+- "How much did I spend on dining out this month?"
+- "Recategorize that Amazon purchase as a business expense."
+
+Balances and transactions sync automatically in the background (every 4 hours
+by default — see `FINANCE_POLL_INTERVAL`). This is read-only: J.A.R.V.I.S.
+cannot move money or make payments.
+
 ## PHONE MESSAGES
 
 J.A.R.V.I.S. can receive your text messages and alert you to the important ones.
@@ -393,6 +439,31 @@ Send a POST with JSON body:
 
 Supported event types: `doorbell_press`, `motion`, `person`, `package`.
 Motion alerts are suppressed between 11 PM and 7 AM.
+
+## VISION & PRESENCE
+
+J.A.R.V.I.S. can watch cameras to know who's home and flag security events,
+using local face recognition — no cloud vision API involved.
+
+**Setup:** In the **VISION** settings panel:
+
+1. Add a camera — either a Home Assistant camera entity (`camera.front_door`)
+   or a direct RTSP stream URL.
+2. Upload a clear photo of your face under **Face Enrollment** so
+   J.A.R.V.I.S. can recognize you (one sample is enough; more improves
+   accuracy).
+
+Once set up:
+
+- "Who's home?"
+- "Any security events today?"
+- "Add a camera for the backyard."
+- "Turn on privacy mode for the office camera." _(pauses detection for that camera)_
+
+Cameras are polled every 30 seconds by default (`VISION_POLL_INTERVAL`); a
+household member is marked away after no detection for 30 minutes
+(`VISION_AWAY_TIMEOUT`). Unrecognized faces and motion while everyone's away
+are logged as security events.
 
 ## MEETING RECORDER
 
@@ -467,6 +538,12 @@ layout before adding a new one.
   environment, or lower the threshold in `_VOICE_THRESHOLD` in `app.py`.
 - **MQTT / Zigbee errors** — confirm `MQTT_BROKER` is reachable and the device
   friendly name in Zigbee2MQTT matches what you say.
+- **FINANCE panel doesn't appear / link fails** — `PLAID_CLIENT_ID` and
+  `PLAID_SECRET` must be set in `.env` by the admin before any user can link
+  an account; restart the container after changing them.
+- **VISION: no detections** — check the camera source is reachable (HA entity
+  exists and is not unavailable, or the RTSP URL works in VLC), and that
+  you've uploaded a face photo under Face Enrollment.
 
 Each user's API key and credentials are stored only in your Postgres database
 and are sent only to the relevant service. They are never shared with anyone else.
