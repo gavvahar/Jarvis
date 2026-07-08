@@ -16,6 +16,7 @@ from fastapi import FastAPI, HTTPException, Request, File, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from embeddings import average_embedding, best_match
 import auth as _auth
 from auth import (
     init_signer,
@@ -94,7 +95,6 @@ from config import (
 
 try:
     import librosa as _librosa
-    import numpy as _np
 
     _VOICE_ID_OK = True
 except ImportError:
@@ -185,13 +185,6 @@ _voice_cache: dict = {}
 _VOICE_THRESHOLD = 0.82
 
 
-def _cosine_similarity(a: list, b: list) -> float:
-    av = _np.array(a, dtype=float)
-    bv = _np.array(b, dtype=float)
-    denom = _np.linalg.norm(av) * _np.linalg.norm(bv)
-    return float(_np.dot(av, bv) / denom) if denom > 0 else 0.0
-
-
 def _extract_voice_embedding(audio_path: str) -> list | None:
     if not _VOICE_ID_OK:
         return None
@@ -209,13 +202,9 @@ async def _refresh_voice_cache() -> None:
 def _identify_speaker_from_embedding(embedding: list) -> tuple:
     if not _voice_cache or not embedding:
         return None, "", False
-    best_uid, best_name, best_safe, best_score = None, "", False, 0.0
-    for uid, (stored, name, is_safe) in _voice_cache.items():
-        score = _cosine_similarity(embedding, stored)
-        if score > best_score:
-            best_uid, best_name, best_safe, best_score = uid, name, is_safe, score
+    best_uid, best_score, meta = best_match(embedding, _voice_cache)
     if best_score >= _VOICE_THRESHOLD:
-        return best_uid, best_name, best_safe
+        return best_uid, meta[0], meta[1]
     return None, "guest", False
 
 
@@ -931,9 +920,7 @@ async def api_voice_enroll_finish(request: Request):
     embeddings = data.get("embeddings", [])
     if not embeddings or len(embeddings) < 2:
         raise HTTPException(400, "At least 2 samples required.")
-    import numpy as _np2
-
-    avg = _np2.mean([_np2.array(e) for e in embeddings], axis=0).tolist()
+    avg = average_embedding(embeddings)
     await _db_save_voice_embedding(user_id, avg)
     await _refresh_voice_cache()
     return {"ok": True}
