@@ -2,6 +2,7 @@ import asyncio, datetime, httpx
 
 from config import TESLA_CLIENT_ID, TESLA_CLIENT_SECRET
 from db import _pool
+from tool_schemas import anthropic_tools_to_openai
 
 _TESLA_AUTH_BASE = "https://auth.tesla.com/oauth2/v3"
 _TESLA_OWNER_BASE = "https://owner-api.teslamotors.com"
@@ -403,17 +404,7 @@ TESLA_TOOLS_ANTHROPIC = [
     },
 ]
 
-TESLA_TOOLS_OPENAI = [
-    {
-        "type": "function",
-        "function": {
-            "name": t["name"],
-            "description": t["description"],
-            "parameters": t["input_schema"],
-        },
-    }
-    for t in TESLA_TOOLS_ANTHROPIC
-]
+TESLA_TOOLS_OPENAI = anthropic_tools_to_openai(TESLA_TOOLS_ANTHROPIC)
 
 _TESLA_TOOL_NAMES = {t["name"] for t in TESLA_TOOLS_ANTHROPIC}
 

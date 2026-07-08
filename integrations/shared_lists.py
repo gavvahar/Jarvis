@@ -1,4 +1,5 @@
 from db import _db_get_shared_list, _db_update_shared_list
+from tool_schemas import anthropic_tools_to_openai
 
 _SHARED_LIST_TOOL_ANTHROPIC = {
     "name": "manage_shared_list",
@@ -14,22 +15,7 @@ _SHARED_LIST_TOOL_ANTHROPIC = {
     },
 }
 
-_SHARED_LIST_TOOL_OPENAI = {
-    "type": "function",
-    "function": {
-        "name": "manage_shared_list",
-        "description": "Manage shared household lists such as shopping or todo.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "action": {"type": "string", "enum": ["add", "remove", "read", "clear"]},
-                "list_name": {"type": "string", "description": "Name of the list, e.g. shopping or todo"},
-                "item": {"type": "string", "description": "Item to add or remove (omit for read/clear)"},
-            },
-            "required": ["action", "list_name"],
-        },
-    },
-}
+_SHARED_LIST_TOOL_OPENAI = anthropic_tools_to_openai([_SHARED_LIST_TOOL_ANTHROPIC])[0]
 
 
 def _get_shared_list_tools(provider: str) -> list:

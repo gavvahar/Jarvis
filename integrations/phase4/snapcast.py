@@ -10,6 +10,7 @@ Config: SNAPCAST_URL=http://192.168.1.100:1780
 
 import httpx
 from config import SNAPCAST_URL
+from tool_schemas import anthropic_tools_to_openai
 
 _SNAPCAST_TOOL_NAMES = {"snapcast_status", "snapcast_set_volume", "snapcast_mute", "snapcast_set_stream"}
 
@@ -50,87 +51,57 @@ def _snapcast_configured() -> bool:
     return bool(SNAPCAST_URL)
 
 
+_SNAPCAST_TOOLS_ANTHROPIC = [
+    {
+        "name": "snapcast_status",
+        "description": "Get all Snapcast audio groups, clients, volumes, and streams.",
+        "input_schema": {"type": "object", "properties": {}, "required": []},
+    },
+    {
+        "name": "snapcast_set_volume",
+        "description": "Set the playback volume (0–100) for a Snapcast client by its ID.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "client_id": {"type": "string", "description": "Client ID from snapcast_status"},
+                "volume": {"type": "integer", "description": "Volume level 0–100"},
+            },
+            "required": ["client_id", "volume"],
+        },
+    },
+    {
+        "name": "snapcast_mute",
+        "description": "Mute or unmute a Snapcast client without changing its volume level.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "client_id": {"type": "string", "description": "Client ID from snapcast_status"},
+                "muted": {"type": "boolean", "description": "true to mute, false to unmute"},
+            },
+            "required": ["client_id", "muted"],
+        },
+    },
+    {
+        "name": "snapcast_set_stream",
+        "description": "Change which audio stream a Snapcast group plays.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "group_id": {"type": "string", "description": "Group ID from snapcast_status"},
+                "stream_id": {"type": "string", "description": "Stream ID to switch to"},
+            },
+            "required": ["group_id", "stream_id"],
+        },
+    },
+]
+
+_SNAPCAST_TOOLS_OPENAI = anthropic_tools_to_openai(_SNAPCAST_TOOLS_ANTHROPIC)
+
+
 def _get_snapcast_tools(provider: str) -> list:
     if not _snapcast_configured():
         return []
-    if provider == "anthropic":
-        return [
-            {
-                "name": "snapcast_status",
-                "description": "Get all Snapcast audio groups, clients, volumes, and streams.",
-                "input_schema": {"type": "object", "properties": {}, "required": []},
-            },
-            {
-                "name": "snapcast_set_volume",
-                "description": "Set the playback volume (0–100) for a Snapcast client by its ID.",
-                "input_schema": {
-                    "type": "object",
-                    "properties": {
-                        "client_id": {"type": "string", "description": "Client ID from snapcast_status"},
-                        "volume": {"type": "integer", "description": "Volume level 0–100"},
-                    },
-                    "required": ["client_id", "volume"],
-                },
-            },
-            {
-                "name": "snapcast_mute",
-                "description": "Mute or unmute a Snapcast client without changing its volume level.",
-                "input_schema": {
-                    "type": "object",
-                    "properties": {
-                        "client_id": {"type": "string", "description": "Client ID from snapcast_status"},
-                        "muted": {"type": "boolean", "description": "true to mute, false to unmute"},
-                    },
-                    "required": ["client_id", "muted"],
-                },
-            },
-            {
-                "name": "snapcast_set_stream",
-                "description": "Change which audio stream a Snapcast group plays.",
-                "input_schema": {
-                    "type": "object",
-                    "properties": {
-                        "group_id": {"type": "string", "description": "Group ID from snapcast_status"},
-                        "stream_id": {"type": "string", "description": "Stream ID to switch to"},
-                    },
-                    "required": ["group_id", "stream_id"],
-                },
-            },
-        ]
-    return [
-        {
-            "type": "function",
-            "function": {
-                "name": "snapcast_status",
-                "description": "Get all Snapcast audio groups, clients, volumes, and streams.",
-                "parameters": {"type": "object", "properties": {}, "required": []},
-            },
-        },
-        {
-            "type": "function",
-            "function": {
-                "name": "snapcast_set_volume",
-                "description": "Set the playback volume (0–100) for a Snapcast client.",
-                "parameters": {"type": "object", "properties": {"client_id": {"type": "string"}, "volume": {"type": "integer"}}, "required": ["client_id", "volume"]},
-            },
-        },
-        {
-            "type": "function",
-            "function": {
-                "name": "snapcast_mute",
-                "description": "Mute or unmute a Snapcast client.",
-                "parameters": {"type": "object", "properties": {"client_id": {"type": "string"}, "muted": {"type": "boolean"}}, "required": ["client_id", "muted"]},
-            },
-        },
-        {
-            "type": "function",
-            "function": {
-                "name": "snapcast_set_stream",
-                "description": "Change which audio stream a Snapcast group plays.",
-                "parameters": {"type": "object", "properties": {"group_id": {"type": "string"}, "stream_id": {"type": "string"}}, "required": ["group_id", "stream_id"]},
-            },
-        },
-    ]
+    return _SNAPCAST_TOOLS_ANTHROPIC if provider == "anthropic" else _SNAPCAST_TOOLS_OPENAI
 
 
 async def _execute_snapcast_tool(name: str, args: dict) -> str:
