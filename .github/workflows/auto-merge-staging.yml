@@ -2,19 +2,21 @@ name: Auto Merge Staging to Main
 
 on:
   schedule:
-    - cron: "0 5 * * 1,3,5" # Mon/Wed/Fri midnight EST (UTC-5, Nov–Mar)
-    - cron: "0 4 * * 1,3,5" # Mon/Wed/Fri midnight EDT (UTC-4, Mar–Nov)
+    - cron: "0 5 * * 1,3,5" # Mon/Wed/Fri 12am EST (UTC-5, Nov–Mar)
+    - cron: "0 4 * * 1,3,5" # Mon/Wed/Fri 12am EDT (UTC-4, Mar–Nov)
   workflow_dispatch: # Allow manual trigger
 
 jobs:
   merge:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.GH_PAT }}
 
       - name: Configure git
         run: |
@@ -24,5 +26,9 @@ jobs:
       - name: Merge staging into main
         run: |
           git checkout main
+          if git merge-base --is-ancestor origin/staging HEAD; then
+            echo "staging is already merged into main, nothing to do"
+            exit 0
+          fi
           git merge --no-ff origin/staging -m "chore: auto-merge staging into main [$(date -u '+%Y-%m-%d')]"
-          git push origin main
+          git push https://x-access-token:${{ secrets.GH_PAT }}@github.com/gavvahar/Jarvis.git main

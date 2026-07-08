@@ -1,0 +1,140 @@
+/* ── Calendar & Contacts settings tab ─────────────────────────────────────── */
+#pim-settings {
+  display: block;
+}
+#pim-settings.setup-hidden {
+  display: none;
+}
+.pim-note {
+  margin: 18px 0 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: rgba(210, 244, 255, 0.78);
+}
+#pim-settings-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  text-align: left;
+  margin-top: 20px;
+}
+#pim-settings-form input {
+  width: 100%;
+  padding: 11px 13px;
+  box-sizing: border-box;
+  background: rgba(2, 10, 18, 0.8);
+  border: 1px solid rgba(127, 233, 255, 0.28);
+  border-radius: 8px;
+  color: #eafcff;
+  font-family: "Share Tech Mono", monospace;
+  font-size: 13px;
+  outline: none;
+  letter-spacing: 0.04em;
+  transition:
+    border-color 0.2s,
+    box-shadow 0.2s;
+}
+#pim-settings-form input:focus {
+  border-color: var(--cyan-bright, #aef1ff);
+  box-shadow: 0 0 14px rgba(127, 233, 255, 0.3);
+}
+#calendar-status-row,
+#contacts-status-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+  font-family: "Share Tech Mono", monospace;
+  font-size: 10.5px;
+  letter-spacing: 0.18em;
+  color: rgba(127, 233, 255, 0.55);
+}
+#calendar-status-dot,
+#contacts-status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: rgba(127, 233, 255, 0.3);
+  flex-shrink: 0;
+}
+#calendar-status-dot.connected,
+#contacts-status-dot.connected {
+  background: #7fffc4;
+  box-shadow: 0 0 6px #7fffc4;
+}
+#calendar-status-dot.disconnected,
+#contacts-status-dot.disconnected {
+  background: #ff9a7a;
+}
+#pim-settings-form button {
+  flex: 1;
+  padding: 11px;
+  background: rgba(127, 233, 255, 0.12);
+  border: 1px solid rgba(127, 233, 255, 0.4);
+  border-radius: 8px;
+  color: #eafcff;
+  font-family: "Oxanium", sans-serif;
+  font-weight: 500;
+  letter-spacing: 0.12em;
+  font-size: 12px;
+  cursor: pointer;
+  transition:
+    background 0.2s,
+    box-shadow 0.2s;
+}
+#pim-settings-form button:hover {
+  background: rgba(127, 233, 255, 0.22);
+  box-shadow: 0 0 16px rgba(127, 233, 255, 0.3);
+}
+#pim-settings-form button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+#pim-cancel {
+  border-color: rgba(127, 233, 255, 0.2) !important;
+}
+#pim-msg {
+  min-height: 16px;
+  margin-top: 12px;
+  font-family: "Share Tech Mono", monospace;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  color: rgba(127, 233, 255, 0.7);
+}
+#pim-msg.ok {
+  color: #7fffc4;
+}
+#pim-msg.err {
+  color: #ff9a7a;
+}
+
+/* ---- phone portrait (≤480px) ---- */
+@media (max-width: 480px) {
+  /* Prevent iOS zoom on input/select focus (requires font-size ≥ 16px) */
+  #setup-form select,
+  #setup-form input[type="text"],
+  #setup-form input[type="password"],
+  #ha-settings-form input,
+  #pim-settings-form input {
+    font-size: 16px;
+  }
+
+  /* Tighter padding on small screens */
+  #setup-card {
+    padding: 28px 20px 22px;
+  }
+  #ha-settings-card {
+    padding: 24px 18px 20px;
+  }
+  #pim-settings-card {
+    padding: 24px 18px 20px;
+  }
+
+  /* Stack the key row so the CONNECT button isn't a sliver */
+  .setup-keyrow {
+    flex-direction: column;
+  }
+  #setup-go {
+    width: 100%;
+  }
+}

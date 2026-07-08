@@ -1,0 +1,9 @@
+/* ===========================================================
+   APPLE MUSIC SETTINGS MODAL
+   =========================================================== */
+#apple-music-settings {
+  display: block;
+}
+#apple-music-settings.setup-hidden {
+  display: none;
+}

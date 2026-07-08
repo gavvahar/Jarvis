@@ -1,0 +1,105 @@
+<div id="settings-panel" class="setup-hidden">
+  <div id="settings-card" class="setup-card-inner">
+    <div class="setup-ring"></div>
+    <div class="setup-word">SETTINGS</div>
+    <div class="setup-sub">ALL INTEGRATIONS</div>
+
+    <div id="settings-tabs">
+      <button
+        id="ha-settings-btn"
+        class="settings-tab-btn"
+        data-panel="ha-settings"
+        title="Home Automation Settings"
+      >
+        HA
+      </button>
+      <button
+        id="agenda-btn"
+        class="settings-tab-btn"
+        data-panel="pim-settings"
+        title="Calendar &amp; Contacts"
+      >
+        AGENDA
+      </button>
+      <button
+        id="msg-settings-btn"
+        class="settings-tab-btn"
+        data-panel="msg-settings"
+        title="Phone Messages"
+      >
+        MESSAGES
+      </button>
+      <button
+        id="doorbell-btn"
+        class="settings-tab-btn"
+        data-panel="doorbell-settings"
+        title="Doorbell &amp; Security Alerts"
+      >
+        DOORBELL
+      </button>
+      <button
+        id="vision-btn"
+        class="settings-tab-btn"
+        data-panel="vision-settings"
+        title="Computer Vision &amp; Presence"
+      >
+        VISION
+      </button>
+      <button
+        id="garage-btn"
+        class="settings-tab-btn"
+        data-panel="garage-settings"
+        title="MyQ Garage Door"
+      >
+        GARAGE
+      </button>
+      <button
+        id="tesla-btn"
+        class="settings-tab-btn"
+        data-panel="tesla-settings"
+        title="Tesla Vehicle Control"
+      >
+        TESLA
+      </button>
+      <button
+        id="finance-btn"
+        class="settings-tab-btn"
+        data-panel="finance-settings"
+        title="Financial Accounts"
+      >
+        FINANCE
+      </button>
+      <button
+        id="spotify-btn"
+        class="settings-tab-btn"
+        data-panel="spotify-settings"
+        title="Spotify Music Control"
+      >
+        SPOTIFY
+      </button>
+      <button
+        id="apple-music-btn"
+        class="settings-tab-btn"
+        data-panel="apple-music-settings"
+        title="Apple Music Control"
+      >
+        APPLE MUSIC
+      </button>
+    </div>
+
+    <div id="settings-tab-content">
+      {% include "partials/ha_settings_modal.html" %} {% include
+      "partials/pim_settings_modal.html" %} {% include
+      "partials/msg_settings_panel.html" %} {% include
+      "partials/doorbell_settings_panel.html" %} {% include
+      "partials/vision_settings_panel.html" %} {% include
+      "partials/garage_settings_panel.html" %} {% include
+      "partials/tesla_settings_modal.html" %} {% include
+      "partials/finance_settings_panel.html" %} {% include
+      "partials/spotify_settings_modal.html" %} {% include
+      "partials/apple_music_settings_modal.html" %}
+    </div>
+
+    <button id="settings-panel-close">CLOSE</button>
+  </div>
+</div>

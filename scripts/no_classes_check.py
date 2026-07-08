@@ -1,9 +1,7 @@
 #!/usr/bin/env python3
 """Pre-commit check that rejects Python class definitions in the codebase."""
 
-import ast
-import os
-import sys
+import ast, os, sys
 
 EXCLUDE_DIRS = {
     ".git",
@@ -43,9 +41,7 @@ def main():
             continue
         for n in ast.walk(tree):
             if isinstance(n, ast.ClassDef):
-                violations.append(
-                    f"{path}:{n.lineno}:{n.col_offset + 1}: class {n.name}"
-                )
+                violations.append(f"{path}:{n.lineno}:{n.col_offset + 1}: class {n.name}")
     if violations:
         print("❌ Error: Class definitions found in the codebase!")
         print("\n".join(violations))
