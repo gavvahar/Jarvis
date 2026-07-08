@@ -9,14 +9,14 @@ from integrations.ha import _get_ha_tools, _ha_call_service, _ha_configured, _ha
 from integrations.music.apple_music import _AM_TOOL_NAMES, _apple_music_configured, _execute_apple_music_tool, _get_apple_music_tools
 from integrations.music.spotify import _SPOTIFY_TOOL_NAMES, _execute_spotify_tool, _get_spotify_tools, _spotify_configured
 from integrations.myq import _get_myq_tools, _myq_configured, _myq_get_status, _myq_set_door
-from integrations.phase1.calendar import _calendar_configured, _execute_calendar_tool
-from integrations.phase1.contacts import _contacts_configured, _execute_contact_lookup_tool
-from integrations.phase1.timers import _execute_news_tool, _execute_reminder_tool, _execute_timer_tool, _get_phase1_tools
-from integrations.phase5 import _execute_device_alert_tool, _execute_routine_tool, _execute_zigbee_tool, _get_phase5_tools
+from integrations.pim.calendar import _calendar_configured, _execute_calendar_tool
+from integrations.pim.contacts import _contacts_configured, _execute_contact_lookup_tool
+from integrations.pim.timers import _execute_news_tool, _execute_reminder_tool, _execute_timer_tool, _get_pim_tools
+from integrations.automation import _execute_device_alert_tool, _execute_routine_tool, _execute_zigbee_tool, _get_automation_tools
 from integrations.shared_lists import _execute_shared_list_tool, _get_shared_list_tools
 from integrations.tesla import _TESLA_TOOL_NAMES, _execute_tesla_tool, _get_tesla_tools, _tesla_configured
 from integrations.vision import _VISION_TOOL_NAMES, _execute_vision_tool, _get_presence_prompt_context, _get_vision_tools
-from integrations.phase4.snapcast import _SNAPCAST_TOOL_NAMES, _execute_snapcast_tool, _get_snapcast_tools, _snapcast_configured
+from integrations.multiroom.snapcast import _SNAPCAST_TOOL_NAMES, _execute_snapcast_tool, _get_snapcast_tools, _snapcast_configured
 from personality import JARVIS_SYSTEM
 
 _location_context: dict = {}
@@ -336,8 +336,8 @@ async def _stream_reply(state: dict, on_text):
         + _get_spotify_tools(config, provider)
         + _get_apple_music_tools(config, provider)
         + _get_shared_list_tools(provider)
-        + _get_phase1_tools(config, provider)
-        + _get_phase5_tools(config, provider)
+        + _get_pim_tools(config, provider)
+        + _get_automation_tools(config, provider)
         + _get_vision_tools(provider)
         + _get_snapcast_tools(provider)
         + finance_tools

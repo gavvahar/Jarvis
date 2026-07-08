@@ -63,12 +63,12 @@ from integrations.music.apple_music import (
     _disconnect_apple_music_user_token,
     _resolve_apple_music_callback,
 )
-import integrations.phase5 as _phase5_mod
-import integrations.phase4.presence as _presence_mod
-import integrations.phase4.snapcast as _snapcast_mod
-from integrations.phase1.dav import _resolve_dav_collection
-from integrations.phase1.calendar import _calendar_configured
-from integrations.phase1.contacts import _contacts_configured
+import integrations.automation as _automation_mod
+import integrations.multiroom.presence as _presence_mod
+import integrations.multiroom.snapcast as _snapcast_mod
+from integrations.pim.dav import _resolve_dav_collection
+from integrations.pim.calendar import _calendar_configured
+from integrations.pim.contacts import _contacts_configured
 from llm import (
     _build_client,
     _generate_meeting_notes,
@@ -267,7 +267,7 @@ async def _require_admin(request: Request) -> str:
 sio = socketio.AsyncServer(async_mode="asgi", cors_allowed_origins="*")
 _init_apple_music(sio, _sid_to_user)
 _vision_mod.init(sio, _sids_for_user)
-_phase5_mod.init(sio, _sids_for_user, _user_states)
+_automation_mod.init(sio, _sids_for_user, _user_states)
 
 
 @asynccontextmanager
@@ -285,7 +285,7 @@ async def lifespan(application: FastAPI):
     t2 = asyncio.create_task(_weather_loop())
     t3 = asyncio.create_task(_meeting_cleanup_loop())
     t4 = asyncio.create_task(_timer_reminder_loop())
-    t5 = asyncio.create_task(_phase5_mod._device_alert_loop())
+    t5 = asyncio.create_task(_automation_mod._device_alert_loop())
     t6 = asyncio.create_task(_vision_mod._vision_loop())
     t7 = asyncio.create_task(_finance_mod._finance_loop())
     yield
