@@ -218,7 +218,7 @@ Went through nearly every `@fast_app.get/post/patch/delete` route in
   for real as background asyncio tasks whenever `TestClient(jarvis.fast_app)`
   enters its context (FastAPI's lifespan startup), and `_weather_loop`
   specifically has no sleep before its first iteration — so it was making
-  *real* network calls to ip-api.com/open-meteo.com during ordinary test runs
+  _real_ network calls to ip-api.com/open-meteo.com during ordinary test runs
   and incidentally "covering" itself, non-deterministically, only when the
   test machine had internet access. Wrote deterministic tests for all 4 loops
   that mock their dependencies properly instead of relying on that.
@@ -230,7 +230,7 @@ Went through nearly every `@fast_app.get/post/patch/delete` route in
 **Gotcha hit repeatedly:** several routes call `_sids_for_user(user_id)` and
 loop over the result to call `sio.emit(...)` — with no sid registered in
 `app._sid_to_user` in tests, that loop body silently never executes (0
-statements missed as an *error*, just silently uncovered). Fix: patch
+statements missed as an _error_, just silently uncovered). Fix: patch
 `jarvis._sids_for_user` to return a non-empty list (e.g. `["sid1"]`) and
 patch `jarvis.sio` itself as a `MagicMock` with `.emit = AsyncMock()` when
 the test cares about the broadcast happening.
