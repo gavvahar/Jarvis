@@ -4949,7 +4949,7 @@ class TestExtractFaceEmbedding:
         with (
             patch.object(vision_mod, "_VISION_OK", True),
             patch.object(vision_mod, "_get_face_app", return_value=fake_fa),
-            patch.object(vision_mod, "_np_v") as mock_np,
+            patch.object(vision_mod, "_np_v"),
             patch.object(vision_mod, "_cv2") as mock_cv2,
         ):
             mock_cv2.imdecode.return_value = None
