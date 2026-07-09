@@ -14,14 +14,14 @@ steps, backed by real tests each time, rather than a single risky jump.
 
 ## Status
 
-| Step                                                           | Threshold | Actual | Status         |
-| -------------------------------------------------------------- | --------- | ------ | -------------- |
-| Baseline                                                       | 25%       | 37%    | ✅ Done        |
-| Step 1 — auth/ha/snapcast/apple_music/dav/tesla tests          | 40%       | 46%    | ✅ Done        |
-| Step 2 — spotify/contacts/finance/automation/calendar/presence | TBD       | TBD    | ⬜ Not started |
-| Step 3 — app.py route handlers                                 | TBD       | TBD    | ⬜ Not started |
-| Step 4 — db.py                                                 | TBD       | TBD    | ⬜ Not started |
-| Step 5 — vision.py                                             | 80%       | —      | ⬜ Not started |
+| Step                                                             | Threshold | Actual | Status         |
+| ----------------------------------------------------------------- | --------- | ------ | -------------- |
+| Baseline                                                         | 25%       | 37%    | ✅ Done        |
+| Step 1 — auth/ha/snapcast/apple_music/dav/tesla tests            | 40%       | 46%    | ✅ Done        |
+| Step 2 — spotify/contacts/finance/automation/calendar/presence   | 50%       | 55%    | ✅ Done        |
+| Step 3 — app.py route handlers                                   | TBD       | TBD    | ⬜ Not started |
+| Step 4 — db.py                                                   | TBD       | TBD    | ⬜ Not started |
+| Step 5 — vision.py, remaining tesla/apple_music/dav gaps          | 80%       | —      | ⬜ Not started |
 
 ## What was done in Step 1 (2026-07-08, branch `tests`)
 
@@ -51,10 +51,62 @@ you do).
 Result: 176 → 255 tests, all passing. Total coverage 37% → 46%.
 `--cov-fail-under` set to `40` (margin below actual 46%).
 
-## Per-module coverage after Step 1
+## What was done in Step 2 (2026-07-08, branch `tests`)
 
-Near-complete: `integrations/multiroom/snapcast.py` 100%, `auth.py` 96%,
-`integrations/ha.py` 95%, `integrations/pim/timers.py` 96%, `integrations/myq.py` 98%.
+Added ~110 more tests to `tests/test_app.py`, same conventions as Step 1:
+
+- `TestPresenceRegistry` — `integrations/multiroom/presence.py`: full coverage
+  of the module-level dict registry (pure functions, no mocking needed).
+- `TestSpotifyAccessToken`, `TestSpotifyReq`, `TestSpotifyStartParty`,
+  `TestSpotifyAuthUrl`, `TestSpotifyFinishAuth`, `TestSpotifyDisconnect`,
+  `TestExecuteSpotifyToolSearchVariants` — `integrations/music/spotify.py`:
+  token refresh/caching, the OAuth callback flow, and the playlist/artist/album
+  search-and-play branches the existing tests didn't hit. Introduced a shared
+  `_mock_asyncpg_pool()` helper (module-level function, not a class method) for
+  mocking `_pool().acquire()` — reusable for any integration that writes to
+  `user_configs` via asyncpg directly.
+- `TestScoreContactMatch`, `TestFormatContact`, `TestDedupePreserveOrder`,
+  `TestLookupContacts` (new) + extended `TestExecuteContactLookupTool` —
+  `integrations/pim/contacts.py`: all the match-scoring branches, formatting
+  edge cases, and the actual DAV REPORT round-trip via a literal vCard
+  multistatus XML fixture.
+- `TestParseDate`, `TestPlaidLinkToken`, `TestPlaidSyncTransactions`,
+  `TestPlaidExchangePublicToken`, `TestPlaidRemoveItem`,
+  `TestExecuteFinanceToolEdgeCases`, `TestFinanceLoop` —
+  `integrations/finance.py`: mocked `_plaid_client()` to return a `MagicMock`
+  with `.to_dict()`-returning methods (Plaid SDK calls go through
+  `asyncio.to_thread`, so a plain sync `MagicMock` works fine, no async
+  wrapping needed).
+- `TestRunRoutine`, `TestExecuteZigbeeTool`, `TestDeviceAlertLoop` + extended
+  `TestExecuteRoutineToolMocked` — `integrations/automation.py`: routine step
+  execution (ha_service/speak/delay + exception handling), the Zigbee MQTT
+  tool (including `patch.dict("sys.modules", {"aiomqtt": None})` to simulate
+  the package not being installed), and the device alert background loop.
+- Extended `TestExecuteCalendarTool` + new `TestFormatCalendarEvent`,
+  `TestParseCalendarInput`, `TestBuildCalendarEventIcs`,
+  `TestParseIcalEventsExtra`, `TestCalendarEventsBetween` —
+  `integrations/pim/calendar.py`: all-day event branches, ICS building, and
+  the actual CalDAV REPORT round-trip via a literal multistatus XML fixture.
+
+**Gotcha hit and fixed:** for background `while True` loops (`_finance_loop`,
+`_device_alert_loop`), the "raise after N sleep calls to break out" pattern
+needs the call count tuned to that specific loop's structure — `_finance_loop`
+has an initial `await asyncio.sleep(25)` *before* the `while True`, so it takes
+3 fake-sleep calls to complete one full iteration; `_device_alert_loop` has no
+such initial sleep, so it only takes 2. Getting this wrong doesn't error, it
+just silently skips the loop body (or runs it twice) — verify with an
+assertion on a mock call count, don't trust that "the test passed."
+
+Result: 255 → 356 tests, all passing. Total coverage 46% → 55%.
+`--cov-fail-under` set to `50` (margin below actual 55%).
+
+## Per-module coverage after Step 2
+
+Near-complete (95%+): `integrations/multiroom/snapcast.py` 100%,
+`integrations/multiroom/presence.py` 100%, `integrations/music/spotify.py` 99%,
+`auth.py` 96%, `integrations/pim/timers.py` 96%, `integrations/automation.py` 95%,
+`integrations/pim/calendar.py` 95%, `integrations/pim/contacts.py` 95%,
+`integrations/ha.py` 95%, `integrations/finance.py` 97%, `integrations/myq.py` 98%.
 
 Still low, in priority order for the next step (biggest statement-count gap first):
 
@@ -62,21 +114,27 @@ Still low, in priority order for the next step (biggest statement-count gap firs
    gap. Mostly FastAPI route handlers. Check what `conftest.py`'s `api_client`
    fixture already stubs before building new DB-mocking infrastructure.
 2. **`db.py`** — 25% (238 of 319 uncovered). Needs an asyncpg pool/connection
-   mocking pattern — check `conftest.py` for an existing one first.
+   mocking pattern — the `_mock_asyncpg_pool()` helper added in Step 2 (top of
+   the spotify test section) may be reusable or a good starting template.
 3. **`integrations/vision.py`** — 18% (226 of 276 uncovered). Hardest: mixes
    cv2 frame capture, DB-backed presence tracking, and long-running async
    loops (`_vision_loop`). Test the pure/formatting pieces first.
-4. **`integrations/music/spotify.py`** — 48% (81 of 157 uncovered). Should be
-   very similar in shape to the `apple_music.py`/`ha.py` tests just added
-   (OAuth + httpx) — likely quick.
-5. **`integrations/pim/contacts.py`** (57%, 62 uncovered),
-   **`integrations/finance.py`** (58%, 62 uncovered),
-   **`integrations/automation.py`** (58%, 70 uncovered),
-   **`integrations/pim/calendar.py`** (67%, 73 uncovered) — moderate gaps;
-   these already have partial test classes in `tests/test_app.py` — extend
-   them, don't duplicate.
-6. **`integrations/multiroom/presence.py`** — 36% (16 uncovered) — small,
-   quick win.
+4. **`integrations/tesla.py`** — 63% (65 of 174 uncovered). The low-level HTTP
+   functions (`_tesla_access_token`, `_tesla_vehicles`, `_tesla_wake`,
+   `_tesla_cmd`) were mocked away rather than tested directly in Step 1 — same
+   for the fleet-method `set_climate`/`actuate_trunk`/full `get_vehicle_status`
+   branches (only fleet `lock_vehicle` got a test). Follow the `TestHaIntegration`
+   httpx-mocking pattern from Step 1 for the low-level functions.
+5. **`integrations/music/apple_music.py`** — 74% (25 of 95 uncovered):
+   `_apple_music_dev_token` (JWT signing — needs a real or fake ES256 key),
+   `_save_apple_music_user_token`/`_disconnect_apple_music_user_token` (DB
+   writes — same `_mock_asyncpg_pool()` pattern used for Spotify applies
+   directly).
+6. **`integrations/pim/dav.py`** — 61% (57 of 147 uncovered): all the small
+   pure helpers are covered (Step 1); what's left is `_resolve_dav_collection`
+   itself, the higher-level orchestration function that chains 3 PROPFIND
+   round-trips. Needs 2-3 tests mocking `_dav_request` with different
+   sequential return values (`side_effect=[resp1, resp2, resp3]`).
 
 ## How to Resume
 
