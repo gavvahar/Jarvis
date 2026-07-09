@@ -107,6 +107,24 @@ def _mock_asyncpg_pool(*, fetchrow=None, fetch=None, fetchval=None, execute=None
     return pool, conn
 
 
+def _seed_user_state(config=None, role="user", client=None):
+    """Pre-populate app.py's `_user_states["local"]` cache so route handlers
+    that call `_get_user_state` skip the real DB-loading path entirely.
+    `_get_current_user` always resolves to "local" under the `api_client`
+    fixture, since `_oidc_config` is never set in tests.
+    """
+    state = {
+        "config": config if config is not None else {},
+        "client": client if client is not None else MagicMock(),
+        "provider": "anthropic",
+        "conversation": [],
+        "role": role,
+        "user_id": "local",
+    }
+    jarvis._user_states["local"] = state
+    return state
+
+
 # ── Pure function tests ────────────────────────────────────────────────────────
 
 
@@ -1154,6 +1172,91 @@ class TestMessagesIngest:
             )
         assert resp.status_code == 200
         assert resp.json() == {"ok": True}
+
+    def test_configured_user_schedules_classification(self, api_client):
+        jarvis._user_states["msguser"] = {
+            "config": {"provider": "anthropic", "api_key": "k"},
+            "client": MagicMock(),
+            "provider": "anthropic",
+            "conversation": [],
+            "role": "user",
+            "user_id": "msguser",
+        }
+        with (
+            patch.object(jarvis, "_db_find_user_by_token", new=AsyncMock(return_value="msguser")),
+            patch.object(jarvis, "_classify_and_notify", new=AsyncMock()) as mock_classify,
+        ):
+            resp = api_client.post(
+                "/api/messages/ingest",
+                headers={"Authorization": "Bearer validtoken"},
+                json={"sender": "Bob", "text": "Are you free Saturday?"},
+            )
+        assert resp.status_code == 200
+        mock_classify.assert_called_once()
+        jarvis._user_states.pop("msguser", None)
+
+
+class TestClassifyMessage:
+    def _state(self, provider="anthropic", client=None):
+        return {"provider": provider, "config": {"model": "m"}, "client": client or MagicMock()}
+
+    def test_anthropic_flags_important(self):
+        client = MagicMock()
+        reply_msg = MagicMock()
+        reply_msg.content = [MagicMock(text="yes: dinner invite")]
+        client.messages.create = AsyncMock(return_value=reply_msg)
+        important, reason = asyncio.run(jarvis._classify_message(self._state(client=client), "Bob", "Dinner Saturday?"))
+        assert important is True
+        assert reason == "dinner invite"
+
+    def test_anthropic_not_important(self):
+        client = MagicMock()
+        reply_msg = MagicMock()
+        reply_msg.content = [MagicMock(text="no")]
+        client.messages.create = AsyncMock(return_value=reply_msg)
+        important, reason = asyncio.run(jarvis._classify_message(self._state(client=client), "Bob", "lol ok"))
+        assert important is False
+        assert reason == ""
+
+    def test_openai_flags_important(self):
+        client = MagicMock()
+        resp = MagicMock()
+        resp.choices = [MagicMock(message=MagicMock(content="yes: urgent deadline"))]
+        client.chat.completions.create = AsyncMock(return_value=resp)
+        important, reason = asyncio.run(jarvis._classify_message(self._state(provider="openai", client=client), "Bob", "Need this by 5pm"))
+        assert important is True
+        assert reason == "urgent deadline"
+
+    def test_exception_returns_not_important(self):
+        client = MagicMock()
+        client.messages.create = AsyncMock(side_effect=Exception("API down"))
+        important, reason = asyncio.run(jarvis._classify_message(self._state(client=client), "Bob", "hi"))
+        assert important is False
+        assert reason == ""
+
+
+class TestClassifyAndNotify:
+    def test_notifies_when_important(self):
+        with (
+            patch.object(jarvis, "_classify_message", new=AsyncMock(return_value=(True, "urgent"))),
+            patch.object(jarvis, "_db_store_phone_message", new=AsyncMock()) as mock_store,
+            patch.object(jarvis, "_sids_for_user", return_value=["sid1"]),
+            patch.object(jarvis, "sio") as mock_sio,
+        ):
+            mock_sio.emit = AsyncMock()
+            asyncio.run(jarvis._classify_and_notify("u1", "Bob", "hi", {}))
+        mock_store.assert_awaited_once_with("u1", "Bob", "hi", True, "urgent")
+        mock_sio.emit.assert_awaited_once()
+
+    def test_no_notify_when_not_important(self):
+        with (
+            patch.object(jarvis, "_classify_message", new=AsyncMock(return_value=(False, ""))),
+            patch.object(jarvis, "_db_store_phone_message", new=AsyncMock()),
+            patch.object(jarvis, "sio") as mock_sio,
+        ):
+            mock_sio.emit = AsyncMock()
+            asyncio.run(jarvis._classify_and_notify("u1", "Bob", "hi", {}))
+        mock_sio.emit.assert_not_awaited()
 
 
 # ── Phase 5 pure-function tests ───────────────────────────────────────────────
@@ -3836,3 +3939,866 @@ class TestDbPlaid:
         pool, conn = _mock_asyncpg_pool(execute="UPDATE 1")
         with patch("db._pool", return_value=pool):
             assert asyncio.run(db_mod._db_set_transaction_category_override("u1", 1, "Business")) is True
+
+
+# ── app.py routes ──────────────────────────────────────────────────────────────
+# `api_client` (module-scoped) always resolves the caller as user_id "local"
+# since `_oidc_config` is never set in tests (see conftest.py). Routes that
+# call `_get_user_state` need `_seed_user_state()` first or they'll try a real
+# DB load against the fixture's bare MagicMock pool and fail.
+
+
+class TestAuthRoutes:
+    def test_login_redirects_to_root_when_no_oidc(self, api_client):
+        with patch.object(auth, "_oidc_config", None):
+            resp = api_client.get("/login", follow_redirects=False)
+        assert resp.status_code == 302
+        assert resp.headers["location"] == "/"
+
+    def test_login_redirects_to_oidc_when_configured(self, api_client):
+        with patch.object(auth, "_oidc_config", {"authorization_endpoint": "https://auth.example.com/authorize"}):
+            resp = api_client.get("/login", follow_redirects=False)
+        assert resp.status_code == 307 or resp.status_code == 302
+        assert resp.headers["location"].startswith("https://auth.example.com/authorize?")
+        assert "oidc_state" in resp.cookies
+
+    def test_auth_callback_missing_code_returns_400(self, api_client):
+        resp = api_client.get("/auth/callback")
+        assert resp.status_code == 400
+
+    def test_auth_callback_state_mismatch_returns_400(self, api_client):
+        resp = api_client.get("/auth/callback?code=abc&state=x", cookies={"oidc_state": "y"})
+        assert resp.status_code == 400
+
+    def test_auth_callback_success(self, api_client):
+        token_resp = MagicMock(status_code=200)
+        token_resp.raise_for_status = MagicMock()
+        token_resp.json = MagicMock(return_value={"access_token": "at"})
+        userinfo_resp = MagicMock(status_code=200)
+        userinfo_resp.raise_for_status = MagicMock()
+        userinfo_resp.json = MagicMock(return_value={"sub": "user-42", "email": "a@b.com", "groups": []})
+        mock_client = _mock_async_client(post=token_resp, get=userinfo_resp)
+        with (
+            patch.object(auth, "_oidc_config", {"token_endpoint": "https://auth.example.com/token", "userinfo_endpoint": "https://auth.example.com/userinfo"}),
+            patch("httpx.AsyncClient", return_value=mock_client),
+            patch.object(jarvis, "_db_ensure_user", new=AsyncMock()) as mock_ensure,
+        ):
+            resp = api_client.get("/auth/callback?code=abc&state=x", cookies={"oidc_state": "x"}, follow_redirects=False)
+        assert resp.status_code == 303
+        assert resp.headers["location"] == "/"
+        mock_ensure.assert_awaited_once_with("user-42", "a@b.com", "user")
+
+    def test_auth_callback_token_exchange_failure_returns_502(self, api_client):
+        mock_client = _mock_async_client(post=AsyncMock(side_effect=Exception("network down")))
+        with (
+            patch.object(auth, "_oidc_config", {"token_endpoint": "https://auth.example.com/token", "userinfo_endpoint": "https://auth.example.com/userinfo"}),
+            patch("httpx.AsyncClient", return_value=mock_client),
+        ):
+            resp = api_client.get("/auth/callback?code=abc&state=x", cookies={"oidc_state": "x"})
+        assert resp.status_code == 502
+
+    def test_logout_redirects_to_login(self, api_client):
+        resp = api_client.get("/logout", follow_redirects=False)
+        assert resp.status_code == 303
+        assert resp.headers["location"] == "/login"
+
+
+class TestIndexRoute:
+    def test_redirects_to_login_when_not_authenticated(self, api_client):
+        with patch.object(jarvis, "_get_current_user", return_value=None):
+            resp = api_client.get("/", follow_redirects=False)
+        assert resp.status_code == 307
+        assert resp.headers["location"] == "/login"
+
+    def test_renders_when_authenticated(self, api_client):
+        resp = api_client.get("/")
+        assert resp.status_code == 200
+        assert "text/html" in resp.headers["content-type"]
+
+
+class TestApiStatus:
+    def test_returns_status_fields(self, api_client):
+        _seed_user_state(config={"provider": "anthropic", "model": "claude-haiku-4-5"})
+        with patch.object(jarvis, "_finance_configured", new=AsyncMock(return_value=False)):
+            resp = api_client.get("/api/status")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["provider"] == "anthropic"
+        assert data["model"] == "claude-haiku-4-5"
+        assert data["role"] == "user"
+
+
+class TestApiSaveConfig:
+    def test_unknown_provider_rejected(self, api_client):
+        resp = api_client.post("/api/save_config", json={"provider": "bogus", "key": "k"})
+        assert resp.json() == {"ok": False, "error": "Unknown provider."}
+
+    def test_missing_key_rejected(self, api_client):
+        resp = api_client.post("/api/save_config", json={"provider": "anthropic", "key": ""})
+        assert resp.json()["ok"] is False
+        assert "API key" in resp.json()["error"]
+
+    def test_openai_compatible_missing_base_url_rejected(self, api_client):
+        resp = api_client.post("/api/save_config", json={"provider": "openai_compatible", "key": "k", "base_url": ""})
+        assert resp.json()["ok"] is False
+        assert "base URL" in resp.json()["error"]
+
+    def test_validate_failure_surfaced(self, api_client):
+        with patch.object(jarvis, "_validate", return_value=(False, "Key was rejected")):
+            resp = api_client.post("/api/save_config", json={"provider": "anthropic", "key": "bad-key"})
+        assert resp.json() == {"ok": False, "error": "Key was rejected"}
+
+    def test_success_saves_config(self, api_client):
+        _seed_user_state()
+        with (
+            patch.object(jarvis, "_validate", return_value=(True, "")),
+            patch.object(jarvis, "_db_save_config", new=AsyncMock()) as mock_save,
+        ):
+            resp = api_client.post("/api/save_config", json={"provider": "anthropic", "key": "k", "model": "claude-haiku-4-5"})
+        assert resp.json() == {"ok": True}
+        mock_save.assert_awaited_once()
+
+    def test_ha_validation_failure_surfaced(self, api_client):
+        _seed_user_state()
+        with (
+            patch.object(jarvis, "_validate", return_value=(True, "")),
+            patch.object(jarvis, "_validate_ha", new=AsyncMock(return_value=(False, "token rejected"))),
+        ):
+            resp = api_client.post(
+                "/api/save_config",
+                json={"provider": "anthropic", "key": "k", "ha_url": "http://ha.local", "ha_token": "tok"},
+            )
+        assert resp.json() == {"ok": False, "error": "Home Assistant: token rejected"}
+
+
+class TestApiCamerasAndVision:
+    def test_list_cameras(self, api_client):
+        with patch.object(jarvis, "_list_cameras", new=AsyncMock(return_value=[{"id": 1, "name": "Front Door"}])):
+            resp = api_client.get("/api/cameras")
+        assert resp.json() == [{"id": 1, "name": "Front Door"}]
+
+    def test_add_camera(self, api_client):
+        with patch.object(jarvis, "_add_camera", new=AsyncMock(return_value={"ok": True, "id": 1})):
+            resp = api_client.post("/api/cameras", json={"name": "Front Door", "source_type": "rtsp", "source": "rtsp://x"})
+        assert resp.json() == {"ok": True, "id": 1}
+
+    def test_delete_camera(self, api_client):
+        with patch.object(jarvis, "_delete_camera", new=AsyncMock(return_value={"ok": True})):
+            resp = api_client.delete("/api/cameras/1")
+        assert resp.json() == {"ok": True}
+
+    def test_update_camera(self, api_client):
+        with patch.object(jarvis, "_update_camera", new=AsyncMock(return_value={"ok": True})):
+            resp = api_client.patch("/api/cameras/1", json={"enabled": False})
+        assert resp.json() == {"ok": True}
+
+    def test_presence(self, api_client):
+        with patch.object(jarvis, "_get_presence_members", new=AsyncMock(return_value=[{"user_id": "u1", "is_home": True}])):
+            resp = api_client.get("/api/presence")
+        assert resp.json() == [{"user_id": "u1", "is_home": True}]
+
+    def test_security_events(self, api_client):
+        with patch.object(jarvis, "_get_security_events", new=AsyncMock(return_value=[])) as mock_events:
+            resp = api_client.get("/api/security-events?hours=12")
+        assert resp.json() == []
+        mock_events.assert_awaited_once_with("local", 12.0)
+
+    def test_face_enroll_sample(self, api_client):
+        with patch.object(jarvis, "_face_enroll_sample", new=AsyncMock(return_value={"ok": True, "embedding": [0.1]})):
+            resp = api_client.post("/api/face/enroll-sample", files={"image": ("face.jpg", b"fake-bytes", "image/jpeg")})
+        assert resp.json() == {"ok": True, "embedding": [0.1]}
+
+    def test_face_enroll_finish(self, api_client):
+        with patch.object(jarvis, "_face_enroll_finish", new=AsyncMock(return_value={"ok": True})) as mock_finish:
+            resp = api_client.post("/api/face/enroll-finish", json={"embeddings": [[0.1, 0.2]]})
+        assert resp.json() == {"ok": True}
+        mock_finish.assert_awaited_once_with("local", [[0.1, 0.2]])
+
+    def test_face_enroll_delete(self, api_client):
+        with patch.object(jarvis, "_face_enroll_delete", new=AsyncMock(return_value={"ok": True})):
+            resp = api_client.delete("/api/face/enrollment")
+        assert resp.json() == {"ok": True}
+
+
+class TestApiSaveHa:
+    def test_saves_without_validation_when_no_token_change(self, api_client):
+        _seed_user_state(config={"ha_url": "", "ha_token": ""})
+        with patch.object(jarvis, "_db_save_config", new=AsyncMock()):
+            resp = api_client.post("/api/save_ha", json={"ha_url": "", "ha_token": ""})
+        assert resp.json() == {"ok": True, "ha_configured": False}
+
+    def test_validation_failure_surfaced(self, api_client):
+        _seed_user_state(config={})
+        with patch.object(jarvis, "_validate_ha", new=AsyncMock(return_value=(False, "bad token"))):
+            resp = api_client.post("/api/save_ha", json={"ha_url": "http://ha.local", "ha_token": "tok"})
+        assert resp.json() == {"ok": False, "error": "bad token"}
+
+    def test_success(self, api_client):
+        _seed_user_state(config={})
+        with (
+            patch.object(jarvis, "_validate_ha", new=AsyncMock(return_value=(True, ""))),
+            patch.object(jarvis, "_db_save_config", new=AsyncMock()),
+        ):
+            resp = api_client.post("/api/save_ha", json={"ha_url": "http://ha.local", "ha_token": "tok"})
+        assert resp.json() == {"ok": True, "ha_configured": True}
+
+
+class TestApiSavePim:
+    def test_clears_calendar_and_contacts(self, api_client):
+        _seed_user_state(config={"calendar_url": "old", "contacts_url": "old"})
+        with patch.object(jarvis, "_db_save_pim_config", new=AsyncMock()):
+            resp = api_client.post("/api/save_pim", json={"clear_calendar": True, "clear_contacts": True})
+        data = resp.json()
+        assert data["ok"] is True
+        assert data["calendar_url"] == ""
+        assert data["contacts_url"] == ""
+
+    def test_calendar_requires_username(self, api_client):
+        _seed_user_state(config={})
+        resp = api_client.post("/api/save_pim", json={"calendar_url": "https://dav.example.com/", "calendar_username": ""})
+        assert resp.json()["ok"] is False
+        assert "username" in resp.json()["error"]
+
+    def test_calendar_resolve_failure_surfaced(self, api_client):
+        _seed_user_state(config={})
+        with patch.object(jarvis, "_resolve_dav_collection", new=AsyncMock(side_effect=ValueError("auth failed"))):
+            resp = api_client.post(
+                "/api/save_pim",
+                json={"calendar_url": "https://dav.example.com/", "calendar_username": "me", "calendar_password": "pw"},
+            )
+        assert resp.json() == {"ok": False, "error": "Calendar: auth failed"}
+
+    def test_success(self, api_client):
+        _seed_user_state(config={})
+        resolved = {"url": "https://dav.example.com/cal/", "display_name": "Personal"}
+        with (
+            patch.object(jarvis, "_resolve_dav_collection", new=AsyncMock(return_value=resolved)),
+            patch.object(jarvis, "_db_save_pim_config", new=AsyncMock()),
+        ):
+            resp = api_client.post(
+                "/api/save_pim",
+                json={"calendar_url": "https://dav.example.com/", "calendar_username": "me", "calendar_password": "pw"},
+            )
+        data = resp.json()
+        assert data["ok"] is True
+        assert data["calendar_url"] == "https://dav.example.com/cal/"
+
+    def test_contacts_requires_username(self, api_client):
+        _seed_user_state(config={})
+        resp = api_client.post("/api/save_pim", json={"contacts_url": "https://dav.example.com/", "contacts_username": ""})
+        assert resp.json()["ok"] is False
+        assert "username" in resp.json()["error"]
+
+    def test_contacts_success(self, api_client):
+        _seed_user_state(config={})
+        resolved = {"url": "https://dav.example.com/ab/", "display_name": "Contacts"}
+        with (
+            patch.object(jarvis, "_resolve_dav_collection", new=AsyncMock(return_value=resolved)),
+            patch.object(jarvis, "_db_save_pim_config", new=AsyncMock()),
+        ):
+            resp = api_client.post(
+                "/api/save_pim",
+                json={"contacts_url": "https://dav.example.com/", "contacts_username": "me", "contacts_password": "pw"},
+            )
+        data = resp.json()
+        assert data["ok"] is True
+        assert data["contacts_url"] == "https://dav.example.com/ab/"
+
+
+class TestApiSaveMyq:
+    def test_rejects_unreachable_myq(self, api_client):
+        with patch.object(jarvis, "_myq_get_status", new=AsyncMock(return_value="Could not reach MyQ servers.")):
+            resp = api_client.post("/api/save_myq", json={"myq_email": "a@b.com", "myq_password": "pw"})
+        assert resp.json()["ok"] is False
+
+    def test_success(self, api_client):
+        _seed_user_state(config={})
+        with (
+            patch.object(jarvis, "_myq_get_status", new=AsyncMock(return_value="Garage: closed")),
+            patch.object(jarvis, "_db_save_config", new=AsyncMock()),
+        ):
+            resp = api_client.post("/api/save_myq", json={"myq_email": "a@b.com", "myq_password": "pw"})
+        assert resp.json() == {"ok": True, "myq_configured": True}
+
+    def test_clears_credentials(self, api_client):
+        _seed_user_state(config={})
+        with patch.object(jarvis, "_db_save_config", new=AsyncMock()):
+            resp = api_client.post("/api/save_myq", json={"myq_email": "", "myq_password": ""})
+        assert resp.json() == {"ok": True, "myq_configured": False}
+
+
+class TestApiFinanceRoutes:
+    def test_link_token_requires_plaid_configured(self, api_client):
+        with patch.object(jarvis, "PLAID_CLIENT_ID", ""):
+            resp = api_client.post("/api/finance/link_token")
+        assert resp.status_code == 503
+
+    def test_link_token_success(self, api_client):
+        with (
+            patch.object(jarvis, "PLAID_CLIENT_ID", "cid"),
+            patch.object(jarvis, "PLAID_SECRET", "secret"),
+            patch.object(jarvis, "_plaid_create_link_token", new=AsyncMock(return_value="link-abc")),
+        ):
+            resp = api_client.post("/api/finance/link_token")
+        assert resp.json() == {"link_token": "link-abc"}
+
+    def test_exchange_token_missing_public_token(self, api_client):
+        resp = api_client.post("/api/finance/exchange_token", json={})
+        assert resp.json() == {"ok": False, "error": "Missing public_token."}
+
+    def test_exchange_token_success(self, api_client):
+        with patch.object(jarvis, "_plaid_exchange_public_token", new=AsyncMock(return_value={"item_id": "item1", "institution_name": "Chase"})):
+            resp = api_client.post("/api/finance/exchange_token", json={"public_token": "pub-tok"})
+        assert resp.json() == {"ok": True, "item_id": "item1", "institution_name": "Chase"}
+
+    def test_exchange_token_failure_surfaced(self, api_client):
+        with patch.object(jarvis, "_plaid_exchange_public_token", new=AsyncMock(side_effect=Exception("bad token"))):
+            resp = api_client.post("/api/finance/exchange_token", json={"public_token": "pub-tok"})
+        assert resp.json()["ok"] is False
+
+    def test_connections(self, api_client):
+        with (
+            patch.object(jarvis, "_db_list_plaid_items", new=AsyncMock(return_value=[{"id": 1}])),
+            patch.object(jarvis, "_db_list_plaid_accounts", new=AsyncMock(return_value=[{"id": 1, "name": "Checking"}])),
+        ):
+            resp = api_client.get("/api/finance/connections")
+        assert resp.json() == {"connections": [{"id": 1}], "accounts": [{"id": 1, "name": "Checking"}]}
+
+    def test_disconnect_not_found(self, api_client):
+        with patch.object(jarvis, "_db_get_plaid_item", new=AsyncMock(return_value=None)):
+            resp = api_client.delete("/api/finance/connections/1")
+        assert resp.status_code == 404
+
+    def test_disconnect_success(self, api_client):
+        with (
+            patch.object(jarvis, "_db_get_plaid_item", new=AsyncMock(return_value={"access_token": "at"})),
+            patch.object(jarvis, "_plaid_remove_item", new=AsyncMock()),
+            patch.object(jarvis, "_db_delete_plaid_item", new=AsyncMock(return_value=True)),
+        ):
+            resp = api_client.delete("/api/finance/connections/1")
+        assert resp.json() == {"ok": True}
+
+    def test_override_category_missing(self, api_client):
+        resp = api_client.patch("/api/finance/transactions/1", json={"category": ""})
+        assert resp.json() == {"ok": False, "error": "category is required"}
+
+    def test_override_category_not_found(self, api_client):
+        with patch.object(jarvis, "_db_set_transaction_category_override", new=AsyncMock(return_value=False)):
+            resp = api_client.patch("/api/finance/transactions/1", json={"category": "Business"})
+        assert resp.status_code == 404
+
+    def test_override_category_success(self, api_client):
+        with patch.object(jarvis, "_db_set_transaction_category_override", new=AsyncMock(return_value=True)):
+            resp = api_client.patch("/api/finance/transactions/1", json={"category": "Business"})
+        assert resp.json() == {"ok": True}
+
+
+class TestApiMeetings:
+    def test_list_meetings(self, api_client):
+        pool, conn = _mock_asyncpg_pool(fetch=[{"id": 1, "started_at": datetime.datetime(2026, 7, 1, 9, 0), "ended_at": None, "notes": None}])
+        with patch.object(jarvis, "_pool", return_value=pool):
+            resp = api_client.get("/api/meetings")
+        assert resp.json() == [{"id": 1, "started_at": "2026-07-01T09:00:00", "ended_at": None, "notes": None}]
+
+    def test_meeting_detail_not_found(self, api_client):
+        pool, conn = _mock_asyncpg_pool(fetchrow=None)
+        with patch.object(jarvis, "_pool", return_value=pool):
+            resp = api_client.get("/api/meetings/1")
+        assert resp.status_code == 404
+
+    def test_meeting_detail_found(self, api_client):
+        row = {"id": 1, "started_at": datetime.datetime(2026, 7, 1, 9, 0), "ended_at": datetime.datetime(2026, 7, 1, 9, 30), "transcript": "hi", "notes": "notes"}
+        pool, conn = _mock_asyncpg_pool(fetchrow=row)
+        with patch.object(jarvis, "_pool", return_value=pool):
+            resp = api_client.get("/api/meetings/1")
+        data = resp.json()
+        assert data["transcript"] == "hi"
+        assert data["started_at"] == "2026-07-01T09:00:00"
+
+
+class TestApiMessagesRoutes:
+    def test_messages_token(self, api_client):
+        with patch.object(jarvis, "_db_get_or_create_webhook_token", new=AsyncMock(return_value="tok123")):
+            resp = api_client.get("/api/messages/token")
+        data = resp.json()
+        assert data["token"] == "tok123"
+        assert data["url"].endswith("/api/messages/ingest")
+
+    def test_messages_token_regenerate(self, api_client):
+        with patch.object(jarvis, "_db_regenerate_webhook_token", new=AsyncMock(return_value="newtok")):
+            resp = api_client.post("/api/messages/token/regenerate")
+        assert resp.json()["token"] == "newtok"
+
+    def test_download_apk_not_available(self, api_client):
+        resp = api_client.get("/download/jarvis-messages.apk")
+        assert resp.status_code == 404
+
+    def test_messages_list(self, api_client):
+        rows = [{"id": 1, "sender": "Alice", "body": "hi", "important": False, "reason": "", "received_at": datetime.datetime(2026, 7, 1, 9, 0)}]
+        pool, conn = _mock_asyncpg_pool(fetch=rows)
+        with patch.object(jarvis, "_pool", return_value=pool):
+            resp = api_client.get("/api/messages")
+        assert resp.json()[0]["sender"] == "Alice"
+
+
+class TestApiDoorbellRoutes:
+    def test_event_requires_bearer(self, api_client):
+        resp = api_client.post("/api/doorbell/event", json={"event_type": "motion"})
+        assert resp.status_code == 401
+
+    def test_event_stored_and_broadcast(self, api_client):
+        with (
+            patch.object(jarvis, "_db_find_user_by_token", new=AsyncMock(return_value="user1")),
+            patch.object(jarvis, "_db_store_doorbell_event", new=AsyncMock()) as mock_store,
+            patch.object(jarvis, "_sids_for_user", return_value=["sid1"]),
+            patch.object(jarvis, "sio") as mock_sio,
+        ):
+            mock_sio.emit = AsyncMock()
+            resp = api_client.post(
+                "/api/doorbell/event",
+                headers={"Authorization": "Bearer validtoken"},
+                json={"event_type": "doorbell_press", "source": "front_door"},
+            )
+            mock_sio.emit.assert_awaited_once()
+        assert resp.json() == {"ok": True}
+        mock_store.assert_awaited_once_with("user1", "doorbell_press", "front_door")
+
+    def test_motion_suppressed_late_at_night(self, api_client):
+        fake_now = datetime.datetime(2026, 7, 1, 23, 30)
+        with (
+            patch.object(jarvis, "_db_find_user_by_token", new=AsyncMock(return_value="user1")),
+            patch.object(jarvis, "_db_store_doorbell_event", new=AsyncMock()),
+            patch.object(jarvis.datetime, "datetime", MagicMock(now=MagicMock(return_value=fake_now))),
+            patch.object(jarvis, "sio") as mock_sio,
+        ):
+            mock_sio.emit = AsyncMock()
+            resp = api_client.post(
+                "/api/doorbell/event",
+                headers={"Authorization": "Bearer validtoken"},
+                json={"event_type": "motion", "source": "front_door"},
+            )
+            mock_sio.emit.assert_not_awaited()
+        assert resp.json() == {"ok": True}
+
+    def test_token(self, api_client):
+        with patch.object(jarvis, "_db_get_or_create_webhook_token", new=AsyncMock(return_value="tok123")):
+            resp = api_client.get("/api/doorbell/token")
+        assert resp.json()["token"] == "tok123"
+
+    def test_events(self, api_client):
+        rows = [{"id": 1, "event_type": "motion", "source": "front_door", "received_at": datetime.datetime(2026, 7, 1, 9, 0)}]
+        pool, conn = _mock_asyncpg_pool(fetch=rows)
+        with patch.object(jarvis, "_pool", return_value=pool):
+            resp = api_client.get("/api/doorbell/events")
+        assert resp.json()[0]["event_type"] == "motion"
+
+
+class TestApiWake:
+    def test_wake_requires_bearer(self, api_client):
+        resp = api_client.post("/api/wake", json={"device_id": "living-room"})
+        assert resp.status_code == 401
+
+    def test_wake_broadcasts(self, api_client):
+        jarvis._last_wake_time.pop("wakeuser", None)
+        with (
+            patch.object(jarvis, "_db_find_user_by_token", new=AsyncMock(return_value="wakeuser")),
+            patch.object(jarvis, "_sids_for_user", return_value=["sid1"]),
+            patch.object(jarvis, "sio") as mock_sio,
+        ):
+            mock_sio.emit = AsyncMock()
+            resp = api_client.post(
+                "/api/wake",
+                headers={"Authorization": "Bearer validtoken"},
+                json={"device_id": "living-room", "room": "Living Room"},
+            )
+            mock_sio.emit.assert_awaited_once()
+        assert resp.json() == {"status": "ok"}
+
+    def test_wake_deduplicates_rapid_repeats(self, api_client):
+        jarvis._last_wake_time.pop("wakeuser", None)
+        with patch.object(jarvis, "_db_find_user_by_token", new=AsyncMock(return_value="wakeuser")):
+            api_client.post("/api/wake", headers={"Authorization": "Bearer validtoken"}, json={"device_id": "living-room"})
+            resp = api_client.post("/api/wake", headers={"Authorization": "Bearer validtoken"}, json={"device_id": "living-room"})
+        assert resp.json() == {"status": "ignored"}
+
+
+class TestApiVoiceEnrollment:
+    def test_enroll_sample_voice_id_unavailable(self, api_client):
+        with patch.object(jarvis, "_VOICE_ID_OK", False):
+            resp = api_client.post("/api/voice/enroll-sample", files={"audio": ("sample.webm", b"fake-audio", "audio/webm")})
+        assert resp.json()["ok"] is False
+
+    def test_enroll_sample_extraction_fails(self, api_client):
+        with (
+            patch.object(jarvis, "_VOICE_ID_OK", True),
+            patch.object(jarvis, "_extract_voice_embedding", return_value=None),
+        ):
+            resp = api_client.post("/api/voice/enroll-sample", files={"audio": ("sample.webm", b"fake-audio", "audio/webm")})
+        assert resp.json() == {"ok": False, "error": "Could not extract embedding."}
+
+    def test_enroll_sample_success(self, api_client):
+        with (
+            patch.object(jarvis, "_VOICE_ID_OK", True),
+            patch.object(jarvis, "_extract_voice_embedding", return_value=[0.1, 0.2]),
+        ):
+            resp = api_client.post("/api/voice/enroll-sample", files={"audio": ("sample.webm", b"fake-audio", "audio/webm")})
+        assert resp.json() == {"ok": True, "embedding": [0.1, 0.2]}
+
+    def test_enroll_finish_voice_id_unavailable(self, api_client):
+        with patch.object(jarvis, "_VOICE_ID_OK", False):
+            resp = api_client.post("/api/voice/enroll-finish", json={"embeddings": [[0.1], [0.2]]})
+        assert resp.status_code == 400
+
+    def test_enroll_finish_needs_two_samples(self, api_client):
+        with patch.object(jarvis, "_VOICE_ID_OK", True):
+            resp = api_client.post("/api/voice/enroll-finish", json={"embeddings": [[0.1]]})
+        assert resp.status_code == 400
+
+    def test_enroll_finish_success(self, api_client):
+        with (
+            patch.object(jarvis, "_VOICE_ID_OK", True),
+            patch.object(jarvis, "_db_save_voice_embedding", new=AsyncMock()) as mock_save,
+            patch.object(jarvis, "_refresh_voice_cache", new=AsyncMock()),
+        ):
+            resp = api_client.post("/api/voice/enroll-finish", json={"embeddings": [[0.1, 0.2], [0.3, 0.4]]})
+        assert resp.json() == {"ok": True}
+        mock_save.assert_awaited_once()
+
+    def test_enrollment_delete(self, api_client):
+        with (
+            patch.object(jarvis, "_db_clear_voice_embedding", new=AsyncMock()) as mock_clear,
+            patch.object(jarvis, "_refresh_voice_cache", new=AsyncMock()),
+        ):
+            resp = api_client.delete("/api/voice/enrollment")
+        assert resp.json() == {"ok": True}
+        mock_clear.assert_awaited_once()
+
+
+class TestApiUserProfile:
+    def test_updates_display_name(self, api_client):
+        _seed_user_state(config={})
+        with (
+            patch.object(jarvis, "_db_set_display_name", new=AsyncMock()),
+            patch.object(jarvis, "_refresh_voice_cache", new=AsyncMock()),
+        ):
+            resp = api_client.patch("/api/user/profile", json={"display_name": "Alice"})
+        assert resp.json() == {"ok": True}
+        assert jarvis._user_states["local"]["config"]["display_name"] == "Alice"
+
+    def test_updates_kid_safe(self, api_client):
+        _seed_user_state(config={})
+        with (
+            patch.object(jarvis, "_db_set_kid_safe", new=AsyncMock()),
+            patch.object(jarvis, "_refresh_voice_cache", new=AsyncMock()),
+        ):
+            resp = api_client.patch("/api/user/profile", json={"is_kid_safe": True})
+        assert resp.json() == {"ok": True}
+        assert jarvis._user_states["local"]["config"]["is_kid_safe"] is True
+
+
+class TestApiHouseholdMembers:
+    def test_requires_admin(self, api_client):
+        _seed_user_state(role="user")
+        resp = api_client.get("/api/household/members")
+        assert resp.status_code == 403
+
+    def test_admin_success(self, api_client):
+        _seed_user_state(role="admin")
+        with patch.object(jarvis, "_db_get_household_members", new=AsyncMock(return_value=[{"user_id": "u1"}])):
+            resp = api_client.get("/api/household/members")
+        assert resp.json() == {"members": [{"user_id": "u1"}]}
+
+
+class TestApiSharedListsRoute:
+    def test_shared_lists(self, api_client):
+        with patch.object(jarvis, "_db_get_all_shared_lists", new=AsyncMock(return_value={"shopping": ["milk"]})):
+            resp = api_client.get("/api/shared-lists")
+        assert resp.json() == {"lists": {"shopping": ["milk"]}}
+
+
+class TestApiSnapcastStatusRoute:
+    def test_not_configured(self, api_client):
+        with patch.object(jarvis._snapcast_mod, "_snapcast_configured", return_value=False):
+            resp = api_client.get("/api/snapcast/status")
+        assert resp.status_code == 503
+
+    def test_configured(self, api_client):
+        with (
+            patch.object(jarvis._snapcast_mod, "_snapcast_configured", return_value=True),
+            patch.object(jarvis._snapcast_mod, "_snapcast_get_status", new=AsyncMock(return_value="Group 'g1' -> stream 's1'")),
+        ):
+            resp = api_client.get("/api/snapcast/status")
+        assert resp.json() == {"status": "Group 'g1' -> stream 's1'"}
+
+
+class TestApiTeslaRoutes:
+    def test_status(self, api_client):
+        _seed_user_state(config={"tesla_method": "unofficial", "tesla_refresh_token": "rt"})
+        resp = api_client.get("/api/tesla/status")
+        assert resp.json()["tesla_configured"] is True
+
+    def test_save_unofficial_missing_token(self, api_client):
+        resp = api_client.post("/api/tesla/save_unofficial", json={"refresh_token": ""})
+        assert resp.json() == {"ok": False, "error": "No refresh token provided."}
+
+    def test_save_unofficial_success(self, api_client):
+        _seed_user_state(config={})
+        resp_vehicles = MagicMock(status_code=200)
+        resp_vehicles.raise_for_status = MagicMock()
+        pool, conn = _mock_asyncpg_pool()
+        with (
+            patch.object(jarvis, "_tesla_access_token", new=AsyncMock(return_value="tok")),
+            patch("httpx.AsyncClient", return_value=_mock_async_client(get=resp_vehicles)),
+            patch.object(jarvis, "_pool", return_value=pool),
+        ):
+            resp = api_client.post("/api/tesla/save_unofficial", json={"refresh_token": "rt"})
+        assert resp.json()["ok"] is True
+
+    def test_save_unofficial_connect_failure(self, api_client):
+        _seed_user_state(config={})
+        with patch.object(jarvis, "_tesla_access_token", new=AsyncMock(side_effect=Exception("bad token"))):
+            resp = api_client.post("/api/tesla/save_unofficial", json={"refresh_token": "rt"})
+        assert resp.json()["ok"] is False
+
+    def test_fleet_auth_not_configured(self, api_client):
+        with patch.object(jarvis, "TESLA_CLIENT_ID", ""):
+            resp = api_client.get("/api/tesla/fleet/auth")
+        assert resp.status_code == 503
+
+    def test_fleet_auth_redirect(self, api_client):
+        with patch.object(jarvis, "TESLA_CLIENT_ID", "cid"):
+            resp = api_client.get("/api/tesla/fleet/auth", follow_redirects=False)
+        assert resp.status_code in (302, 307)
+        assert resp.headers["location"].startswith(jarvis._tesla_mod._TESLA_AUTH_BASE)
+
+    def test_callback_invalid_state(self, api_client):
+        resp = api_client.get("/auth/tesla/callback?code=abc&state=bogus")
+        assert resp.status_code == 400
+
+    def test_callback_success(self, api_client):
+        _seed_user_state(config={})
+        jarvis._tesla_mod._tesla_auth_pending["state1"] = {"user_id": "local", "code_verifier": "verifier"}
+        token_resp = MagicMock(status_code=200)
+        token_resp.raise_for_status = MagicMock()
+        token_resp.json = MagicMock(return_value={"refresh_token": "fleet-rt"})
+        pool, conn = _mock_asyncpg_pool()
+        with (
+            patch("httpx.AsyncClient", return_value=_mock_async_client(post=token_resp)),
+            patch.object(jarvis, "_pool", return_value=pool),
+        ):
+            resp = api_client.get("/auth/tesla/callback?code=abc&state=state1", follow_redirects=False)
+        assert resp.status_code == 303
+        assert resp.headers["location"] == "/?tesla_connected=1"
+
+    def test_disconnect(self, api_client):
+        _seed_user_state(config={"tesla_refresh_token": "rt", "tesla_fleet_refresh_token": "ft"})
+        pool, conn = _mock_asyncpg_pool()
+        with patch.object(jarvis, "_pool", return_value=pool):
+            resp = api_client.post("/api/tesla/disconnect", json={"which": "all"})
+        assert resp.json()["ok"] is True
+        assert resp.json()["tesla_configured"] is False
+
+
+class TestApiSpotifyRoutes:
+    def test_auth_redirect(self, api_client):
+        with patch.object(jarvis, "_spotify_auth_url", return_value="https://accounts.spotify.com/authorize?x=1"):
+            resp = api_client.get("/api/spotify/auth", follow_redirects=False)
+        assert resp.headers["location"] == "https://accounts.spotify.com/authorize?x=1"
+
+    def test_callback_redirects(self, api_client):
+        with patch.object(jarvis, "_spotify_finish_auth", new=AsyncMock(return_value="local")):
+            resp = api_client.get("/auth/spotify/callback?state=x&code=y", follow_redirects=False)
+        assert resp.status_code == 303
+        assert resp.headers["location"] == "/?spotify_connected=1"
+
+    def test_disconnect(self, api_client):
+        with patch.object(jarvis, "_spotify_disconnect", new=AsyncMock()) as mock_disconnect:
+            resp = api_client.post("/api/spotify/disconnect")
+        assert resp.json() == {"ok": True}
+        mock_disconnect.assert_awaited_once()
+
+
+class TestApiAppleMusicRoutes:
+    def test_token_not_configured(self, api_client):
+        with patch.object(jarvis, "_apple_music_server_configured", return_value=False):
+            resp = api_client.get("/api/apple_music/token")
+        assert resp.json() == {"token": None, "enabled": False}
+
+    def test_token_configured(self, api_client):
+        with (
+            patch.object(jarvis, "_apple_music_server_configured", return_value=True),
+            patch.object(jarvis, "_apple_music_dev_token", return_value="fake.jwt.token"),
+        ):
+            resp = api_client.get("/api/apple_music/token")
+        assert resp.json() == {"token": "fake.jwt.token", "enabled": True}
+
+    def test_user_token_saved(self, api_client):
+        with patch.object(jarvis, "_save_apple_music_user_token", new=AsyncMock()) as mock_save:
+            resp = api_client.post("/api/apple_music/user_token", json={"token": "usertok", "storefront": "us"})
+        assert resp.json() == {"ok": True}
+        mock_save.assert_awaited_once()
+
+    def test_disconnect(self, api_client):
+        with patch.object(jarvis, "_disconnect_apple_music_user_token", new=AsyncMock()) as mock_disc:
+            resp = api_client.post("/api/apple_music/disconnect")
+        assert resp.json() == {"ok": True}
+        mock_disc.assert_awaited_once()
+
+
+class TestBackgroundLoops:
+    def test_telemetry_loop_emits_hud_update(self):
+        call_count = 0
+
+        async def fake_sleep(secs):
+            nonlocal call_count
+            call_count += 1
+            if call_count > 1:
+                raise RuntimeError("stop-loop")
+
+        with patch("app.asyncio.sleep", new=fake_sleep), patch.object(jarvis, "sio") as mock_sio:
+            mock_sio.emit = AsyncMock()
+            try:
+                asyncio.run(jarvis._telemetry_loop())
+                raise AssertionError("expected loop to stop")
+            except RuntimeError:
+                pass
+        mock_sio.emit.assert_awaited_once()
+        assert mock_sio.emit.call_args.args[0] == "hud_update"
+
+    def test_weather_loop_swallows_errors(self):
+        call_count = 0
+
+        async def fake_sleep(secs):
+            nonlocal call_count
+            call_count += 1
+            if call_count > 0:
+                raise RuntimeError("stop-loop")
+
+        with (
+            patch("app.asyncio.sleep", new=fake_sleep),
+            patch("httpx.AsyncClient", return_value=_mock_async_client(get=AsyncMock(side_effect=Exception("network down")))),
+        ):
+            try:
+                asyncio.run(jarvis._weather_loop())
+                raise AssertionError("expected loop to stop")
+            except RuntimeError:
+                pass
+
+    def test_weather_loop_updates_location_context(self):
+        call_count = 0
+
+        async def fake_sleep(secs):
+            nonlocal call_count
+            call_count += 1
+            if call_count > 0:
+                raise RuntimeError("stop-loop")
+
+        loc_resp = MagicMock(status_code=200)
+        loc_resp.json = MagicMock(return_value={"lat": 40.0, "lon": -75.0, "city": "Philadelphia", "region": "PA"})
+        wx_resp = MagicMock(status_code=200)
+        wx_resp.json = MagicMock(return_value={"current": {"temperature_2m": 72.0, "surface_pressure": 1013.0, "weather_code": 1}})
+
+        async def fake_get(url, **kwargs):
+            return loc_resp if "ip-api.com" in url else wx_resp
+
+        mock_client = _mock_async_client()
+        mock_client.get = fake_get
+        with (
+            patch("app.asyncio.sleep", new=fake_sleep),
+            patch("httpx.AsyncClient", return_value=mock_client),
+            patch.object(jarvis, "sio") as mock_sio,
+        ):
+            mock_sio.emit = AsyncMock()
+            try:
+                asyncio.run(jarvis._weather_loop())
+                raise AssertionError("expected loop to stop")
+            except RuntimeError:
+                pass
+        assert jarvis._location_context["city"] == "Philadelphia"
+        assert jarvis._location_context["condition"] == "Mainly clear"
+        mock_sio.emit.assert_awaited_once()
+
+    def test_timer_reminder_loop_skips_when_db_not_ready(self):
+        call_count = 0
+
+        async def fake_sleep(secs):
+            nonlocal call_count
+            call_count += 1
+            if call_count > 1:
+                raise RuntimeError("stop-loop")
+
+        with (
+            patch("app.asyncio.sleep", new=fake_sleep),
+            patch.object(jarvis, "_db_ready", return_value=False),
+        ):
+            try:
+                asyncio.run(jarvis._timer_reminder_loop())
+                raise AssertionError("expected loop to stop")
+            except RuntimeError:
+                pass
+
+    def test_timer_reminder_loop_fires_timers_and_reminders(self):
+        call_count = 0
+
+        async def fake_sleep(secs):
+            nonlocal call_count
+            call_count += 1
+            if call_count > 1:
+                raise RuntimeError("stop-loop")
+
+        with (
+            patch("app.asyncio.sleep", new=fake_sleep),
+            patch.object(jarvis, "_db_ready", return_value=True),
+            patch.object(jarvis, "_db_fire_due_timers", new=AsyncMock(return_value=[{"user_id": "u1", "label": "pasta"}])),
+            patch.object(jarvis, "_db_fire_due_reminders", new=AsyncMock(return_value=[{"user_id": "u1", "text": "drink water"}])),
+            patch.object(jarvis, "_sids_for_user", return_value=["sid1"]),
+            patch.object(jarvis, "sio") as mock_sio,
+        ):
+            mock_sio.emit = AsyncMock()
+            try:
+                asyncio.run(jarvis._timer_reminder_loop())
+                raise AssertionError("expected loop to stop")
+            except RuntimeError:
+                pass
+        assert mock_sio.emit.await_count == 2
+
+    def test_meeting_cleanup_loop_skips_when_db_not_ready(self):
+        call_count = 0
+
+        async def fake_sleep(secs):
+            nonlocal call_count
+            call_count += 1
+            if call_count > 1:
+                raise RuntimeError("stop-loop")
+
+        with (
+            patch("app.asyncio.sleep", new=fake_sleep),
+            patch.object(jarvis, "_db_ready", return_value=False),
+        ):
+            try:
+                asyncio.run(jarvis._meeting_cleanup_loop())
+                raise AssertionError("expected loop to stop")
+            except RuntimeError:
+                pass
+
+    def test_meeting_cleanup_loop_deletes_old_meetings(self):
+        call_count = 0
+
+        async def fake_sleep(secs):
+            nonlocal call_count
+            call_count += 1
+            if call_count > 1:
+                raise RuntimeError("stop-loop")
+
+        pool, conn = _mock_asyncpg_pool(execute="DELETE 2")
+        with (
+            patch("app.asyncio.sleep", new=fake_sleep),
+            patch.object(jarvis, "_db_ready", return_value=True),
+            patch.object(jarvis, "_pool", return_value=pool),
+        ):
+            try:
+                asyncio.run(jarvis._meeting_cleanup_loop())
+                raise AssertionError("expected loop to stop")
+            except RuntimeError:
+                pass
+        conn.execute.assert_awaited_once()
