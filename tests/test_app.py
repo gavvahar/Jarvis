@@ -72,6 +72,40 @@ from llm import _build_system_prompt
 from integrations.tesla import _c_to_f
 from integrations.finance import _execute_finance_tool, _finance_configured, _get_finance_tools, _normalize_account, _normalize_transaction
 
+# ── Shared async-mock helpers ────────────────────────────────────────────────
+#
+# `async with X() as y:` shows up constantly in this codebase (httpx clients,
+# db pool.acquire(), user locks). These build the MagicMock plumbing once so
+# individual tests can stay one-liners.
+
+
+def _async_cm(return_value=None):
+    """Mock usable as `async with X() as y:` where y is return_value."""
+    cm = MagicMock()
+    cm.__aenter__ = AsyncMock(return_value=return_value)
+    cm.__aexit__ = AsyncMock(return_value=False)
+    return cm
+
+
+def _mock_async_client(**method_returns):
+    """Mock usable as `async with httpx.AsyncClient(...) as c:`.
+    Pass e.g. get=resp, or get=AsyncMock(side_effect=...) for custom behavior.
+    """
+    client = _async_cm()
+    client.__aenter__ = AsyncMock(return_value=client)
+    for method, value in method_returns.items():
+        setattr(client, method, value if isinstance(value, AsyncMock) else AsyncMock(return_value=value))
+    return client
+
+
+def _mock_asyncpg_pool():
+    conn = MagicMock()
+    conn.execute = AsyncMock()
+    pool = MagicMock()
+    pool.acquire = MagicMock(return_value=_async_cm(conn))
+    return pool, conn
+
+
 # ── Pure function tests ────────────────────────────────────────────────────────
 
 
@@ -1221,26 +1255,13 @@ class TestExecuteNewsToolMocked:
         mock_resp.text = rss
         mock_resp.raise_for_status = MagicMock()
 
-        async def mock_get(*a, **kw):
-            return mock_resp
-
-        mock_client = MagicMock()
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-        mock_client.get = mock_get
-
-        with patch("httpx.AsyncClient", return_value=mock_client):
+        with patch("httpx.AsyncClient", return_value=_mock_async_client(get=mock_resp)):
             result = asyncio.run(_execute_news_tool({"category": "general", "count": 2}))
         assert "Story One" in result
         assert "Story Two" in result
 
     def test_handles_fetch_error(self):
-        mock_client = MagicMock()
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-        mock_client.get = AsyncMock(side_effect=Exception("timeout"))
-
-        with patch("httpx.AsyncClient", return_value=mock_client):
+        with patch("httpx.AsyncClient", return_value=_mock_async_client(get=AsyncMock(side_effect=Exception("timeout")))):
             result = asyncio.run(_execute_news_tool({}))
         assert "Could not fetch" in result
 
@@ -1645,26 +1666,18 @@ class TestAuthSession:
         mock_resp = MagicMock()
         mock_resp.raise_for_status = MagicMock()
         mock_resp.json = MagicMock(return_value={"issuer": "https://auth.example.com"})
-        mock_client = MagicMock()
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-        mock_client.get = AsyncMock(return_value=mock_resp)
         with (
             patch("auth.OIDC_DISCOVERY_URL", "https://auth.example.com/.well-known/openid-configuration"),
-            patch("httpx.AsyncClient", return_value=mock_client),
+            patch("httpx.AsyncClient", return_value=_mock_async_client(get=mock_resp)),
         ):
             asyncio.run(auth._fetch_oidc_config())
         assert auth._oidc_config == {"issuer": "https://auth.example.com"}
         auth._oidc_config = None
 
     def test_fetch_oidc_config_handles_failure(self):
-        mock_client = MagicMock()
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-        mock_client.get = AsyncMock(side_effect=Exception("timeout"))
         with (
             patch("auth.OIDC_DISCOVERY_URL", "https://auth.example.com/.well-known/openid-configuration"),
-            patch("httpx.AsyncClient", return_value=mock_client),
+            patch("httpx.AsyncClient", return_value=_mock_async_client(get=AsyncMock(side_effect=Exception("timeout")))),
         ):
             asyncio.run(auth._fetch_oidc_config())  # should not raise
 
@@ -1673,40 +1686,29 @@ class TestAuthSession:
 
 
 class TestHaIntegration:
-    def _mock_client(self, get_return=None, post_return=None, get_side_effect=None):
-        mock_client = MagicMock()
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-        if get_side_effect is not None:
-            mock_client.get = AsyncMock(side_effect=get_side_effect)
-        else:
-            mock_client.get = AsyncMock(return_value=get_return)
-        mock_client.post = AsyncMock(return_value=post_return)
-        return mock_client
-
     def test_validate_ha_success(self):
         resp = MagicMock(status_code=200)
-        with patch("httpx.AsyncClient", return_value=self._mock_client(get_return=resp)):
+        with patch("httpx.AsyncClient", return_value=_mock_async_client(get=resp)):
             ok, msg = asyncio.run(_validate_ha("http://ha.local", "tok"))
         assert ok is True
         assert msg == ""
 
     def test_validate_ha_rejected_token(self):
         resp = MagicMock(status_code=401)
-        with patch("httpx.AsyncClient", return_value=self._mock_client(get_return=resp)):
+        with patch("httpx.AsyncClient", return_value=_mock_async_client(get=resp)):
             ok, msg = asyncio.run(_validate_ha("http://ha.local", "bad"))
         assert ok is False
         assert "rejected" in msg
 
     def test_validate_ha_other_status(self):
         resp = MagicMock(status_code=500)
-        with patch("httpx.AsyncClient", return_value=self._mock_client(get_return=resp)):
+        with patch("httpx.AsyncClient", return_value=_mock_async_client(get=resp)):
             ok, msg = asyncio.run(_validate_ha("http://ha.local", "tok"))
         assert ok is False
         assert "500" in msg
 
     def test_validate_ha_connection_error(self):
-        with patch("httpx.AsyncClient", return_value=self._mock_client(get_side_effect=Exception("refused"))):
+        with patch("httpx.AsyncClient", return_value=_mock_async_client(get=AsyncMock(side_effect=Exception("refused")))):
             ok, msg = asyncio.run(_validate_ha("http://ha.local", "tok"))
         assert ok is False
         assert "Could not reach" in msg
@@ -1715,20 +1717,20 @@ class TestHaIntegration:
         resp = MagicMock(status_code=200)
         resp.json = MagicMock(return_value={"state": "on"})
         cfg = {"ha_url": "http://ha.local", "ha_token": "tok"}
-        with patch("httpx.AsyncClient", return_value=self._mock_client(get_return=resp)):
+        with patch("httpx.AsyncClient", return_value=_mock_async_client(get=resp)):
             state = asyncio.run(_ha_get_entity_state(cfg, "light.kitchen"))
         assert state == "on"
 
     def test_get_entity_state_not_found(self):
         resp = MagicMock(status_code=404)
         cfg = {"ha_url": "http://ha.local", "ha_token": "tok"}
-        with patch("httpx.AsyncClient", return_value=self._mock_client(get_return=resp)):
+        with patch("httpx.AsyncClient", return_value=_mock_async_client(get=resp)):
             state = asyncio.run(_ha_get_entity_state(cfg, "light.kitchen"))
         assert state is None
 
     def test_get_entity_state_exception_returns_none(self):
         cfg = {"ha_url": "http://ha.local", "ha_token": "tok"}
-        with patch("httpx.AsyncClient", return_value=self._mock_client(get_side_effect=Exception("boom"))):
+        with patch("httpx.AsyncClient", return_value=_mock_async_client(get=AsyncMock(side_effect=Exception("boom")))):
             state = asyncio.run(_ha_get_entity_state(cfg, "light.kitchen"))
         assert state is None
 
@@ -1742,7 +1744,7 @@ class TestHaIntegration:
             ]
         )
         cfg = {"ha_url": "http://ha.local", "ha_token": "tok"}
-        with patch("httpx.AsyncClient", return_value=self._mock_client(get_return=resp)):
+        with patch("httpx.AsyncClient", return_value=_mock_async_client(get=resp)):
             result = asyncio.run(_ha_get_states(cfg, domain="light"))
         assert "light.kitchen: on (Kitchen Light)" in result
         assert "switch.fan" not in result
@@ -1752,21 +1754,21 @@ class TestHaIntegration:
         resp.raise_for_status = MagicMock()
         resp.json = MagicMock(return_value=[])
         cfg = {"ha_url": "http://ha.local", "ha_token": "tok"}
-        with patch("httpx.AsyncClient", return_value=self._mock_client(get_return=resp)):
+        with patch("httpx.AsyncClient", return_value=_mock_async_client(get=resp)):
             result = asyncio.run(_ha_get_states(cfg))
         assert result == "No entities found."
 
     def test_call_service_success(self):
         resp = MagicMock(status_code=200)
         cfg = {"ha_url": "http://ha.local", "ha_token": "tok"}
-        with patch("httpx.AsyncClient", return_value=self._mock_client(post_return=resp)):
+        with patch("httpx.AsyncClient", return_value=_mock_async_client(post=resp)):
             result = asyncio.run(_ha_call_service(cfg, "light", "turn_on", "light.kitchen", {"brightness_pct": 50}))
         assert result == "Done."
 
     def test_call_service_failure(self):
         resp = MagicMock(status_code=400, text="bad request")
         cfg = {"ha_url": "http://ha.local", "ha_token": "tok"}
-        with patch("httpx.AsyncClient", return_value=self._mock_client(post_return=resp)):
+        with patch("httpx.AsyncClient", return_value=_mock_async_client(post=resp)):
             result = asyncio.run(_ha_call_service(cfg, "light", "turn_on"))
         assert "400" in result
 
@@ -1790,15 +1792,11 @@ class TestSnapcastTool:
             tools = _get_snapcast_tools("openai")
         assert all(t["type"] == "function" for t in tools)
 
-    def _mock_client(self, result_json):
+    def _resp(self, result_json):
         mock_resp = MagicMock()
         mock_resp.raise_for_status = MagicMock()
         mock_resp.json = MagicMock(return_value=result_json)
-        mock_client = MagicMock()
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-        mock_client.post = AsyncMock(return_value=mock_resp)
-        return mock_client
+        return mock_resp
 
     def test_status_formats_groups_and_clients(self):
         server_status = {
@@ -1823,30 +1821,30 @@ class TestSnapcastTool:
                 }
             }
         }
-        with patch("httpx.AsyncClient", return_value=self._mock_client(server_status)):
+        with patch("httpx.AsyncClient", return_value=_mock_async_client(post=self._resp(server_status))):
             result = asyncio.run(_execute_snapcast_tool("snapcast_status", {}))
         assert "Radio" in result
         assert "Kitchen" in result
         assert "vol=60%" in result
 
     def test_status_no_groups(self):
-        with patch("httpx.AsyncClient", return_value=self._mock_client({"result": {"server": {}}})):
+        with patch("httpx.AsyncClient", return_value=_mock_async_client(post=self._resp({"result": {"server": {}}}))):
             result = asyncio.run(_execute_snapcast_tool("snapcast_status", {}))
         assert "No Snapcast groups" in result
 
     def test_set_volume(self):
-        with patch("httpx.AsyncClient", return_value=self._mock_client({"result": {}})):
+        with patch("httpx.AsyncClient", return_value=_mock_async_client(post=self._resp({"result": {}}))):
             result = asyncio.run(_execute_snapcast_tool("snapcast_set_volume", {"client_id": "client1", "volume": 75}))
         assert "75%" in result
 
     def test_mute_preserves_volume(self):
         status_result = {"result": {"server": {"groups": [{"clients": [{"id": "client1", "config": {"volume": {"percent": 42}}}]}]}}}
-        with patch("httpx.AsyncClient", return_value=self._mock_client(status_result)):
+        with patch("httpx.AsyncClient", return_value=_mock_async_client(post=self._resp(status_result))):
             result = asyncio.run(_execute_snapcast_tool("snapcast_mute", {"client_id": "client1", "muted": True}))
         assert "Muted 'client1'" in result
 
     def test_set_stream(self):
-        with patch("httpx.AsyncClient", return_value=self._mock_client({"result": {}})):
+        with patch("httpx.AsyncClient", return_value=_mock_async_client(post=self._resp({"result": {}}))):
             result = asyncio.run(_execute_snapcast_tool("snapcast_set_stream", {"group_id": "g1", "stream_id": "s2"}))
         assert "g1" in result and "s2" in result
 
@@ -1855,12 +1853,12 @@ class TestSnapcastTool:
         assert "Unknown Snapcast tool" in result
 
     def test_rpc_error_wrapped(self):
-        with patch("httpx.AsyncClient", return_value=self._mock_client({"error": {"message": "boom"}})):
+        with patch("httpx.AsyncClient", return_value=_mock_async_client(post=self._resp({"error": {"message": "boom"}}))):
             result = asyncio.run(_execute_snapcast_tool("snapcast_status", {}))
         assert "Snapcast error: boom" in result
 
     def test_get_status_direct(self):
-        with patch("httpx.AsyncClient", return_value=self._mock_client({"result": {"server": {}}})):
+        with patch("httpx.AsyncClient", return_value=_mock_async_client(post=self._resp({"result": {"server": {}}}))):
             result = asyncio.run(_snapcast_get_status())
         assert "No Snapcast groups" in result
 
@@ -2131,14 +2129,10 @@ class TestExecuteTeslaTool:
         resp = MagicMock(status_code=200)
         resp.raise_for_status = MagicMock()
         resp.json = MagicMock(return_value=vehicle_data)
-        mock_client = MagicMock()
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-        mock_client.get = AsyncMock(return_value=resp)
         with (
             patch("integrations.tesla._tesla_pick_vehicle", new=AsyncMock(return_value=("unofficial", vehicle))),
             patch("integrations.tesla._tesla_access_token", new=AsyncMock(return_value="tok")),
-            patch("httpx.AsyncClient", return_value=mock_client),
+            patch("httpx.AsyncClient", return_value=_mock_async_client(get=resp)),
         ):
             result = asyncio.run(_execute_tesla_tool(self._cfg, "get_vehicle_status", {}, "u1"))
         assert "Battery: 80%" in result
@@ -2305,17 +2299,6 @@ class TestPresenceRegistry:
 # ── integrations/music/spotify.py ─────────────────────────────────────────────
 
 
-def _mock_asyncpg_pool():
-    conn = MagicMock()
-    conn.execute = AsyncMock()
-    cm = MagicMock()
-    cm.__aenter__ = AsyncMock(return_value=conn)
-    cm.__aexit__ = AsyncMock(return_value=False)
-    pool = MagicMock()
-    pool.acquire = MagicMock(return_value=cm)
-    return pool, conn
-
-
 class TestSpotifyAccessToken:
     def test_raises_when_not_connected(self):
         with patch.object(spotify_mod, "_spotify_tokens", {}):
@@ -2351,10 +2334,7 @@ class TestSpotifyAccessToken:
 class TestSpotifyReq:
     def test_calls_correct_endpoint_with_token(self):
         resp = MagicMock(status_code=200)
-        mock_client = MagicMock()
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-        mock_client.get = AsyncMock(return_value=resp)
+        mock_client = _mock_async_client(get=resp)
         future_expiry = datetime.datetime.now().timestamp() + 3600
         with (
             patch.object(spotify_mod, "_spotify_tokens", {"u1": {"access": "tok", "expiry": future_expiry}}),
@@ -2410,10 +2390,6 @@ class TestSpotifyFinishAuth:
         resp = MagicMock()
         resp.raise_for_status = MagicMock()
         resp.json = MagicMock(return_value={"access_token": "at", "refresh_token": "rt", "expires_in": 3600})
-        mock_client = MagicMock()
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-        mock_client.post = AsyncMock(return_value=resp)
 
         config = {}
         state = {"config": config}
@@ -2421,16 +2397,14 @@ class TestSpotifyFinishAuth:
         async def get_user_state(uid):
             return state
 
-        lock_cm = MagicMock()
-        lock_cm.__aenter__ = AsyncMock(return_value=None)
-        lock_cm.__aexit__ = AsyncMock(return_value=False)
+        lock_cm = _async_cm()
 
         def get_user_lock(uid):
             return lock_cm
 
         pool, conn = _mock_asyncpg_pool()
         with (
-            patch("httpx.AsyncClient", return_value=mock_client),
+            patch("httpx.AsyncClient", return_value=_mock_async_client(post=resp)),
             patch("integrations.music.spotify._pool", return_value=pool),
         ):
             result_uid = asyncio.run(spotify_mod._spotify_finish_auth("state123", "authcode", get_user_state, get_user_lock))
@@ -2440,11 +2414,7 @@ class TestSpotifyFinishAuth:
 
     def test_token_exchange_failure_raises_502(self):
         spotify_mod._spotify_auth_pending["state456"] = "u1"
-        mock_client = MagicMock()
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-        mock_client.post = AsyncMock(side_effect=Exception("network error"))
-        with patch("httpx.AsyncClient", return_value=mock_client):
+        with patch("httpx.AsyncClient", return_value=_mock_async_client(post=AsyncMock(side_effect=Exception("network error")))):
             try:
                 asyncio.run(spotify_mod._spotify_finish_auth("state456", "authcode", AsyncMock(), MagicMock()))
                 raise AssertionError("expected HTTPException")
@@ -2460,9 +2430,7 @@ class TestSpotifyDisconnect:
         async def get_user_state(uid):
             return state
 
-        lock_cm = MagicMock()
-        lock_cm.__aenter__ = AsyncMock(return_value=None)
-        lock_cm.__aexit__ = AsyncMock(return_value=False)
+        lock_cm = _async_cm()
 
         def get_user_lock(uid):
             return lock_cm
@@ -2748,10 +2716,7 @@ class TestExecuteZigbeeTool:
         assert "aiomqtt not installed" in result
 
     def test_publishes_command_successfully(self):
-        mock_client = MagicMock()
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-        mock_client.publish = AsyncMock()
+        mock_client = _mock_async_client(publish=AsyncMock())
         mock_aiomqtt = MagicMock()
         mock_aiomqtt.Client = MagicMock(return_value=mock_client)
         with (
