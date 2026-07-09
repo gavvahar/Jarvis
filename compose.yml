@@ -31,10 +31,20 @@ services:
     volumes:
       - ./static:/app/static
       - ./templates:/app/templates
-      - ./app.py:/app/app.py
-      - ./personality.py:/app/personality.py
+      - ./python/app.py:/app/python/app.py
+      - ./python/personality.py:/app/python/personality.py
     command:
-      ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "5000", "--reload"]
+      [
+        "uvicorn",
+        "app:app",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "5000",
+        "--reload",
+        "--app-dir",
+        "python",
+      ]
     depends_on:
       postgres:
         condition: service_healthy
