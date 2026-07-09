@@ -1,3 +1,5 @@
+from tool_schemas import anthropic_tools_to_openai
+
 MYQ_TOOLS_ANTHROPIC = [
     {
         "name": "get_garage_status",
@@ -25,38 +27,7 @@ MYQ_TOOLS_ANTHROPIC = [
     },
 ]
 
-MYQ_TOOLS_OPENAI = [
-    {
-        "type": "function",
-        "function": {
-            "name": "get_garage_status",
-            "description": "Get the current open/closed state of your MyQ Chamberlain smart garage door(s).",
-            "parameters": {"type": "object", "properties": {}},
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "set_garage_door",
-            "description": "Open or close a MyQ Chamberlain smart garage door.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "action": {
-                        "type": "string",
-                        "enum": ["open", "close"],
-                        "description": "Whether to open or close the door.",
-                    },
-                    "device": {
-                        "type": "string",
-                        "description": "Garage door name. Omit if you only have one.",
-                    },
-                },
-                "required": ["action"],
-            },
-        },
-    },
-]
+MYQ_TOOLS_OPENAI = anthropic_tools_to_openai(MYQ_TOOLS_ANTHROPIC)
 
 
 def _myq_configured(config: dict) -> bool:

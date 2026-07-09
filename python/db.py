@@ -1,6 +1,7 @@
 import json, secrets, datetime, pathlib
 import asyncpg
 from config import DATABASE_URL, MAX_HISTORY, VISION_AWAY_TIMEOUT
+from db_helpers import db_exec_affected
 
 _db_pool: asyncpg.Pool | None = None
 
@@ -326,13 +327,7 @@ async def _db_list_timers(user_id: str) -> list:
 
 
 async def _db_cancel_timer(user_id: str, timer_id: int) -> bool:
-    async with _pool().acquire() as conn:
-        result = await conn.execute(
-            "UPDATE timers SET fired = TRUE WHERE id = $1 AND user_id = $2 AND fired = FALSE",
-            timer_id,
-            user_id,
-        )
-    return result.split()[-1] == "1"
+    return await db_exec_affected(_pool(), "UPDATE timers SET fired = TRUE WHERE id = $1 AND user_id = $2 AND fired = FALSE", timer_id, user_id)
 
 
 async def _db_fire_due_timers() -> list:
@@ -364,13 +359,7 @@ async def _db_list_reminders(user_id: str) -> list:
 
 
 async def _db_cancel_reminder(user_id: str, reminder_id: int) -> bool:
-    async with _pool().acquire() as conn:
-        result = await conn.execute(
-            "UPDATE reminders SET active = FALSE WHERE id = $1 AND user_id = $2",
-            reminder_id,
-            user_id,
-        )
-    return result.split()[-1] == "1"
+    return await db_exec_affected(_pool(), "UPDATE reminders SET active = FALSE WHERE id = $1 AND user_id = $2", reminder_id, user_id)
 
 
 async def _db_fire_due_reminders() -> list:
@@ -422,15 +411,11 @@ async def _db_list_routines(user_id: str) -> list:
 
 
 async def _db_delete_routine(user_id: str, routine_id: int) -> bool:
-    async with _pool().acquire() as conn:
-        result = await conn.execute("DELETE FROM routines WHERE id = $1 AND user_id = $2", routine_id, user_id)
-    return result.split()[-1] == "1"
+    return await db_exec_affected(_pool(), "DELETE FROM routines WHERE id = $1 AND user_id = $2", routine_id, user_id)
 
 
 async def _db_toggle_routine(user_id: str, routine_id: int, active: bool) -> bool:
-    async with _pool().acquire() as conn:
-        result = await conn.execute("UPDATE routines SET active = $3 WHERE id = $1 AND user_id = $2", routine_id, user_id, active)
-    return result.split()[-1] == "1"
+    return await db_exec_affected(_pool(), "UPDATE routines SET active = $3 WHERE id = $1 AND user_id = $2", routine_id, user_id, active)
 
 
 # ─── DEVICE ALERTS ────────────────────────────────────────────────────────────
@@ -459,9 +444,7 @@ async def _db_list_device_alerts(user_id: str) -> list:
 
 
 async def _db_delete_device_alert(user_id: str, alert_id: int) -> bool:
-    async with _pool().acquire() as conn:
-        result = await conn.execute("DELETE FROM device_alert_rules WHERE id = $1 AND user_id = $2", alert_id, user_id)
-    return result.split()[-1] == "1"
+    return await db_exec_affected(_pool(), "DELETE FROM device_alert_rules WHERE id = $1 AND user_id = $2", alert_id, user_id)
 
 
 async def _db_get_active_device_alerts() -> list:

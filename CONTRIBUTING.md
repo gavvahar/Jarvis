@@ -1,11 +1,11 @@
-# Contributing to J.A.R.V.I.S.
+# Contributing to J.A.R.V.I.S
 
 ## Getting started
 
 ```bash
 pip3 install -r requirements/local/requirements.txt
 cp .env.example .env   # fill in credentials
-uvicorn app:app --reload --port 5000
+uvicorn app:app --reload --port 5000 --app-dir python
 ```
 
 You still need a running Postgres and a `.env` file — see the README.
@@ -14,7 +14,7 @@ You still need a running Postgres and a `.env` file — see the README.
 
 Changes reach `main` through a two-stage pipeline:
 
-```
+```text
 feature branch → testing → staging → main (auto)
 ```
 
@@ -27,7 +27,7 @@ Keep PRs focused — one feature or fix per PR.
 
 ## Hard rules
 
-**No Python classes.** This is enforced by `scripts/no_classes_check.py`. Use module-level functions instead. If you're tempted to reach for a class, reach for a plain dict or a function with closure state instead.
+**No Python classes.** This is enforced by `python/scripts/no_classes_check.py`. Use module-level functions instead. If you're tempted to reach for a class, reach for a plain dict or a function with closure state instead.
 
 ## Before you commit
 
@@ -50,13 +50,13 @@ CI runs `tox -e github` (same checks, no auto-fix). A PR that fails CI will not 
 
 ## Tests
 
-Tests live in `tests/`. Run them with:
+Tests live in `python/tests/`. Run them with:
 
 ```bash
 tox -e tests
 ```
 
-Coverage must stay above 25%. Add tests for any new routes or logic.
+Coverage must stay above 50%. Add tests for any new routes or logic.
 
 ## Frontend structure
 
