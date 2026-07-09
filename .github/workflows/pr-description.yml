@@ -201,7 +201,7 @@ jobs:
                   area_labels.add("android")
               elif f.startswith(("static/", "templates/", "package.json", "package-lock.json")):
                   area_labels.add("frontend")
-              elif f in ("app.py", "personality.py") or f.startswith("requirements"):
+              elif f.startswith(("python/", "requirements")):
                   area_labels.add("backend")
               elif f.startswith(".github/"):
                   area_labels.add("ci")
