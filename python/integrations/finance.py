@@ -12,6 +12,7 @@ from plaid.model.products import Products
 from plaid.model.transactions_sync_request import TransactionsSyncRequest
 
 from config import FINANCE_POLL_INTERVAL, PLAID_CLIENT_ID, PLAID_ENV, PLAID_SECRET
+from tool_schemas import anthropic_tools_to_openai
 from db import (
     _db_add_plaid_item,
     _db_find_transaction_by_merchant,
@@ -193,7 +194,7 @@ FINANCE_TOOLS_ANTHROPIC = [
     },
 ]
 
-FINANCE_TOOLS_OPENAI = [{"type": "function", "function": {"name": t["name"], "description": t["description"], "parameters": t["input_schema"]}} for t in FINANCE_TOOLS_ANTHROPIC]
+FINANCE_TOOLS_OPENAI = anthropic_tools_to_openai(FINANCE_TOOLS_ANTHROPIC)
 
 _FINANCE_TOOL_NAMES = {t["name"] for t in FINANCE_TOOLS_ANTHROPIC}
 

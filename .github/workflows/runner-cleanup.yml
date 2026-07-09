@@ -1,0 +1,14 @@
+name: Runner Cleanup
+
+on:
+  schedule:
+    - cron: "0 8 * * 0" # Sunday 3am EST (UTC-5, Nov–Mar)
+    - cron: "0 7 * * 0" # Sunday 3am EDT (UTC-4, Mar–Nov)
+  workflow_dispatch: # Allow manual trigger
+
+jobs:
+  prune-docker:
+    runs-on: [self-hosted, homelab]
+    steps:
+      - name: Prune Docker data untouched in the last 7 days
+        run: docker system prune -af --filter "until=168h"
