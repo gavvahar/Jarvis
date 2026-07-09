@@ -21,7 +21,7 @@ steps, backed by real tests each time, rather than a single risky jump.
 | Step 2 — spotify/contacts/finance/automation/calendar/presence      | 50%       | 55%    | ✅ Done        |
 | Step 3 — db.py full coverage + tesla/apple_music/dav remaining gaps | 62%       | 66%    | ✅ Done        |
 | Step 4 — app.py route handlers + background loops                   | 78%       | 80%    | ✅ Done        |
-| Step 5 — vision.py (stretch goal beyond the original 80% target)    | TBD       | —      | ⬜ Not started |
+| Step 5 — vision.py (stretch goal beyond the original 80% target)    | 84%       | 87%    | ✅ Done        |
 
 ## What was done in Step 1 (2026-07-08, branch `tests`)
 
@@ -265,23 +265,81 @@ original target from the very first ask in this thread.
 Moderate: `integrations/pim/dav.py` 88%, `integrations/shared_lists.py` 88%,
 `app.py` 67% (up from 26%).
 
-Only one module is far below par now:
+## What was done in Step 5 (2026-07-09, branch `Nihar`)
 
-1. **`integrations/vision.py`** — 18% (226 of 276 uncovered). Was already
-   flagged as the hardest in Step 3: mixes cv2 frame capture, DB-backed
-   presence tracking, and long-running async loops (`_vision_loop`). Test the
-   pure/formatting/tool-schema pieces first (mirrors the easy wins already
-   banked everywhere else), save the loop and cv2-capture code for last.
-2. **`app.py`'s Socket.IO chat pipeline** (~350 statements, see "deliberately
-   not covered" above) is the other real remaining gap if pushing past 80%.
-   Would need a different test approach than anything used so far — calling
-   `_process_message`/`@sio.on` handlers directly with constructed
-   arguments, not through `TestClient`.
+`integrations/vision.py` turned out much more tractable than Step 3/4 notes
+predicted — went 18% → 99% in one pass, no follow-up needed. The "hardest
+module" reputation came from `_vision_loop` mixing cv2/insightface ML calls
+with DB writes and socket emits, but nearly all of that is thin orchestration
+around functions that mock cleanly:
 
-The stated 80% goal is met. Both remaining items are genuinely harder (new
-testing approach needed, not just "more of the same pattern") — treat
-further work here as a stretch goal, not a continuation of the same
-incremental steps 1-4 were.
+- `TestVisionRuntime`, `TestVisionAvailable`, `TestGetPresenceCache`,
+  `TestGetPresencePromptContext`, `TestGetVisionTools` — the small pure/
+  gating functions, no mocking beyond `patch.object(vision_mod, "_VISION_OK", ...)`.
+- `TestGetFaceApp`, `TestExtractFaceEmbedding`, `TestIdentifyFacesInImage`,
+  `TestRefreshFaceCache` — mocked `_cv2`, `_np_v`, and `_FaceAnalysis` as
+  whole-module `MagicMock`s via `patch.object(vision_mod, "_cv2", ...)` rather
+  than trying to feed real images through real ML models. `_get_face_app`
+  specifically needed `patch.object(vision_mod, "_face_app_instance", None)`
+  at the start of each test since it's a lazily-cached module global that
+  otherwise leaks state across tests.
+- `TestGetHaCameraSnapshot`, `TestCaptureRtspFrame` — standard httpx/cv2
+  mocking, same patterns as everywhere else.
+- `TestExecuteVisionTool` — all `manage_camera`/`get_who_is_home`/
+  `get_security_events` branches. **Gotcha:** `action="bogus"` alone doesn't
+  reach the "Unknown action" fallthrough — the code checks for a missing
+  `camera_id` *before* the action-name lookup, so an unrecognized action
+  without a `camera_id` returns "Provide 'camera_id'" instead. Needed
+  `{"action": "bogus", "camera_id": 1}` to actually exercise the fallthrough.
+- `TestVisionAppHelpers` — `_list_cameras`/`_add_camera`/`_delete_camera`/
+  `_update_camera`/`_get_presence_members`/`_get_security_events`/
+  `_face_enroll_*`. These are the functions `app.py`'s routes delegate to;
+  Step 4 only tested that `app.py` calls them correctly (mocking them away),
+  so this is the first time their actual bodies got exercised.
+- `TestVisionLoop` — 6 tests for `_vision_loop` itself, same
+  raise-after-N-sleeps pattern as `_finance_loop` (initial sleep before the
+  `while True`, so `call_count > 2` to complete one full iteration). Used
+  `conn.fetch.side_effect = [cam_rows, stale_rows]` to give the two separate
+  `conn.fetch()` call sites within one iteration (camera list, then stale-
+  presence cleanup) different results — the shared `_mock_asyncpg_pool()`
+  helper only configures one fixed return value per method, so for functions
+  that call the same method more than once with different expected results,
+  override `conn.<method>.side_effect` directly after construction. Covered:
+  known-person-arrives-home (presence_update), unknown-person-while-away
+  (security_alert, RTSP capture path), no-snapshot/no-detection `continue`
+  branches, stale-user-marked-away, not-ready skip, and exception swallowing.
+
+Left uncovered: `integrations/vision.py` lines 31-32 (`except ImportError:
+_VISION_OK = False` — only reachable if cv2/insightface fail to import at
+module load, same category as the identical pattern already left uncovered
+in `apple_music.py`).
+
+Result: 656 tests, all passing (up from 580). Total coverage 80% → **87%**.
+`--cov-fail-under` set to `80` (margin below actual 87%).
+
+## Per-module coverage after Step 5
+
+100%: `db.py`, `auth.py`, `integrations/tesla.py`,
+`integrations/multiroom/snapcast.py`, `integrations/multiroom/presence.py`.
+95%+: `integrations/vision.py` 99%, `integrations/music/spotify.py` 99%,
+`integrations/music/apple_music.py` 98%, `integrations/pim/timers.py` 96%,
+`integrations/automation.py` 95%, `integrations/pim/calendar.py` 95%,
+`integrations/pim/contacts.py` 95%, `integrations/ha.py` 95%,
+`integrations/finance.py` 97%, `integrations/myq.py` 98%.
+Moderate: `integrations/pim/dav.py` 88%, `integrations/shared_lists.py` 88%.
+
+Only one real gap left in the whole codebase:
+
+1. **`app.py`** — 67%, all of it concentrated in the Socket.IO chat pipeline
+   (`_process_message` and `@sio.on(...)` handlers, roughly lines 1206-1560,
+   ~350 statements) plus `/api/transcribe`'s Whisper pipeline and party mode.
+   None of these are FastAPI routes, so `TestClient` doesn't reach them —
+   would need direct function calls with constructed `sid`/`data` arguments,
+   a genuinely different test shape than anything used in Steps 1-5.
+
+Everything except that one pipeline in `app.py` is now at 88%+. Pushing much
+past 87% total means tackling that specific block — it's the only thing left
+that isn't "more of the same pattern."
 
 ## How to Resume
 
@@ -289,9 +347,12 @@ incremental steps 1-4 were.
    from the repo root (no path argument needed — `pyproject.toml` already
    points at `python/tests/`) to get current per-line gaps (line numbers
    drift as code changes).
-2. If continuing past 80%: `vision.py` first (same unit-test pattern as
-   Steps 1-3), then `app.py`'s Socket.IO handlers (new pattern — direct
-   function calls, not `TestClient`).
+2. The only remaining target is `app.py`'s Socket.IO chat pipeline
+   (`_process_message` + `@sio.on(...)` handlers) — call the handler
+   functions directly (they're plain module-level async functions,
+   `jarvis.on_<event_name>` etc., not hidden by the `@sio.on` decorator) with
+   constructed `sid`/`data` args rather than trying to drive them through
+   `TestClient`, which only speaks HTTP.
 3. Each time coverage climbs meaningfully, raise `--cov-fail-under` again to a
    value with a few points of safety margin below actual.
 4. Run `ruff check python/tests/test_app.py && ruff format --check python/tests/test_app.py`
