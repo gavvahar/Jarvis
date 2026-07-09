@@ -14,14 +14,14 @@ steps, backed by real tests each time, rather than a single risky jump.
 
 ## Status
 
-| Step                                                             | Threshold | Actual | Status         |
-| ----------------------------------------------------------------- | --------- | ------ | -------------- |
-| Baseline                                                         | 25%       | 37%    | ✅ Done        |
-| Step 1 — auth/ha/snapcast/apple_music/dav/tesla tests            | 40%       | 46%    | ✅ Done        |
-| Step 2 — spotify/contacts/finance/automation/calendar/presence   | 50%       | 55%    | ✅ Done        |
-| Step 3 — app.py route handlers                                   | TBD       | TBD    | ⬜ Not started |
-| Step 4 — db.py                                                   | TBD       | TBD    | ⬜ Not started |
-| Step 5 — vision.py, remaining tesla/apple_music/dav gaps          | 80%       | —      | ⬜ Not started |
+| Step                                                           | Threshold | Actual | Status         |
+| -------------------------------------------------------------- | --------- | ------ | -------------- |
+| Baseline                                                       | 25%       | 37%    | ✅ Done        |
+| Step 1 — auth/ha/snapcast/apple_music/dav/tesla tests          | 40%       | 46%    | ✅ Done        |
+| Step 2 — spotify/contacts/finance/automation/calendar/presence | 50%       | 55%    | ✅ Done        |
+| Step 3 — app.py route handlers                                 | TBD       | TBD    | ⬜ Not started |
+| Step 4 — db.py                                                 | TBD       | TBD    | ⬜ Not started |
+| Step 5 — vision.py, remaining tesla/apple_music/dav gaps       | 80%       | —      | ⬜ Not started |
 
 ## What was done in Step 1 (2026-07-08, branch `tests`)
 
@@ -91,7 +91,7 @@ Added ~110 more tests to `tests/test_app.py`, same conventions as Step 1:
 **Gotcha hit and fixed:** for background `while True` loops (`_finance_loop`,
 `_device_alert_loop`), the "raise after N sleep calls to break out" pattern
 needs the call count tuned to that specific loop's structure — `_finance_loop`
-has an initial `await asyncio.sleep(25)` *before* the `while True`, so it takes
+has an initial `await asyncio.sleep(25)` _before_ the `while True`, so it takes
 3 fake-sleep calls to complete one full iteration; `_device_alert_loop` has no
 such initial sleep, so it only takes 2. Getting this wrong doesn't error, it
 just silently skips the loop body (or runs it twice) — verify with an
