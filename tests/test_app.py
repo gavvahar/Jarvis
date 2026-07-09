@@ -679,6 +679,133 @@ class TestExecuteContactLookupTool:
             result = asyncio.run(_execute_contact_lookup_tool(self._cfg, {"query": "Nobody"}))
         assert "No contacts matched" in result
 
+    def test_not_configured(self):
+        result = asyncio.run(_execute_contact_lookup_tool({}, {"query": "Mom"}))
+        assert "not configured" in result
+
+    def test_empty_query(self):
+        result = asyncio.run(_execute_contact_lookup_tool(self._cfg, {"query": ""}))
+        assert "Provide a name" in result
+
+    def test_invalid_channel_defaults_to_any(self):
+        with patch("integrations.pim.contacts._lookup_contacts", new=AsyncMock(return_value=[])):
+            result = asyncio.run(_execute_contact_lookup_tool(self._cfg, {"query": "Mom", "preferred_channel": "bogus"}))
+        assert "No contacts matched" in result
+
+    def test_lookup_error_surfaced(self):
+        with patch("integrations.pim.contacts._lookup_contacts", new=AsyncMock(side_effect=ValueError("auth failed"))):
+            result = asyncio.run(_execute_contact_lookup_tool(self._cfg, {"query": "Mom"}))
+        assert "Could not search contacts" in result
+
+
+class TestScoreContactMatch:
+    def test_exact_name_match_scores_highest(self):
+        contact = {"name": "Mom", "nicknames": [], "emails": [], "phones": []}
+        assert _score_contact_match(contact, "mom", "") == 100
+
+    def test_exact_nickname_match(self):
+        contact = {"name": "Robert Smith", "nicknames": ["Bob"], "emails": [], "phones": []}
+        assert _score_contact_match(contact, "bob", "") == 95
+
+    def test_name_starts_with_query(self):
+        contact = {"name": "Robert Smith", "nicknames": [], "emails": [], "phones": []}
+        assert _score_contact_match(contact, "rob", "") == 85
+
+    def test_nickname_starts_with_query(self):
+        contact = {"name": "Robert", "nicknames": ["Bobby"], "emails": [], "phones": []}
+        assert _score_contact_match(contact, "bob", "") == 80
+
+    def test_name_contains_query(self):
+        contact = {"name": "Robert Smith", "nicknames": [], "emails": [], "phones": []}
+        assert _score_contact_match(contact, "ert sm", "") == 70
+
+    def test_nickname_contains_query(self):
+        contact = {"name": "Robert", "nicknames": ["Bobcat"], "emails": [], "phones": []}
+        assert _score_contact_match(contact, "obc", "") == 65
+
+    def test_email_contains_query(self):
+        contact = {"name": "Robert", "nicknames": [], "emails": ["robert@example.com"], "phones": []}
+        assert _score_contact_match(contact, "example", "") == 60
+
+    def test_phone_digits_match(self):
+        contact = {"name": "Robert", "nicknames": [], "emails": [], "phones": ["+1 (555) 123-4567"]}
+        assert _score_contact_match(contact, "", "5551234567") == 60
+
+    def test_no_match_returns_zero(self):
+        contact = {"name": "Robert", "nicknames": [], "emails": [], "phones": []}
+        assert _score_contact_match(contact, "zzz", "") == 0
+
+    def test_empty_query_returns_zero(self):
+        contact = {"name": "Robert", "nicknames": [], "emails": [], "phones": []}
+        assert _score_contact_match(contact, "", "") == 0
+
+
+class TestFormatContact:
+    def test_name_with_phone_and_email(self):
+        contact = {"name": "Mom", "phones": ["555-1234"], "emails": ["mom@example.com"]}
+        result = _format_contact(contact, "any")
+        assert result.startswith("Mom — ")
+        assert "phone: 555-1234" in result
+        assert "email: mom@example.com" in result
+
+    def test_preferred_channel_phone_only(self):
+        contact = {"name": "Mom", "phones": ["555-1234"], "emails": ["mom@example.com"]}
+        result = _format_contact(contact, "phone")
+        assert "phone:" in result
+        assert "email:" not in result
+
+    def test_unnamed_contact_falls_back_to_email(self):
+        contact = {"name": "", "phones": [], "emails": ["a@b.com"]}
+        assert _format_contact(contact, "any") == "a@b.com — email: a@b.com"
+
+    def test_no_name_no_contact_info_falls_back_to_placeholder(self):
+        contact = {"name": "", "phones": [], "emails": []}
+        assert _format_contact(contact, "any") == "Unnamed contact"
+
+    def test_name_only_no_details(self):
+        contact = {"name": "Ghost", "phones": [], "emails": []}
+        assert _format_contact(contact, "any") == "Ghost"
+
+
+class TestDedupePreserveOrder:
+    def test_removes_case_insensitive_duplicates_preserving_order(self):
+        assert _dedupe_preserve_order(["A", "b", "a", "B", "c"]) == ["A", "b", "c"]
+
+    def test_skips_empty_strings(self):
+        assert _dedupe_preserve_order(["", "x", ""]) == ["x"]
+
+
+class TestLookupContacts:
+    _cfg = {"contacts_url": "https://dav.example.com/ab/", "contacts_username": "me", "contacts_password": "secret"}
+
+    _VCARD_MULTISTATUS = (
+        '<?xml version="1.0" encoding="utf-8"?>'
+        '<D:multistatus xmlns:D="DAV:" xmlns:A="urn:ietf:params:xml:ns:carddav">'
+        "<D:response><D:href>/ab/mom.vcf</D:href><D:propstat><D:prop>"
+        "<A:address-data>BEGIN:VCARD&#10;VERSION:3.0&#10;FN:Mom&#10;TEL:+15551234567&#10;END:VCARD&#10;</A:address-data>"
+        "</D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response>"
+        "</D:multistatus>"
+    )
+
+    def test_finds_and_scores_matches(self):
+        resp = MagicMock(status_code=207, text=self._VCARD_MULTISTATUS)
+        with patch("integrations.pim.contacts._dav_request", new=AsyncMock(return_value=resp)):
+            matches = asyncio.run(_lookup_contacts(self._cfg, "Mom"))
+        assert len(matches) == 1
+        assert matches[0]["name"] == "Mom"
+
+    def test_preferred_channel_phone_filters_email_only_contacts(self):
+        resp = MagicMock(status_code=207, text=self._VCARD_MULTISTATUS)
+        with patch("integrations.pim.contacts._dav_request", new=AsyncMock(return_value=resp)):
+            matches = asyncio.run(_lookup_contacts(self._cfg, "Mom", preferred_channel="email"))
+        assert matches == []
+
+    def test_no_matches_for_unrelated_query(self):
+        resp = MagicMock(status_code=207, text=self._VCARD_MULTISTATUS)
+        with patch("integrations.pim.contacts._dav_request", new=AsyncMock(return_value=resp)):
+            matches = asyncio.run(_lookup_contacts(self._cfg, "Zzyzx"))
+        assert matches == []
+
 
 class TestGetTeslaTools:
     def test_returns_empty_when_not_configured(self):
@@ -1058,6 +1185,23 @@ class TestExecuteRoutineToolMocked:
         with patch("integrations.automation._db_list_routines", new=AsyncMock(return_value=[])):
             result = asyncio.run(_execute_routine_tool("u1", {"action": "run", "name": "Nonexistent"}, self._cfg))
         assert "No routine" in result
+
+    def test_list_formats_routines(self):
+        routines = [{"id": 1, "name": "Good Morning", "active": True, "steps": [{"type": "speak"}], "trigger_phrases": ["good morning"]}]
+        with patch("integrations.automation._db_list_routines", new=AsyncMock(return_value=routines)):
+            result = asyncio.run(_execute_routine_tool("u1", {"action": "list"}, self._cfg))
+        assert "Good Morning" in result
+        assert "good morning" in result
+
+    def test_delete_routine_no_id(self):
+        result = asyncio.run(_execute_routine_tool("u1", {"action": "delete"}, self._cfg))
+        assert "Specify" in result
+
+    def test_run_routine_found_schedules_task(self):
+        routines = [{"id": 1, "name": "Good Night", "active": True, "steps": [{"type": "speak", "text": "Night"}], "trigger_phrases": []}]
+        with patch("integrations.automation._db_list_routines", new=AsyncMock(return_value=routines)):
+            result = asyncio.run(_execute_routine_tool("u1", {"action": "run", "name": "good night"}, self._cfg))
+        assert "Running routine 'good night'" in result
 
 
 class TestExecuteDeviceAlertToolMocked:
@@ -2187,3 +2331,342 @@ class TestExecuteSpotifyToolSearchVariants:
         with patch("integrations.music.spotify._spotify_req", new=mock_req):
             result = asyncio.run(_execute_spotify_tool("spotify_search_and_play", {"query": "track", "type": "track"}, "u1", self._cfg))
         assert "playback failed" in result
+
+
+# ── integrations/finance.py ───────────────────────────────────────────────────
+
+
+class TestParseDate:
+    def test_parses_iso_string(self):
+        assert finance_mod._parse_date("2026-07-01") == datetime.date(2026, 7, 1)
+
+    def test_passes_through_date_object(self):
+        d = datetime.date(2026, 7, 1)
+        assert finance_mod._parse_date(d) is d
+
+
+class TestPlaidLinkToken:
+    def test_create_link_token(self):
+        fake_client = MagicMock()
+        fake_response = MagicMock()
+        fake_response.to_dict = MagicMock(return_value={"link_token": "link-abc"})
+        fake_client.link_token_create = MagicMock(return_value=fake_response)
+        with patch("integrations.finance._plaid_client", return_value=fake_client):
+            token = asyncio.run(finance_mod._plaid_create_link_token("u1"))
+        assert token == "link-abc"
+
+
+class TestPlaidSyncTransactions:
+    def test_syncs_transactions_and_accounts(self):
+        fake_client = MagicMock()
+        sync_resp = MagicMock()
+        sync_resp.to_dict = MagicMock(
+            return_value={
+                "added": [{"account_id": "a1", "transaction_id": "t1", "amount": 10.0, "date": "2026-07-01", "name": "Coffee"}],
+                "modified": [],
+                "removed": [],
+                "next_cursor": "cursor2",
+                "has_more": False,
+            }
+        )
+        fake_client.transactions_sync = MagicMock(return_value=sync_resp)
+        accounts_resp = MagicMock()
+        accounts_resp.to_dict = MagicMock(return_value={"accounts": [{"account_id": "a1", "name": "Checking"}]})
+        fake_client.accounts_get = MagicMock(return_value=accounts_resp)
+
+        with (
+            patch("integrations.finance._plaid_client", return_value=fake_client),
+            patch("integrations.finance._db_upsert_plaid_transactions", new=AsyncMock()) as mock_upsert_txn,
+            patch("integrations.finance._db_update_plaid_cursor", new=AsyncMock()) as mock_cursor,
+            patch("integrations.finance._db_upsert_plaid_accounts", new=AsyncMock()) as mock_upsert_acct,
+        ):
+            asyncio.run(finance_mod._plaid_sync_transactions("u1", 1, "access-tok", ""))
+        mock_upsert_txn.assert_awaited_once()
+        mock_cursor.assert_awaited_once_with(1, "cursor2")
+        mock_upsert_acct.assert_awaited_once()
+
+
+class TestPlaidExchangePublicToken:
+    def test_exchanges_and_syncs(self):
+        fake_client = MagicMock()
+        exchange_resp = MagicMock()
+        exchange_resp.to_dict = MagicMock(return_value={"access_token": "at", "item_id": "item1"})
+        fake_client.item_public_token_exchange = MagicMock(return_value=exchange_resp)
+
+        with (
+            patch("integrations.finance._plaid_client", return_value=fake_client),
+            patch("integrations.finance._db_add_plaid_item", new=AsyncMock(return_value=5)),
+            patch("integrations.finance._plaid_sync_transactions", new=AsyncMock()) as mock_sync,
+        ):
+            result = asyncio.run(finance_mod._plaid_exchange_public_token("u1", "public-tok", "ins_1", "Chase"))
+        assert result == {"item_id": "item1", "institution_name": "Chase"}
+        mock_sync.assert_awaited_once_with("u1", 5, "at", "")
+
+
+class TestPlaidRemoveItem:
+    def test_removes_item(self):
+        fake_client = MagicMock()
+        fake_client.item_remove = MagicMock(return_value=MagicMock())
+        with patch("integrations.finance._plaid_client", return_value=fake_client):
+            asyncio.run(finance_mod._plaid_remove_item("access-tok"))
+        fake_client.item_remove.assert_called_once()
+
+    def test_swallows_exceptions(self):
+        fake_client = MagicMock()
+        fake_client.item_remove = MagicMock(side_effect=Exception("network error"))
+        with patch("integrations.finance._plaid_client", return_value=fake_client):
+            asyncio.run(finance_mod._plaid_remove_item("access-tok"))
+
+
+class TestExecuteFinanceToolEdgeCases:
+    def test_no_transactions_found(self):
+        with patch("integrations.finance._db_get_recent_transactions", new=AsyncMock(return_value=[])):
+            result = asyncio.run(_execute_finance_tool("get_recent_transactions", {}, "u1"))
+        assert "No transactions found" in result
+
+    def test_no_spending_found(self):
+        with patch("integrations.finance._db_get_spending_by_category", new=AsyncMock(return_value=[])):
+            result = asyncio.run(_execute_finance_tool("get_spending_by_category", {}, "u1"))
+        assert "No spending found" in result
+
+    def test_generic_exception_wrapped(self):
+        with patch("integrations.finance._db_list_plaid_accounts", new=AsyncMock(side_effect=Exception("db down"))):
+            result = asyncio.run(_execute_finance_tool("get_account_balances", {}, "u1"))
+        assert "Finance error: db down" in result
+
+
+class TestFinanceLoop:
+    def test_skips_when_not_ready(self):
+        call_count = 0
+
+        async def fake_sleep(secs):
+            nonlocal call_count
+            call_count += 1
+            if call_count > 2:
+                raise RuntimeError("stop-loop")
+
+        with (
+            patch("integrations.finance.asyncio.sleep", new=fake_sleep),
+            patch("integrations.finance._db_ready", return_value=False),
+        ):
+            try:
+                asyncio.run(finance_mod._finance_loop())
+                raise AssertionError("expected loop to stop")
+            except RuntimeError as e:
+                assert str(e) == "stop-loop"
+
+    def test_syncs_items_and_marks_status(self):
+        call_count = 0
+
+        async def fake_sleep(secs):
+            nonlocal call_count
+            call_count += 1
+            if call_count > 2:
+                raise RuntimeError("stop-loop")
+
+        items = [
+            {"user_id": "u1", "id": 1, "access_token": "tok1", "cursor": "", "status": "pending"},
+            {"user_id": "u2", "id": 2, "access_token": "tok2", "cursor": "", "status": "active"},
+        ]
+
+        async def fake_sync(user_id, item_pk, access_token, cursor):
+            if item_pk == 2:
+                raise Exception("ITEM_LOGIN_REQUIRED: relink needed")
+
+        mark_calls = []
+
+        async def fake_mark(item_pk, status):
+            mark_calls.append((item_pk, status))
+
+        with (
+            patch("integrations.finance.asyncio.sleep", new=fake_sleep),
+            patch("integrations.finance._db_ready", return_value=True),
+            patch("integrations.finance.PLAID_CLIENT_ID", "cid"),
+            patch("integrations.finance.PLAID_SECRET", "secret"),
+            patch("integrations.finance._db_list_all_plaid_items", new=AsyncMock(return_value=items)),
+            patch("integrations.finance._plaid_sync_transactions", new=fake_sync),
+            patch("integrations.finance._db_mark_plaid_item_status", new=fake_mark),
+        ):
+            try:
+                asyncio.run(finance_mod._finance_loop())
+                raise AssertionError("expected loop to stop")
+            except RuntimeError:
+                pass
+        assert (1, "active") in mark_calls
+        assert (2, "login_required") in mark_calls
+
+
+# ── integrations/automation.py ────────────────────────────────────────────────
+
+
+class TestRunRoutine:
+    def test_noop_when_not_initialized(self):
+        with patch.object(automation_mod, "_sids_fn", None):
+            asyncio.run(automation_mod._run_routine("u1", {}, [{"type": "speak", "text": "hi"}]))
+
+    def test_executes_ha_service_speak_and_delay_steps(self):
+        sio = MagicMock()
+        sio.emit = AsyncMock()
+        automation_mod.init(sio, lambda uid: ["sid1"], {})
+        cfg = {"ha_url": "http://ha.local", "ha_token": "tok"}
+        mock_call_service = AsyncMock()
+        steps = [
+            {"type": "ha_service", "domain": "light", "service": "turn_off"},
+            {"type": "speak", "text": "Goodnight"},
+            {"type": "delay", "seconds": 1},
+        ]
+        with (
+            patch("integrations.automation._ha_call_service", new=mock_call_service),
+            patch("integrations.automation.asyncio.sleep", new=AsyncMock()) as mock_sleep,
+        ):
+            asyncio.run(automation_mod._run_routine("u1", cfg, steps))
+        mock_call_service.assert_awaited_once()
+        sio.emit.assert_awaited_once_with("speak_sentence", {"text": "Goodnight", "seq": 1}, to="sid1")
+        mock_sleep.assert_awaited_once_with(1)
+
+    def test_step_exception_is_caught_and_logged(self):
+        sio = MagicMock()
+        sio.emit = AsyncMock()
+        automation_mod.init(sio, lambda uid: ["sid1"], {})
+        cfg = {"ha_url": "http://ha.local", "ha_token": "tok"}
+        with patch("integrations.automation._ha_call_service", new=AsyncMock(side_effect=Exception("boom"))):
+            asyncio.run(automation_mod._run_routine("u1", cfg, [{"type": "ha_service", "domain": "light", "service": "turn_on"}]))
+
+
+class TestExecuteZigbeeTool:
+    def test_not_configured(self):
+        with patch("integrations.automation.MQTT_BROKER", ""):
+            result = asyncio.run(automation_mod._execute_zigbee_tool({"device": "lamp", "payload": {"state": "ON"}}))
+        assert "not configured" in result
+
+    def test_missing_device(self):
+        with patch("integrations.automation.MQTT_BROKER", "mqtt.local"):
+            result = asyncio.run(automation_mod._execute_zigbee_tool({"payload": {}}))
+        assert "Specify a device" in result
+
+    def test_import_error_when_aiomqtt_missing(self):
+        with (
+            patch("integrations.automation.MQTT_BROKER", "mqtt.local"),
+            patch.dict("sys.modules", {"aiomqtt": None}),
+        ):
+            result = asyncio.run(automation_mod._execute_zigbee_tool({"device": "lamp", "payload": {"state": "ON"}}))
+        assert "aiomqtt not installed" in result
+
+    def test_publishes_command_successfully(self):
+        mock_client = MagicMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.publish = AsyncMock()
+        mock_aiomqtt = MagicMock()
+        mock_aiomqtt.Client = MagicMock(return_value=mock_client)
+        with (
+            patch("integrations.automation.MQTT_BROKER", "mqtt.local"),
+            patch.dict("sys.modules", {"aiomqtt": mock_aiomqtt}),
+        ):
+            result = asyncio.run(automation_mod._execute_zigbee_tool({"device": "lamp", "payload": {"state": "ON"}}))
+        assert "Command sent to lamp" in result
+        mock_client.publish.assert_awaited_once()
+
+    def test_mqtt_error_wrapped(self):
+        mock_aiomqtt = MagicMock()
+        mock_aiomqtt.Client = MagicMock(side_effect=Exception("connection refused"))
+        with (
+            patch("integrations.automation.MQTT_BROKER", "mqtt.local"),
+            patch.dict("sys.modules", {"aiomqtt": mock_aiomqtt}),
+        ):
+            result = asyncio.run(automation_mod._execute_zigbee_tool({"device": "lamp", "payload": {"state": "ON"}}))
+        assert "MQTT error" in result
+
+
+class TestDeviceAlertLoop:
+    def test_skips_when_db_not_ready(self):
+        call_count = 0
+
+        async def fake_sleep(secs):
+            nonlocal call_count
+            call_count += 1
+            if call_count > 1:
+                raise RuntimeError("stop-loop")
+
+        with (
+            patch("integrations.automation.asyncio.sleep", new=fake_sleep),
+            patch("integrations.automation._db_ready", return_value=False),
+        ):
+            try:
+                asyncio.run(automation_mod._device_alert_loop())
+                raise AssertionError("expected loop to stop")
+            except RuntimeError:
+                pass
+
+    def test_fires_alert_when_condition_met(self):
+        call_count = 0
+
+        async def fake_sleep(secs):
+            nonlocal call_count
+            call_count += 1
+            if call_count > 1:
+                raise RuntimeError("stop-loop")
+
+        alert = {
+            "id": 1,
+            "user_id": "u1",
+            "entity_id": "sensor.temp",
+            "condition": "greater_than",
+            "value": "75",
+            "message": "It's hot",
+            "name": "Heat alert",
+            "cooldown_minutes": 30,
+            "last_fired": None,
+        }
+        sio = MagicMock()
+        sio.emit = AsyncMock()
+        user_states = {"u1": {"config": {"ha_url": "http://ha.local", "ha_token": "tok"}}}
+        automation_mod.init(sio, lambda uid: ["sid1"], user_states)
+
+        with (
+            patch("integrations.automation.asyncio.sleep", new=fake_sleep),
+            patch("integrations.automation._db_ready", return_value=True),
+            patch("integrations.automation._db_get_active_device_alerts", new=AsyncMock(return_value=[alert])),
+            patch("integrations.automation._ha_get_entity_state", new=AsyncMock(return_value="80")),
+            patch("integrations.automation._db_update_alert_last_fired", new=AsyncMock()) as mock_update,
+        ):
+            try:
+                asyncio.run(automation_mod._device_alert_loop())
+                raise AssertionError("expected loop to stop")
+            except RuntimeError:
+                pass
+        sio.emit.assert_awaited_once()
+        mock_update.assert_awaited_once_with(1)
+
+    def test_skips_alert_when_user_state_missing(self):
+        call_count = 0
+
+        async def fake_sleep(secs):
+            nonlocal call_count
+            call_count += 1
+            if call_count > 1:
+                raise RuntimeError("stop-loop")
+
+        alert = {
+            "id": 2,
+            "user_id": "unknown-user",
+            "entity_id": "sensor.temp",
+            "condition": "equals",
+            "value": "on",
+            "message": "x",
+            "name": "y",
+            "cooldown_minutes": 30,
+            "last_fired": None,
+        }
+        automation_mod.init(MagicMock(), lambda uid: [], {})
+
+        with (
+            patch("integrations.automation.asyncio.sleep", new=fake_sleep),
+            patch("integrations.automation._db_ready", return_value=True),
+            patch("integrations.automation._db_get_active_device_alerts", new=AsyncMock(return_value=[alert])),
+        ):
+            try:
+                asyncio.run(automation_mod._device_alert_loop())
+                raise AssertionError("expected loop to stop")
+            except RuntimeError:
+                pass
