@@ -20,8 +20,8 @@ steps, backed by real tests each time, rather than a single risky jump.
 | Step 1 — auth/ha/snapcast/apple_music/dav/tesla tests               | 40%       | 46%    | ✅ Done        |
 | Step 2 — spotify/contacts/finance/automation/calendar/presence      | 50%       | 55%    | ✅ Done        |
 | Step 3 — db.py full coverage + tesla/apple_music/dav remaining gaps | 62%       | 66%    | ✅ Done        |
-| Step 4 — app.py route handlers                                      | TBD       | TBD    | ⬜ Not started |
-| Step 5 — vision.py (target: 80%)                                    | 80%       | —      | ⬜ Not started |
+| Step 4 — app.py route handlers + background loops                   | 78%       | 80%    | ✅ Done        |
+| Step 5 — vision.py (stretch goal beyond the original 80% target)    | TBD       | —      | ⬜ Not started |
 
 ## What was done in Step 1 (2026-07-08, branch `tests`)
 
@@ -175,28 +175,113 @@ Result: 356 → 473 tests, all passing. Total coverage 55% → 66%.
 `integrations/finance.py` 97%, `integrations/myq.py` 98%.
 Moderate: `integrations/pim/dav.py` 88%, `integrations/shared_lists.py` 88%.
 
-Only two modules remain far below par — everything else in `integrations/` is
-essentially done:
+## What was done in Step 4 (2026-07-09, branch `Nihar`)
 
-1. **`app.py`** — 26% (825 of 1121 statements uncovered). By far the biggest
-   gap, and now the _only_ thing standing between 66% and something close to
-   80% besides vision.py. Mostly FastAPI route handlers (`@fast_app.get/post`)
-   plus Socket.IO handlers and background tasks. This needs real
-   infrastructure, not incremental extension:
-   - Check what `python/tests/conftest.py`'s `api_client` fixture (FastAPI
-     `TestClient` with `_db_init`/`_fetch_oidc_config` patched) already
-     covers before building new mocking.
-   - The `_mock_asyncpg_pool()` / `_mock_async_client()` / `_async_cm()`
-     helpers at the top of `test_app.py` should all be directly reusable for
-     route handlers that touch the DB or make outbound HTTP calls.
-   - This is large enough to warrant its own session/scoping pass rather than
-     folding into a "next increment" — consider grouping routes by area
-     (auth, settings, webhooks, chat/socket) rather than one giant test class.
-2. **`integrations/vision.py`** — 18% (226 of 276 uncovered). Hardest: mixes
-   cv2 frame capture, DB-backed presence tracking, and long-running async
-   loops (`_vision_loop`). Test the pure/formatting/tool-schema pieces first
-   (mirrors the easy wins already banked elsewhere), save the loop and
-   cv2-capture code for last.
+Target was the original ask: get `--cov-fail-under` to 80%. `app.py` (26%,
+825 uncovered) was the only thing standing in the way. Discovered the key
+unlock early: under the `api_client` fixture, `auth._oidc_config` is never
+set (conftest.py patches `_fetch_oidc_config` to a no-op), so
+`_get_current_user` always resolves the caller to `"local"` — no fake session
+cookies needed for any `_require_user`-protected route. Added a
+`_seed_user_state()` helper (pre-populates `app._user_states["local"]`) so
+route handlers that call `_get_user_state` skip the real DB-loading path
+instead of hitting the fixture's bare, unconfigured `MagicMock` pool.
+
+Went through nearly every `@fast_app.get/post/patch/delete` route in
+`app.py` in nine batches, testing via `api_client` + `patch.object(jarvis,
+"_whatever", ...)` on whatever the route delegates to (a `_db_*` function, an
+`integrations.*` helper already imported into `app.py`'s namespace, or raw
+`_pool()` for the handful of routes with inline SQL):
+
+- Auth: `/login`, `/auth/callback` (success, state-mismatch, token-exchange
+  failure), `/logout`, `/` (index).
+- `/api/status`, `/api/save_config` (all validation branches).
+- Vision passthroughs: cameras CRUD, presence, security-events, face
+  enrollment (mocked the `integrations.vision` helpers directly — this only
+  tests `app.py`'s routing, not `vision.py`'s own logic, which is still the
+  next target).
+- `/api/save_ha`, `/api/save_pim` (calendar **and** contacts branches),
+  `/api/save_myq`.
+- Finance: link_token, exchange_token, connections, disconnect, category
+  override.
+- Meetings (list + detail, raw `_pool()`), messages (token/regenerate/apk
+  download/list), doorbell (event/token/events, plus the motion-suppressed-
+  at-night branch), wake (dedup window).
+- Voice enrollment, user profile, household members (admin-gated), shared
+  lists, Snapcast status.
+- Tesla (status/save_unofficial/fleet-auth/callback/disconnect), Spotify
+  OAuth, Apple Music routes.
+- The 4 background loops (`_telemetry_loop`, `_weather_loop`,
+  `_timer_reminder_loop`, `_meeting_cleanup_loop`) — same
+  raise-after-N-sleeps pattern as `_finance_loop`/`_device_alert_loop` in
+  Step 2. **Found and fixed a latent test-hygiene issue**: these loops start
+  for real as background asyncio tasks whenever `TestClient(jarvis.fast_app)`
+  enters its context (FastAPI's lifespan startup), and `_weather_loop`
+  specifically has no sleep before its first iteration — so it was making
+  *real* network calls to ip-api.com/open-meteo.com during ordinary test runs
+  and incidentally "covering" itself, non-deterministically, only when the
+  test machine had internet access. Wrote deterministic tests for all 4 loops
+  that mock their dependencies properly instead of relying on that.
+- `_classify_message`/`_classify_and_notify` (phone message LLM importance
+  classification, called from `/api/messages/ingest` but not itself a route)
+  — tested directly rather than through the fire-and-forget
+  `asyncio.create_task` call site, since that's timing-dependent.
+
+**Gotcha hit repeatedly:** several routes call `_sids_for_user(user_id)` and
+loop over the result to call `sio.emit(...)` — with no sid registered in
+`app._sid_to_user` in tests, that loop body silently never executes (0
+statements missed as an *error*, just silently uncovered). Fix: patch
+`jarvis._sids_for_user` to return a non-empty list (e.g. `["sid1"]`) and
+patch `jarvis.sio` itself as a `MagicMock` with `.emit = AsyncMock()` when
+the test cares about the broadcast happening.
+
+**Deliberately not covered / out of scope for Step 4:**
+
+- `/api/transcribe` (425-458) — full Whisper audio pipeline, low ROI to mock.
+- The Socket.IO chat pipeline (`_process_message` and `@sio.on(...)`
+  handlers, roughly lines 1206-1560) — this is the single largest remaining
+  block in `app.py`. Not FastAPI routes, so `TestClient` doesn't exercise
+  them; would need direct function calls or a Socket.IO test client. This is
+  the main reason `app.py` is at 67%, not higher.
+- Party mode routes (`/api/party-token`, `/party/{token}*`) — lower-traffic
+  guest feature, skipped for time.
+- A handful of single-line defensive branches (`245`, `260-263`, exception
+  fallbacks in voice enrollment, the `>200 pending entries` pruning branches
+  in Tesla/Spotify auth-pending dicts).
+
+Result: 570 → 580 tests, all passing. Total coverage 66% → **80%** — the
+original target from the very first ask in this thread.
+`--cov-fail-under` set to `78` (margin below actual 80%).
+
+## Per-module coverage after Step 4
+
+100%: `db.py`, `auth.py`, `integrations/tesla.py`,
+`integrations/multiroom/snapcast.py`, `integrations/multiroom/presence.py`.
+95%+: `integrations/music/spotify.py` 99%, `integrations/music/apple_music.py`
+98%, `integrations/pim/timers.py` 96%, `integrations/automation.py` 95%,
+`integrations/pim/calendar.py` 95%, `integrations/pim/contacts.py` 95%,
+`integrations/ha.py` 95%, `integrations/finance.py` 97%,
+`integrations/myq.py` 98%.
+Moderate: `integrations/pim/dav.py` 88%, `integrations/shared_lists.py` 88%,
+`app.py` 67% (up from 26%).
+
+Only one module is far below par now:
+
+1. **`integrations/vision.py`** — 18% (226 of 276 uncovered). Was already
+   flagged as the hardest in Step 3: mixes cv2 frame capture, DB-backed
+   presence tracking, and long-running async loops (`_vision_loop`). Test the
+   pure/formatting/tool-schema pieces first (mirrors the easy wins already
+   banked everywhere else), save the loop and cv2-capture code for last.
+2. **`app.py`'s Socket.IO chat pipeline** (~350 statements, see "deliberately
+   not covered" above) is the other real remaining gap if pushing past 80%.
+   Would need a different test approach than anything used so far — calling
+   `_process_message`/`@sio.on` handlers directly with constructed
+   arguments, not through `TestClient`.
+
+The stated 80% goal is met. Both remaining items are genuinely harder (new
+testing approach needed, not just "more of the same pattern") — treat
+further work here as a stretch goal, not a continuation of the same
+incremental steps 1-4 were.
 
 ## How to Resume
 
@@ -204,13 +289,11 @@ essentially done:
    from the repo root (no path argument needed — `pyproject.toml` already
    points at `python/tests/`) to get current per-line gaps (line numbers
    drift as code changes).
-2. `app.py` is the next target and it's a different shape of work than
-   everything done so far (Steps 1-3 were all integration-module unit tests);
-   expect to actually exercise routes via `conftest.py`'s `api_client`
-   TestClient fixture rather than calling functions directly.
+2. If continuing past 80%: `vision.py` first (same unit-test pattern as
+   Steps 1-3), then `app.py`'s Socket.IO handlers (new pattern — direct
+   function calls, not `TestClient`).
 3. Each time coverage climbs meaningfully, raise `--cov-fail-under` again to a
-   value with a few points of safety margin below actual — don't jump straight
-   to 80 until actually near it.
+   value with a few points of safety margin below actual.
 4. Run `ruff check python/tests/test_app.py && ruff format --check python/tests/test_app.py`
    before committing (this repo does not use `pytest.raises`/`pytest.mark.asyncio`
    — see the "conventions" note at the top of Step 1 above).

@@ -207,7 +207,7 @@ commands = [
     "--cov=db",
     "--cov=auth",
     "--cov-report=term-missing",
-    "--cov-fail-under=62",
+    "--cov-fail-under=78",
   ],
 ]
 
