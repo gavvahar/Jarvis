@@ -1,7 +1,8 @@
 import re
 
-from integrations.phase1.calendar import _parse_ical_line, _unescape_ical_text, _unfold_ical_lines
-from integrations.phase1.dav import _DAV_NS, _dav_multistatus_responses, _dav_raise_for_status, _dav_request, _dav_response_prop
+from integrations.pim.calendar import _parse_ical_line, _unescape_ical_text, _unfold_ical_lines
+from integrations.pim.dav import _DAV_NS, _dav_multistatus_responses, _dav_raise_for_status, _dav_request, _dav_response_prop
+from tool_schemas import anthropic_tools_to_openai
 
 type _ContactCard = dict[str, str | list[str]]
 
@@ -166,21 +167,7 @@ _CONTACT_LOOKUP_TOOL_ANTHROPIC = {
     },
 }
 
-_CONTACT_LOOKUP_TOOL_OPENAI = {
-    "type": "function",
-    "function": {
-        "name": "lookup_contact",
-        "description": "Look up a contact by name, nickname, phone number, or email in the user's CardDAV address book.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "query": {"type": "string"},
-                "preferred_channel": {"type": "string", "enum": ["any", "phone", "email"]},
-            },
-            "required": ["query"],
-        },
-    },
-}
+_CONTACT_LOOKUP_TOOL_OPENAI = anthropic_tools_to_openai([_CONTACT_LOOKUP_TOOL_ANTHROPIC])[0]
 
 
 # ─── Execution ──────────────────────────────────────────────────────────────

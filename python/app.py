@@ -16,6 +16,7 @@ from fastapi import FastAPI, HTTPException, Request, File, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from embeddings import average_embedding, best_match
 import auth as _auth
 from auth import (
     init_signer,
@@ -31,7 +32,7 @@ import integrations.tesla as _tesla_mod
 import integrations.vision as _vision_mod
 import integrations.finance as _finance_mod
 from integrations.finance import _finance_configured, _plaid_create_link_token, _plaid_exchange_public_token, _plaid_remove_item
-from integrations.tesla import _tesla_configured, _tesla_unofficial_access_token
+from integrations.tesla import _tesla_access_token, _tesla_configured
 from integrations.vision import (
     _list_cameras,
     _add_camera,
@@ -62,12 +63,12 @@ from integrations.music.apple_music import (
     _disconnect_apple_music_user_token,
     _resolve_apple_music_callback,
 )
-import integrations.phase5 as _phase5_mod
-import integrations.phase4.presence as _presence_mod
-import integrations.phase4.snapcast as _snapcast_mod
-from integrations.phase1.dav import _resolve_dav_collection
-from integrations.phase1.calendar import _calendar_configured
-from integrations.phase1.contacts import _contacts_configured
+import integrations.automation as _automation_mod
+import integrations.multiroom.presence as _presence_mod
+import integrations.multiroom.snapcast as _snapcast_mod
+from integrations.pim.dav import _resolve_dav_collection
+from integrations.pim.calendar import _calendar_configured
+from integrations.pim.contacts import _contacts_configured
 from llm import (
     _build_client,
     _generate_meeting_notes,
@@ -94,7 +95,6 @@ from config import (
 
 try:
     import librosa as _librosa
-    import numpy as _np
 
     _VOICE_ID_OK = True
 except ImportError:
@@ -185,13 +185,6 @@ _voice_cache: dict = {}
 _VOICE_THRESHOLD = 0.82
 
 
-def _cosine_similarity(a: list, b: list) -> float:
-    av = _np.array(a, dtype=float)
-    bv = _np.array(b, dtype=float)
-    denom = _np.linalg.norm(av) * _np.linalg.norm(bv)
-    return float(_np.dot(av, bv) / denom) if denom > 0 else 0.0
-
-
 def _extract_voice_embedding(audio_path: str) -> list | None:
     if not _VOICE_ID_OK:
         return None
@@ -209,13 +202,9 @@ async def _refresh_voice_cache() -> None:
 def _identify_speaker_from_embedding(embedding: list) -> tuple:
     if not _voice_cache or not embedding:
         return None, "", False
-    best_uid, best_name, best_safe, best_score = None, "", False, 0.0
-    for uid, (stored, name, is_safe) in _voice_cache.items():
-        score = _cosine_similarity(embedding, stored)
-        if score > best_score:
-            best_uid, best_name, best_safe, best_score = uid, name, is_safe, score
+    best_uid, best_score, meta = best_match(embedding, _voice_cache)
     if best_score >= _VOICE_THRESHOLD:
-        return best_uid, best_name, best_safe
+        return best_uid, meta[0], meta[1]
     return None, "guest", False
 
 
@@ -278,7 +267,7 @@ async def _require_admin(request: Request) -> str:
 sio = socketio.AsyncServer(async_mode="asgi", cors_allowed_origins="*")
 _init_apple_music(sio, _sid_to_user)
 _vision_mod.init(sio, _sids_for_user)
-_phase5_mod.init(sio, _sids_for_user, _user_states)
+_automation_mod.init(sio, _sids_for_user, _user_states)
 
 
 @asynccontextmanager
@@ -296,7 +285,7 @@ async def lifespan(application: FastAPI):
     t2 = asyncio.create_task(_weather_loop())
     t3 = asyncio.create_task(_meeting_cleanup_loop())
     t4 = asyncio.create_task(_timer_reminder_loop())
-    t5 = asyncio.create_task(_phase5_mod._device_alert_loop())
+    t5 = asyncio.create_task(_automation_mod._device_alert_loop())
     t6 = asyncio.create_task(_vision_mod._vision_loop())
     t7 = asyncio.create_task(_finance_mod._finance_loop())
     yield
@@ -931,9 +920,7 @@ async def api_voice_enroll_finish(request: Request):
     embeddings = data.get("embeddings", [])
     if not embeddings or len(embeddings) < 2:
         raise HTTPException(400, "At least 2 samples required.")
-    import numpy as _np2
-
-    avg = _np2.mean([_np2.array(e) for e in embeddings], axis=0).tolist()
+    avg = average_embedding(embeddings)
     await _db_save_voice_embedding(user_id, avg)
     await _refresh_voice_cache()
     return {"ok": True}
@@ -1024,7 +1011,7 @@ async def api_tesla_save_unofficial(request: Request):
         return {"ok": False, "error": "No refresh token provided."}
     _tesla_mod._tesla_tokens.pop(user_id, None)
     try:
-        token = await _tesla_unofficial_access_token(user_id, {"tesla_refresh_token": refresh_token})
+        token = await _tesla_access_token("unofficial", user_id, {"tesla_refresh_token": refresh_token})
         async with httpx.AsyncClient(timeout=10) as c:
             r = await c.get(f"{_tesla_mod._TESLA_OWNER_BASE}/api/1/vehicles", headers={"Authorization": f"Bearer {token}"})
             r.raise_for_status()
