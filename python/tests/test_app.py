@@ -6,7 +6,7 @@ Webhook auth tests use the `api_client` fixture from conftest.py which
 stubs out the database so no running PostgreSQL is required.
 """
 
-import asyncio, datetime, app as jarvis, auth, integrations.automation as automation_mod, integrations.finance as finance_mod
+import asyncio, datetime, app as jarvis, auth, db as db_mod, integrations.automation as automation_mod, integrations.finance as finance_mod
 from unittest.mock import AsyncMock, MagicMock, patch
 from fastapi import HTTPException
 from app import (
@@ -55,12 +55,14 @@ from integrations.pim.dav import (
     _dav_join,
     _ensure_trailing_slash,
     _pick_best_dav_collection,
+    _resolve_dav_collection,
 )
 from integrations.pim.timers import _duration_str, _execute_news_tool, _execute_reminder_tool, _execute_timer_tool, _get_pim_tools
 from integrations.automation import _evaluate_alert_condition, _execute_device_alert_tool, _execute_routine_tool, _get_automation_tools
 from integrations.shared_lists import _execute_shared_list_tool
 from integrations.multiroom.snapcast import _execute_snapcast_tool, _get_snapcast_tools, _snapcast_get_status
 from integrations.tesla import _execute_tesla_tool, _get_tesla_tools, _tesla_base_url, _tesla_pick_vehicle
+import integrations.tesla as tesla_mod
 from llm import _build_system_prompt
 from integrations.tesla import _c_to_f
 from integrations.finance import _execute_finance_tool, _finance_configured, _get_finance_tools, _normalize_account, _normalize_transaction
@@ -91,9 +93,15 @@ def _mock_async_client(**method_returns):
     return client
 
 
-def _mock_asyncpg_pool():
+def _mock_asyncpg_pool(*, fetchrow=None, fetch=None, fetchval=None, execute=None):
+    """Mock asyncpg pool; pool.acquire() yields a conn with configurable
+    fetchrow/fetch/fetchval/execute return values (fetch defaults to []).
+    """
     conn = MagicMock()
-    conn.execute = AsyncMock()
+    conn.fetchrow = AsyncMock(return_value=fetchrow)
+    conn.fetch = AsyncMock(return_value=fetch if fetch is not None else [])
+    conn.fetchval = AsyncMock(return_value=fetchval)
+    conn.execute = AsyncMock(return_value=execute)
     pool = MagicMock()
     pool.acquire = MagicMock(return_value=_async_cm(conn))
     return pool, conn
@@ -1954,6 +1962,79 @@ class TestAppleMusicTool:
     def test_resolve_callback_noop_when_missing(self):
         _resolve_apple_music_callback({"cb": "does-not-exist", "result": "x"})
 
+    def test_start_party_emits_to_first_session(self):
+        sio = self._init_am()
+        asyncio.run(apple_music_mod._apple_music_start_party("u1"))
+        sio.emit.assert_awaited_once_with("apple_music_cmd", {"action": "party"}, to="sid1")
+
+    def test_request_callback_times_out(self):
+        self._init_am()
+        with patch("integrations.music.apple_music.asyncio.wait_for", new=AsyncMock(side_effect=TimeoutError)):
+            result = asyncio.run(apple_music_mod._am_request_callback("sid1", "now_playing"))
+        assert result == "Request timed out."
+
+
+class TestAppleMusicDevToken:
+    def test_raises_when_jwt_not_installed(self):
+        with patch.object(apple_music_mod, "jwt", None):
+            try:
+                apple_music_mod._apple_music_dev_token()
+                raise AssertionError("expected RuntimeError")
+            except RuntimeError as e:
+                assert "PyJWT" in str(e)
+
+    def test_encodes_token_with_es256(self):
+        fake_jwt = MagicMock()
+        fake_jwt.encode = MagicMock(return_value="fake.jwt.token")
+        with (
+            patch.object(apple_music_mod, "jwt", fake_jwt),
+            patch("integrations.music.apple_music.APPLE_MUSIC_TEAM_ID", "team"),
+            patch("integrations.music.apple_music.APPLE_MUSIC_KEY_ID", "key"),
+            patch("integrations.music.apple_music.APPLE_MUSIC_PRIVATE_KEY", "pk"),
+        ):
+            token = apple_music_mod._apple_music_dev_token()
+        assert token == "fake.jwt.token"
+        assert fake_jwt.encode.call_args.kwargs["algorithm"] == "ES256"
+
+
+class TestAppleMusicUserToken:
+    def test_save_user_token(self):
+        pool, conn = _mock_asyncpg_pool()
+        config = {}
+        state = {"config": config}
+
+        async def get_user_state(uid):
+            return state
+
+        lock_cm = _async_cm()
+
+        def get_user_lock(uid):
+            return lock_cm
+
+        with patch("integrations.music.apple_music._pool", return_value=pool):
+            asyncio.run(apple_music_mod._save_apple_music_user_token("u1", "tok", "us", get_user_state, get_user_lock))
+        assert config["apple_music_user_token"] == "tok"
+        assert config["apple_music_storefront"] == "us"
+        conn.execute.assert_awaited_once()
+
+    def test_disconnect_user_token(self):
+        pool, conn = _mock_asyncpg_pool()
+        config = {"apple_music_user_token": "tok"}
+        state = {"config": config}
+
+        async def get_user_state(uid):
+            return state
+
+        lock_cm = _async_cm()
+
+        def get_user_lock(uid):
+            return lock_cm
+
+        with patch("integrations.music.apple_music._pool", return_value=pool):
+            asyncio.run(apple_music_mod._disconnect_apple_music_user_token("u1", get_user_state, get_user_lock))
+        assert config["apple_music_user_token"] == ""
+        conn.execute.assert_awaited_once()
+
 
 # ── integrations/pim/dav.py ───────────────────────────────────────────────────
 
@@ -2082,6 +2163,122 @@ class TestDavHelpers:
         assert _dav_prop_href(responses[1], "D:current-user-principal") is None
 
 
+class TestResolveDavCollection:
+    def _resp(self, xml):
+        return MagicMock(status_code=200, text=xml)
+
+    def test_missing_credentials_raises(self):
+        try:
+            asyncio.run(_resolve_dav_collection("", "user", "pw", "calendar"))
+            raise AssertionError("expected ValueError")
+        except ValueError as e:
+            assert "required" in str(e)
+
+    def test_direct_url_is_already_the_collection(self):
+        xml = """<?xml version="1.0" encoding="utf-8"?>
+<D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">
+  <D:response>
+    <D:href>/cal/personal/</D:href>
+    <D:propstat>
+      <D:prop>
+        <D:resourcetype><D:collection/><C:calendar/></D:resourcetype>
+        <D:displayname>Personal</D:displayname>
+      </D:prop>
+      <D:status>HTTP/1.1 200 OK</D:status>
+    </D:propstat>
+  </D:response>
+</D:multistatus>"""
+        mock_req = AsyncMock(return_value=self._resp(xml))
+        with patch("integrations.pim.dav._dav_request", new=mock_req):
+            result = asyncio.run(_resolve_dav_collection("https://dav.example.com/cal/personal/", "user", "pw", "calendar"))
+        assert result == {"url": "https://dav.example.com/cal/personal/", "display_name": "Personal"}
+        mock_req.assert_awaited_once()
+
+    def _principal_xml(self, with_principal=True):
+        principal_block = "<D:current-user-principal><D:href>/principals/users/me/</D:href></D:current-user-principal>" if with_principal else ""
+        return f"""<?xml version="1.0" encoding="utf-8"?>
+<D:multistatus xmlns:D="DAV:">
+  <D:response>
+    <D:href>/</D:href>
+    <D:propstat>
+      <D:prop>
+        <D:resourcetype><D:collection/></D:resourcetype>
+        {principal_block}
+      </D:prop>
+      <D:status>HTTP/1.1 200 OK</D:status>
+    </D:propstat>
+  </D:response>
+</D:multistatus>"""
+
+    def _home_set_xml(self, with_home=True):
+        home_block = "<C:calendar-home-set><D:href>/cal/</D:href></C:calendar-home-set>" if with_home else ""
+        return f"""<?xml version="1.0" encoding="utf-8"?>
+<D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">
+  <D:response>
+    <D:href>/principals/users/me/</D:href>
+    <D:propstat>
+      <D:prop>
+        {home_block}
+      </D:prop>
+      <D:status>HTTP/1.1 200 OK</D:status>
+    </D:propstat>
+  </D:response>
+</D:multistatus>"""
+
+    _COLLECTIONS_XML = """<?xml version="1.0" encoding="utf-8"?>
+<D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">
+  <D:response>
+    <D:href>/cal/inbox/</D:href>
+    <D:propstat><D:prop><D:resourcetype><D:collection/></D:resourcetype></D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat>
+  </D:response>
+  <D:response>
+    <D:href>/cal/personal/</D:href>
+    <D:propstat><D:prop><D:resourcetype><D:collection/><C:calendar/></D:resourcetype><D:displayname>Personal</D:displayname></D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat>
+  </D:response>
+</D:multistatus>"""
+
+    _COLLECTIONS_XML_NO_MATCH = """<?xml version="1.0" encoding="utf-8"?>
+<D:multistatus xmlns:D="DAV:">
+  <D:response>
+    <D:href>/cal/inbox/</D:href>
+    <D:propstat><D:prop><D:resourcetype><D:collection/></D:resourcetype></D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat>
+  </D:response>
+</D:multistatus>"""
+
+    def test_full_discovery_chain(self):
+        responses = [self._resp(self._principal_xml()), self._resp(self._home_set_xml()), self._resp(self._COLLECTIONS_XML)]
+        with patch("integrations.pim.dav._dav_request", new=AsyncMock(side_effect=responses)):
+            result = asyncio.run(_resolve_dav_collection("https://dav.example.com/", "user", "pw", "calendar"))
+        assert result == {"url": "https://dav.example.com/cal/personal/", "display_name": "Personal"}
+
+    def test_missing_principal_href_raises(self):
+        responses = [self._resp(self._principal_xml(with_principal=False))]
+        with patch("integrations.pim.dav._dav_request", new=AsyncMock(side_effect=responses)):
+            try:
+                asyncio.run(_resolve_dav_collection("https://dav.example.com/", "user", "pw", "calendar"))
+                raise AssertionError("expected ValueError")
+            except ValueError as e:
+                assert "principal" in str(e)
+
+    def test_missing_home_href_raises(self):
+        responses = [self._resp(self._principal_xml()), self._resp(self._home_set_xml(with_home=False))]
+        with patch("integrations.pim.dav._dav_request", new=AsyncMock(side_effect=responses)):
+            try:
+                asyncio.run(_resolve_dav_collection("https://dav.example.com/", "user", "pw", "calendar"))
+                raise AssertionError("expected ValueError")
+            except ValueError as e:
+                assert "calendar home" in str(e)
+
+    def test_no_matching_collection_raises(self):
+        responses = [self._resp(self._principal_xml()), self._resp(self._home_set_xml()), self._resp(self._COLLECTIONS_XML_NO_MATCH)]
+        with patch("integrations.pim.dav._dav_request", new=AsyncMock(side_effect=responses)):
+            try:
+                asyncio.run(_resolve_dav_collection("https://dav.example.com/", "user", "pw", "calendar"))
+                raise AssertionError("expected ValueError")
+            except ValueError as e:
+                assert "No calendar collection" in str(e)
+
+
 # ── integrations/tesla.py ─────────────────────────────────────────────────────
 
 
@@ -2193,6 +2390,152 @@ class TestExecuteTeslaTool:
             result = asyncio.run(_execute_tesla_tool({"tesla_method": "fleet", "tesla_fleet_refresh_token": "ft"}, "lock_vehicle", {}, "u1"))
         assert result == "Doors locked on Model Y."
 
+    def test_set_climate_stop_unofficial(self):
+        vehicle = {"id": 1, "display_name": "Model 3", "state": "online"}
+        with (
+            patch("integrations.tesla._tesla_pick_vehicle", new=AsyncMock(return_value=("unofficial", vehicle))),
+            patch("integrations.tesla._tesla_access_token", new=AsyncMock(return_value="tok")),
+            patch("integrations.tesla._tesla_cmd", new=AsyncMock(return_value={"result": True})),
+        ):
+            result = asyncio.run(_execute_tesla_tool(self._cfg, "set_climate", {"action": "stop"}, "u1"))
+        assert result == "Climate stopped on Model 3."
+
+    def test_fleet_get_vehicle_status_online(self):
+        vehicle = {"vin": "5YJ123", "display_name": "Model Y", "state": "online"}
+        vehicle_data = {
+            "response": {
+                "charge_state": {"battery_level": 70, "est_battery_range": 200, "charging_state": "Charging"},
+                "climate_state": {"inside_temp": 20, "is_climate_on": True},
+                "vehicle_state": {"locked": False},
+            }
+        }
+        resp = MagicMock(status_code=200)
+        resp.raise_for_status = MagicMock()
+        resp.json = MagicMock(return_value=vehicle_data)
+        with (
+            patch("integrations.tesla._tesla_pick_vehicle", new=AsyncMock(return_value=("fleet", vehicle))),
+            patch("integrations.tesla._tesla_access_token", new=AsyncMock(return_value="tok")),
+            patch("httpx.AsyncClient", return_value=_mock_async_client(get=resp)),
+        ):
+            result = asyncio.run(_execute_tesla_tool({"tesla_method": "fleet", "tesla_fleet_refresh_token": "ft"}, "get_vehicle_status", {}, "u1"))
+        assert "Battery: 70%" in result
+        assert "Unlocked" in result
+        assert "68°F inside" in result
+
+    def test_fleet_get_vehicle_status_asleep(self):
+        vehicle = {"vin": "5YJ123", "display_name": "Model Y", "state": "asleep"}
+        with (
+            patch("integrations.tesla._tesla_pick_vehicle", new=AsyncMock(return_value=("fleet", vehicle))),
+            patch("integrations.tesla._tesla_access_token", new=AsyncMock(return_value="tok")),
+        ):
+            result = asyncio.run(_execute_tesla_tool({"tesla_method": "fleet", "tesla_fleet_refresh_token": "ft"}, "get_vehicle_status", {}, "u1"))
+        assert "asleep" in result
+
+    def test_fleet_set_climate_with_temperature(self):
+        vehicle = {"vin": "5YJ123", "display_name": "Model Y", "state": "online"}
+        mock_cmd = AsyncMock(return_value={"result": True})
+        with (
+            patch("integrations.tesla._tesla_pick_vehicle", new=AsyncMock(return_value=("fleet", vehicle))),
+            patch("integrations.tesla._tesla_access_token", new=AsyncMock(return_value="tok")),
+            patch("integrations.tesla._tesla_cmd", new=mock_cmd),
+        ):
+            result = asyncio.run(
+                _execute_tesla_tool({"tesla_method": "fleet", "tesla_fleet_refresh_token": "ft"}, "set_climate", {"action": "start", "temperature_f": 70}, "u1")
+            )
+        assert result == "Climate started on Model Y."
+        assert mock_cmd.await_count == 2
+
+    def test_fleet_actuate_trunk(self):
+        vehicle = {"vin": "5YJ123", "display_name": "Model Y", "state": "online"}
+        with (
+            patch("integrations.tesla._tesla_pick_vehicle", new=AsyncMock(return_value=("fleet", vehicle))),
+            patch("integrations.tesla._tesla_access_token", new=AsyncMock(return_value="tok")),
+            patch("integrations.tesla._tesla_cmd", new=AsyncMock(return_value={"result": True})),
+        ):
+            result = asyncio.run(
+                _execute_tesla_tool({"tesla_method": "fleet", "tesla_fleet_refresh_token": "ft"}, "actuate_trunk", {"which": "rear"}, "u1")
+            )
+        assert result == "Rear trunk command sent to Model Y."
+
+
+class TestTeslaLowLevel:
+    def test_access_token_uses_cache_when_valid(self):
+        future_expiry = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=1)
+        with patch.object(tesla_mod, "_tesla_tokens", {"u1": {"unofficial_access": "cached-tok", "unofficial_expiry": future_expiry}}):
+            token = asyncio.run(tesla_mod._tesla_access_token("unofficial", "u1", {}))
+        assert token == "cached-tok"
+
+    def test_access_token_refreshes_unofficial(self):
+        pool, conn = _mock_asyncpg_pool()
+        cfg = {"tesla_refresh_token": "old-rt"}
+        with (
+            patch.object(tesla_mod, "_tesla_tokens", {}),
+            patch("integrations.tesla._pool", return_value=pool),
+            patch(
+                "integrations.tesla.refresh_oauth_token",
+                new=AsyncMock(return_value={"access_token": "new-tok", "refresh_token": "new-rt", "expires_in": 28800}),
+            ),
+        ):
+            token = asyncio.run(tesla_mod._tesla_access_token("unofficial", "u1", cfg))
+        assert token == "new-tok"
+        assert cfg["tesla_refresh_token"] == "new-rt"
+        conn.execute.assert_awaited_once()
+
+    def test_access_token_refreshes_fleet(self):
+        pool, conn = _mock_asyncpg_pool()
+        cfg = {"tesla_fleet_refresh_token": "old-rt"}
+        with (
+            patch.object(tesla_mod, "_tesla_tokens", {}),
+            patch("integrations.tesla._pool", return_value=pool),
+            patch(
+                "integrations.tesla.refresh_oauth_token",
+                new=AsyncMock(return_value={"access_token": "new-tok", "refresh_token": "new-rt", "expires_in": 28800}),
+            ),
+        ):
+            token = asyncio.run(tesla_mod._tesla_access_token("fleet", "u1", cfg))
+        assert token == "new-tok"
+        assert cfg["tesla_fleet_refresh_token"] == "new-rt"
+
+    def test_vehicles_fetches_from_api(self):
+        resp = MagicMock(status_code=200)
+        resp.raise_for_status = MagicMock()
+        resp.json = MagicMock(return_value={"response": [{"id": 1, "display_name": "Model 3"}]})
+        with (
+            patch("integrations.tesla._tesla_access_token", new=AsyncMock(return_value="tok")),
+            patch("httpx.AsyncClient", return_value=_mock_async_client(get=resp)),
+        ):
+            vehicles = asyncio.run(tesla_mod._tesla_vehicles("unofficial", "u1", {}))
+        assert vehicles == [{"id": 1, "display_name": "Model 3"}]
+
+    def test_wake_returns_true_when_online(self):
+        resp = MagicMock(status_code=200)
+        resp.json = MagicMock(return_value={"response": {"state": "online"}})
+        with patch("httpx.AsyncClient", return_value=_mock_async_client(post=resp)):
+            result = asyncio.run(tesla_mod._tesla_wake("unofficial", 1, "tok"))
+        assert result is True
+
+    def test_wake_returns_false_after_retries_exhausted(self):
+        resp = MagicMock(status_code=200)
+        resp.json = MagicMock(return_value={"response": {"state": "asleep"}})
+        with (
+            patch("httpx.AsyncClient", return_value=_mock_async_client(post=resp)),
+            patch("integrations.tesla.asyncio.sleep", new=AsyncMock()),
+        ):
+            result = asyncio.run(tesla_mod._tesla_wake("unofficial", 1, "tok"))
+        assert result is False
+
+    def test_cmd_wakes_and_sends_command(self):
+        resp = MagicMock(status_code=200)
+        resp.raise_for_status = MagicMock()
+        resp.json = MagicMock(return_value={"response": {"result": True}})
+        with (
+            patch("integrations.tesla._tesla_access_token", new=AsyncMock(return_value="tok")),
+            patch("integrations.tesla._tesla_wake", new=AsyncMock(return_value=True)),
+            patch("httpx.AsyncClient", return_value=_mock_async_client(post=resp)),
+        ):
+            result = asyncio.run(tesla_mod._tesla_cmd("unofficial", "u1", {}, 1, "door_lock"))
+        assert result == {"result": True}
+
 
 class TestTeslaPickVehicle:
     def test_prefers_unofficial_when_available(self):
@@ -2214,6 +2557,14 @@ class TestTeslaPickVehicle:
             method, vehicle = asyncio.run(_tesla_pick_vehicle("u1", {"tesla_method": "both"}))
         assert method == "fleet"
         assert vehicle["vin"] == "v1"
+
+    def test_unofficial_error_propagates_when_method_is_unofficial(self):
+        with patch("integrations.tesla._tesla_vehicles", new=AsyncMock(side_effect=Exception("unofficial down"))):
+            try:
+                asyncio.run(_tesla_pick_vehicle("u1", {"tesla_method": "unofficial"}))
+                raise AssertionError("expected Exception")
+            except Exception as e:
+                assert str(e) == "unofficial down"
 
     def test_no_vehicles_raises(self):
         with patch("integrations.tesla._tesla_vehicles", new=AsyncMock(return_value=[])):
@@ -2823,3 +3174,641 @@ class TestDeviceAlertLoop:
                 raise AssertionError("expected loop to stop")
             except RuntimeError:
                 pass
+
+
+# ── db.py ──────────────────────────────────────────────────────────────────
+
+
+class TestDbInitCloseReady:
+    def test_ready_false_when_no_pool(self):
+        with patch.object(db_mod, "_db_pool", None):
+            assert db_mod._db_ready() is False
+
+    def test_ready_true_when_pool_set(self):
+        with patch.object(db_mod, "_db_pool", MagicMock()):
+            assert db_mod._db_ready() is True
+
+    def test_close_noop_when_no_pool(self):
+        with patch.object(db_mod, "_db_pool", None):
+            asyncio.run(db_mod._db_close())
+
+    def test_close_closes_and_clears_pool(self):
+        pool = MagicMock()
+        pool.close = AsyncMock()
+        with patch.object(db_mod, "_db_pool", pool):
+            asyncio.run(db_mod._db_close())
+            assert db_mod._db_pool is None
+        pool.close.assert_awaited_once()
+
+    def test_init_creates_pool_and_runs_schema(self):
+        pool, conn = _mock_asyncpg_pool()
+        with (
+            patch("db.asyncpg.create_pool", new=AsyncMock(return_value=pool)),
+            patch.object(db_mod, "_db_pool", None),
+        ):
+            asyncio.run(db_mod._db_init())
+            assert db_mod._db_pool is pool
+        conn.execute.assert_awaited_once_with(db_mod._SCHEMA)
+
+
+class TestDbUserConfig:
+    def test_ensure_user(self):
+        pool, conn = _mock_asyncpg_pool()
+        with patch("db._pool", return_value=pool):
+            asyncio.run(db_mod._db_ensure_user("u1", "a@b.com", "admin"))
+        conn.execute.assert_awaited_once_with(conn.execute.call_args.args[0], "u1", "a@b.com", "admin")
+
+    def test_load_config_found(self):
+        row = {"role": "user", "provider": "anthropic", "api_key": "k", "model": "claude-haiku-4-5"}
+        pool, conn = _mock_asyncpg_pool(fetchrow=row)
+        with patch("db._pool", return_value=pool):
+            result = asyncio.run(db_mod._db_load_config("u1"))
+        assert result == row
+
+    def test_load_config_defaults_when_missing(self):
+        pool, conn = _mock_asyncpg_pool(fetchrow=None)
+        with patch("db._pool", return_value=pool):
+            result = asyncio.run(db_mod._db_load_config("u1"))
+        assert result["role"] == "user"
+        assert result["provider"] == "anthropic"
+        assert result["apple_music_storefront"] == "us"
+        assert result["is_kid_safe"] is False
+
+    def test_save_config(self):
+        pool, conn = _mock_asyncpg_pool()
+        cfg = {"provider": "anthropic", "api_key": "k", "model": "m", "base_url": "", "ha_url": "", "ha_token": ""}
+        with patch("db._pool", return_value=pool):
+            asyncio.run(db_mod._db_save_config("u1", cfg))
+        assert conn.execute.await_count == 2
+
+    def test_set_kid_safe(self):
+        pool, conn = _mock_asyncpg_pool()
+        with patch("db._pool", return_value=pool):
+            asyncio.run(db_mod._db_set_kid_safe("u1", True))
+        conn.execute.assert_awaited_once()
+
+    def test_set_display_name(self):
+        pool, conn = _mock_asyncpg_pool()
+        with patch("db._pool", return_value=pool):
+            asyncio.run(db_mod._db_set_display_name("u1", "Alice"))
+        conn.execute.assert_awaited_once()
+
+    def test_save_pim_config(self):
+        pool, conn = _mock_asyncpg_pool()
+        with patch("db._pool", return_value=pool):
+            asyncio.run(db_mod._db_save_pim_config("u1", "url", "user", "pw", "curl", "cuser", "cpw"))
+        assert conn.execute.await_count == 2
+
+    def test_get_household_members(self):
+        rows = [{"user_id": "u1", "email": "a@b.com", "display_name": "", "is_kid_safe": False, "has_voice": True}]
+        pool, conn = _mock_asyncpg_pool(fetch=rows)
+        with patch("db._pool", return_value=pool):
+            result = asyncio.run(db_mod._db_get_household_members())
+        assert result == rows
+
+
+class TestDbWebhookTokens:
+    def test_get_or_create_returns_existing(self):
+        pool, conn = _mock_asyncpg_pool(fetchrow={"webhook_token": "tok123"})
+        with patch("db._pool", return_value=pool):
+            token = asyncio.run(db_mod._db_get_or_create_webhook_token("u1"))
+        assert token == "tok123"
+
+    def test_get_or_create_generates_new(self):
+        pool, conn = _mock_asyncpg_pool(fetchrow={"webhook_token": ""})
+        with patch("db._pool", return_value=pool):
+            token = asyncio.run(db_mod._db_get_or_create_webhook_token("u1"))
+        assert len(token) == 64
+        conn.execute.assert_awaited_once()
+
+    def test_regenerate_token(self):
+        pool, conn = _mock_asyncpg_pool()
+        with patch("db._pool", return_value=pool):
+            token = asyncio.run(db_mod._db_regenerate_webhook_token("u1"))
+        assert len(token) == 64
+        conn.execute.assert_awaited_once()
+
+    def test_find_user_by_token_found(self):
+        pool, conn = _mock_asyncpg_pool(fetchrow={"user_id": "u1"})
+        with patch("db._pool", return_value=pool):
+            result = asyncio.run(db_mod._db_find_user_by_token("tok"))
+        assert result == "u1"
+
+    def test_find_user_by_token_not_found(self):
+        pool, conn = _mock_asyncpg_pool(fetchrow=None)
+        with patch("db._pool", return_value=pool):
+            result = asyncio.run(db_mod._db_find_user_by_token("bogus"))
+        assert result is None
+
+
+class TestDbConversations:
+    def test_load_conversation_parses_json(self):
+        import json
+
+        rows = [{"role": "user", "content": json.dumps("hello")}]
+        pool, conn = _mock_asyncpg_pool(fetch=rows)
+        with patch("db._pool", return_value=pool):
+            result = asyncio.run(db_mod._db_load_conversation("u1"))
+        assert result == [{"role": "user", "content": "hello"}]
+
+    def test_append_message(self):
+        pool, conn = _mock_asyncpg_pool()
+        with patch("db._pool", return_value=pool):
+            asyncio.run(db_mod._db_append_message("u1", "user", "hi"))
+        assert conn.execute.await_count == 2
+
+    def test_clear_conversation(self):
+        pool, conn = _mock_asyncpg_pool()
+        with patch("db._pool", return_value=pool):
+            asyncio.run(db_mod._db_clear_conversation("u1"))
+        conn.execute.assert_awaited_once()
+
+
+class TestDbVoiceEmbeddings:
+    def test_save_voice_embedding(self):
+        pool, conn = _mock_asyncpg_pool()
+        with patch("db._pool", return_value=pool):
+            asyncio.run(db_mod._db_save_voice_embedding("u1", [0.1, 0.2]))
+        conn.execute.assert_awaited_once()
+
+    def test_clear_voice_embedding(self):
+        pool, conn = _mock_asyncpg_pool()
+        with patch("db._pool", return_value=pool):
+            asyncio.run(db_mod._db_clear_voice_embedding("u1"))
+        conn.execute.assert_awaited_once()
+
+    def test_get_all_voice_embeddings_skips_empty(self):
+        import json
+
+        rows = [
+            {"user_id": "u1", "voice_embedding": json.dumps([1, 2, 3]), "display_name": "Alice", "is_kid_safe": False},
+            {"user_id": "u2", "voice_embedding": None, "display_name": "", "is_kid_safe": False},
+        ]
+        pool, conn = _mock_asyncpg_pool(fetch=rows)
+        with patch("db._pool", return_value=pool):
+            result = asyncio.run(db_mod._db_get_all_voice_embeddings())
+        assert list(result.keys()) == ["u1"]
+        assert result["u1"] == ([1, 2, 3], "Alice", False)
+
+
+class TestDbSharedLists:
+    def test_get_shared_list_found(self):
+        import json
+
+        pool, conn = _mock_asyncpg_pool(fetchrow={"items": json.dumps(["milk"])})
+        with patch("db._pool", return_value=pool):
+            result = asyncio.run(db_mod._db_get_shared_list("shopping"))
+        assert result == ["milk"]
+
+    def test_get_shared_list_creates_when_missing(self):
+        pool, conn = _mock_asyncpg_pool(fetchrow=None)
+        with patch("db._pool", return_value=pool):
+            result = asyncio.run(db_mod._db_get_shared_list("shopping"))
+        assert result == []
+        conn.execute.assert_awaited_once()
+
+    def test_create_shared_list(self):
+        pool, conn = _mock_asyncpg_pool()
+        with patch("db._pool", return_value=pool):
+            asyncio.run(db_mod._db_create_shared_list("shopping"))
+        conn.execute.assert_awaited_once()
+
+    def test_update_shared_list(self):
+        pool, conn = _mock_asyncpg_pool()
+        with patch("db._pool", return_value=pool):
+            asyncio.run(db_mod._db_update_shared_list("shopping", ["milk", "eggs"]))
+        conn.execute.assert_awaited_once()
+
+    def test_get_all_shared_lists(self):
+        import json
+
+        rows = [{"name": "shopping", "items": json.dumps(["milk"])}, {"name": "todo", "items": None}]
+        pool, conn = _mock_asyncpg_pool(fetch=rows)
+        with patch("db._pool", return_value=pool):
+            result = asyncio.run(db_mod._db_get_all_shared_lists())
+        assert result == {"shopping": ["milk"], "todo": []}
+
+
+class TestDbTimers:
+    def test_set_timer(self):
+        pool, conn = _mock_asyncpg_pool(fetchrow={"id": 5})
+        with patch("db._pool", return_value=pool):
+            tid = asyncio.run(db_mod._db_set_timer("u1", "pasta", 600))
+        assert tid == 5
+
+    def test_list_timers(self):
+        rows = [{"id": 1, "label": "pasta", "fire_at": datetime.datetime.now()}]
+        pool, conn = _mock_asyncpg_pool(fetch=rows)
+        with patch("db._pool", return_value=pool):
+            result = asyncio.run(db_mod._db_list_timers("u1"))
+        assert result == rows
+
+    def test_cancel_timer_true(self):
+        pool, conn = _mock_asyncpg_pool(execute="UPDATE 1")
+        with patch("db._pool", return_value=pool):
+            assert asyncio.run(db_mod._db_cancel_timer("u1", 1)) is True
+
+    def test_cancel_timer_false(self):
+        pool, conn = _mock_asyncpg_pool(execute="UPDATE 0")
+        with patch("db._pool", return_value=pool):
+            assert asyncio.run(db_mod._db_cancel_timer("u1", 1)) is False
+
+    def test_fire_due_timers(self):
+        rows = [{"user_id": "u1", "label": "pasta"}]
+        pool, conn = _mock_asyncpg_pool(fetch=rows)
+        with patch("db._pool", return_value=pool):
+            result = asyncio.run(db_mod._db_fire_due_timers())
+        assert result == rows
+
+
+class TestDbReminders:
+    def test_set_reminder(self):
+        pool, conn = _mock_asyncpg_pool(fetchrow={"id": 7})
+        with patch("db._pool", return_value=pool):
+            rid = asyncio.run(db_mod._db_set_reminder("u1", "drink water", datetime.datetime.now(), None))
+        assert rid == 7
+
+    def test_list_reminders(self):
+        rows = [{"id": 1, "text": "drink water", "fire_at": datetime.datetime.now(), "recurring_minutes": None}]
+        pool, conn = _mock_asyncpg_pool(fetch=rows)
+        with patch("db._pool", return_value=pool):
+            result = asyncio.run(db_mod._db_list_reminders("u1"))
+        assert result == rows
+
+    def test_cancel_reminder_true(self):
+        pool, conn = _mock_asyncpg_pool(execute="UPDATE 1")
+        with patch("db._pool", return_value=pool):
+            assert asyncio.run(db_mod._db_cancel_reminder("u1", 1)) is True
+
+    def test_fire_due_reminders_recurring(self):
+        rows = [{"id": 1, "user_id": "u1", "text": "drink water", "recurring_minutes": 30}]
+        pool, conn = _mock_asyncpg_pool(fetch=rows)
+        with patch("db._pool", return_value=pool):
+            result = asyncio.run(db_mod._db_fire_due_reminders())
+        assert result == rows
+        assert conn.execute.await_count == 1
+
+    def test_fire_due_reminders_one_time(self):
+        rows = [{"id": 2, "user_id": "u1", "text": "one-off", "recurring_minutes": None}]
+        pool, conn = _mock_asyncpg_pool(fetch=rows)
+        with patch("db._pool", return_value=pool):
+            result = asyncio.run(db_mod._db_fire_due_reminders())
+        assert result == rows
+        assert conn.execute.await_count == 1
+
+
+class TestDbRoutines:
+    def test_create_routine(self):
+        pool, conn = _mock_asyncpg_pool(fetchrow={"id": 3})
+        with patch("db._pool", return_value=pool):
+            rid = asyncio.run(db_mod._db_create_routine("u1", "Good Morning", ["good morning"], [{"type": "speak"}]))
+        assert rid == 3
+
+    def test_list_routines(self):
+        import json
+
+        rows = [{"id": 1, "name": "Good Morning", "trigger_phrases": json.dumps(["hi"]), "steps": json.dumps([{"type": "speak"}]), "active": True}]
+        pool, conn = _mock_asyncpg_pool(fetch=rows)
+        with patch("db._pool", return_value=pool):
+            result = asyncio.run(db_mod._db_list_routines("u1"))
+        assert result[0]["trigger_phrases"] == ["hi"]
+        assert result[0]["steps"] == [{"type": "speak"}]
+
+    def test_delete_routine(self):
+        pool, conn = _mock_asyncpg_pool(execute="DELETE 1")
+        with patch("db._pool", return_value=pool):
+            assert asyncio.run(db_mod._db_delete_routine("u1", 1)) is True
+
+    def test_toggle_routine(self):
+        pool, conn = _mock_asyncpg_pool(execute="UPDATE 1")
+        with patch("db._pool", return_value=pool):
+            assert asyncio.run(db_mod._db_toggle_routine("u1", 1, False)) is True
+
+
+class TestDbDeviceAlertsCrud:
+    def test_create_device_alert(self):
+        pool, conn = _mock_asyncpg_pool(fetchrow={"id": 9})
+        with patch("db._pool", return_value=pool):
+            aid = asyncio.run(db_mod._db_create_device_alert("u1", "Heat", "sensor.temp", "greater_than", "75", "hot", 30))
+        assert aid == 9
+
+    def test_list_device_alerts(self):
+        rows = [{"id": 1, "name": "Heat", "entity_id": "sensor.temp", "condition": "greater_than", "value": "75", "message": "hot", "cooldown_minutes": 30, "active": True}]
+        pool, conn = _mock_asyncpg_pool(fetch=rows)
+        with patch("db._pool", return_value=pool):
+            result = asyncio.run(db_mod._db_list_device_alerts("u1"))
+        assert result == rows
+
+    def test_delete_device_alert(self):
+        pool, conn = _mock_asyncpg_pool(execute="DELETE 1")
+        with patch("db._pool", return_value=pool):
+            assert asyncio.run(db_mod._db_delete_device_alert("u1", 1)) is True
+
+    def test_get_active_device_alerts(self):
+        rows = [{"id": 1, "user_id": "u1"}]
+        pool, conn = _mock_asyncpg_pool(fetch=rows)
+        with patch("db._pool", return_value=pool):
+            result = asyncio.run(db_mod._db_get_active_device_alerts())
+        assert result == rows
+
+    def test_update_alert_last_fired(self):
+        pool, conn = _mock_asyncpg_pool()
+        with patch("db._pool", return_value=pool):
+            asyncio.run(db_mod._db_update_alert_last_fired(1))
+        conn.execute.assert_awaited_once()
+
+
+class TestDbPhoneMessages:
+    def test_store_phone_message(self):
+        pool, conn = _mock_asyncpg_pool()
+        with patch("db._pool", return_value=pool):
+            asyncio.run(db_mod._db_store_phone_message("u1", "555-1234", "hi", False, ""))
+        conn.execute.assert_awaited_once()
+
+
+class TestDbMeetings:
+    def test_create_meeting(self):
+        pool, conn = _mock_asyncpg_pool(fetchrow={"id": 4})
+        with patch("db._pool", return_value=pool):
+            mid = asyncio.run(db_mod._db_create_meeting("u1"))
+        assert mid == 4
+
+    def test_append_transcript_segment(self):
+        pool, conn = _mock_asyncpg_pool()
+        with patch("db._pool", return_value=pool):
+            asyncio.run(db_mod._db_append_transcript_segment(4, "hello"))
+        conn.execute.assert_awaited_once()
+
+    def test_finalize_meeting(self):
+        pool, conn = _mock_asyncpg_pool()
+        with patch("db._pool", return_value=pool):
+            asyncio.run(db_mod._db_finalize_meeting(4, "notes"))
+        conn.execute.assert_awaited_once()
+
+
+class TestDbDoorbell:
+    def test_store_doorbell_event(self):
+        pool, conn = _mock_asyncpg_pool()
+        with patch("db._pool", return_value=pool):
+            asyncio.run(db_mod._db_store_doorbell_event("u1", "motion", "front_door"))
+        conn.execute.assert_awaited_once()
+
+    def test_get_recent_doorbell_events(self):
+        rows = [{"event_type": "motion", "source": "front_door", "received_at": datetime.datetime(2026, 7, 1, 12, 0)}]
+        pool, conn = _mock_asyncpg_pool(fetch=rows)
+        with patch("db._pool", return_value=pool):
+            result = asyncio.run(db_mod._db_get_recent_doorbell_events("u1"))
+        assert result[0]["received_at"] == "2026-07-01T12:00:00"
+
+
+class TestDbCameras:
+    def test_add_camera(self):
+        pool, conn = _mock_asyncpg_pool(fetchval=11)
+        with patch("db._pool", return_value=pool):
+            cid = asyncio.run(db_mod._db_add_camera("u1", "Front Door", "Entry", "rtsp", "rtsp://x"))
+        assert cid == 11
+
+    def test_list_cameras(self):
+        rows = [{"id": 1, "name": "Front Door", "room": "Entry", "source_type": "rtsp", "source": "rtsp://x", "enabled": True, "privacy": False}]
+        pool, conn = _mock_asyncpg_pool(fetch=rows)
+        with patch("db._pool", return_value=pool):
+            result = asyncio.run(db_mod._db_list_cameras("u1"))
+        assert result == rows
+
+    def test_delete_camera_true(self):
+        pool, conn = _mock_asyncpg_pool(execute="DELETE 1")
+        with patch("db._pool", return_value=pool):
+            assert asyncio.run(db_mod._db_delete_camera("u1", 1)) is True
+
+    def test_delete_camera_false(self):
+        pool, conn = _mock_asyncpg_pool(execute="DELETE 0")
+        with patch("db._pool", return_value=pool):
+            assert asyncio.run(db_mod._db_delete_camera("u1", 1)) is False
+
+    def test_update_camera_with_valid_fields(self):
+        pool, conn = _mock_asyncpg_pool(execute="UPDATE 1")
+        with patch("db._pool", return_value=pool):
+            assert asyncio.run(db_mod._db_update_camera("u1", 1, enabled=False, bogus="ignored")) is True
+
+    def test_update_camera_no_valid_fields(self):
+        pool, conn = _mock_asyncpg_pool()
+        with patch("db._pool", return_value=pool):
+            assert asyncio.run(db_mod._db_update_camera("u1", 1, bogus="ignored")) is False
+        conn.execute.assert_not_awaited()
+
+    def test_record_detection(self):
+        pool, conn = _mock_asyncpg_pool()
+        with patch("db._pool", return_value=pool):
+            asyncio.run(db_mod._db_record_detection("u1", 1, "u2", 0.9, "Kitchen"))
+        conn.execute.assert_awaited_once()
+
+    def test_record_security_event(self):
+        pool, conn = _mock_asyncpg_pool()
+        with patch("db._pool", return_value=pool):
+            asyncio.run(db_mod._db_record_security_event("u1", 1, "unknown_person", "Kitchen"))
+        conn.execute.assert_awaited_once()
+
+    def test_get_recent_security_events(self):
+        rows = [{"event_type": "unknown_person", "room": "Kitchen", "detected_at": datetime.datetime(2026, 7, 1, 8, 0)}]
+        pool, conn = _mock_asyncpg_pool(fetch=rows)
+        with patch("db._pool", return_value=pool):
+            result = asyncio.run(db_mod._db_get_recent_security_events("u1"))
+        assert result[0]["detected_at"] == "2026-07-01T08:00:00"
+
+
+class TestInferActivity:
+    def test_bedroom_night(self):
+        assert db_mod._infer_activity("Master Bedroom", 23) == "sleeping"
+
+    def test_bedroom_day(self):
+        assert db_mod._infer_activity("Bedroom", 14) == "resting"
+
+    def test_kitchen(self):
+        assert db_mod._infer_activity("Kitchen", 12) == "cooking"
+
+    def test_gym(self):
+        assert db_mod._infer_activity("Home Gym", 9) == "exercising"
+
+    def test_office(self):
+        assert db_mod._infer_activity("Office", 10) == "working"
+
+    def test_bathroom(self):
+        assert db_mod._infer_activity("Bathroom", 8) == "unavailable"
+
+    def test_default_room(self):
+        assert db_mod._infer_activity("Living Room", 15) == "home"
+
+
+class TestDbFacePresence:
+    def test_get_who_is_home(self):
+        rows = [{"user_id": "u1", "display_name": "Alice", "is_home": True, "last_seen_at": datetime.datetime(2026, 7, 1, 9, 0), "room": "Kitchen"}]
+        pool, conn = _mock_asyncpg_pool(fetch=rows)
+        with patch("db._pool", return_value=pool):
+            result = asyncio.run(db_mod._db_get_who_is_home())
+        assert result[0]["name"] == "Alice"
+        assert result[0]["activity"] == "cooking"
+
+    def test_get_who_is_home_no_room_or_last_seen(self):
+        rows = [{"user_id": "u1", "display_name": "", "is_home": True, "last_seen_at": None, "room": None}]
+        pool, conn = _mock_asyncpg_pool(fetch=rows)
+        with patch("db._pool", return_value=pool):
+            result = asyncio.run(db_mod._db_get_who_is_home())
+        assert result[0]["name"] == "u1"
+        assert result[0]["last_seen_at"] is None
+        assert result[0]["room"] == ""
+
+    def test_get_all_face_embeddings(self):
+        rows = [{"user_id": "u1", "display_name": "Alice", "face_embedding": [0.1, 0.2]}]
+        pool, conn = _mock_asyncpg_pool(fetch=rows)
+        with patch("db._pool", return_value=pool):
+            result = asyncio.run(db_mod._db_get_all_face_embeddings())
+        assert result == {"u1": ([0.1, 0.2], "Alice")}
+
+    def test_save_face_embedding(self):
+        pool, conn = _mock_asyncpg_pool()
+        with patch("db._pool", return_value=pool):
+            asyncio.run(db_mod._db_save_face_embedding("u1", [0.1, 0.2]))
+        conn.execute.assert_awaited_once()
+
+    def test_clear_face_embedding(self):
+        pool, conn = _mock_asyncpg_pool()
+        with patch("db._pool", return_value=pool):
+            asyncio.run(db_mod._db_clear_face_embedding("u1"))
+        conn.execute.assert_awaited_once()
+
+    def test_update_presence(self):
+        pool, conn = _mock_asyncpg_pool()
+        with patch("db._pool", return_value=pool):
+            asyncio.run(db_mod._db_update_presence("u1", True))
+        conn.execute.assert_awaited_once()
+
+
+class TestDbPlaid:
+    def test_add_plaid_item(self):
+        pool, conn = _mock_asyncpg_pool(fetchval=21)
+        with patch("db._pool", return_value=pool):
+            pk = asyncio.run(db_mod._db_add_plaid_item("u1", "item1", "access-tok", "ins_1", "Chase"))
+        assert pk == 21
+
+    def test_list_plaid_items(self):
+        rows = [{"id": 1, "item_id": "item1", "institution_name": "Chase", "status": "active", "created_at": datetime.datetime.now()}]
+        pool, conn = _mock_asyncpg_pool(fetch=rows)
+        with patch("db._pool", return_value=pool):
+            result = asyncio.run(db_mod._db_list_plaid_items("u1"))
+        assert result == rows
+
+    def test_list_all_plaid_items(self):
+        rows = [{"id": 1, "user_id": "u1", "item_id": "item1", "access_token": "at", "cursor": "", "status": "active"}]
+        pool, conn = _mock_asyncpg_pool(fetch=rows)
+        with patch("db._pool", return_value=pool):
+            result = asyncio.run(db_mod._db_list_all_plaid_items())
+        assert result == rows
+
+    def test_get_plaid_item_found(self):
+        row = {"id": 1, "item_id": "item1", "access_token": "at", "institution_name": "Chase", "cursor": "", "status": "active"}
+        pool, conn = _mock_asyncpg_pool(fetchrow=row)
+        with patch("db._pool", return_value=pool):
+            result = asyncio.run(db_mod._db_get_plaid_item("u1", 1))
+        assert result == row
+
+    def test_get_plaid_item_not_found(self):
+        pool, conn = _mock_asyncpg_pool(fetchrow=None)
+        with patch("db._pool", return_value=pool):
+            result = asyncio.run(db_mod._db_get_plaid_item("u1", 1))
+        assert result is None
+
+    def test_delete_plaid_item_true(self):
+        pool, conn = _mock_asyncpg_pool(execute="DELETE 1")
+        with patch("db._pool", return_value=pool):
+            assert asyncio.run(db_mod._db_delete_plaid_item("u1", 1)) is True
+
+    def test_update_plaid_cursor(self):
+        pool, conn = _mock_asyncpg_pool()
+        with patch("db._pool", return_value=pool):
+            asyncio.run(db_mod._db_update_plaid_cursor(1, "cursor2"))
+        conn.execute.assert_awaited_once()
+
+    def test_mark_plaid_item_status(self):
+        pool, conn = _mock_asyncpg_pool()
+        with patch("db._pool", return_value=pool):
+            asyncio.run(db_mod._db_mark_plaid_item_status(1, "error"))
+        conn.execute.assert_awaited_once()
+
+    def test_upsert_plaid_accounts(self):
+        pool, conn = _mock_asyncpg_pool()
+        accounts = [
+            {
+                "account_id": "a1",
+                "name": "Checking",
+                "official_name": "",
+                "mask": "1234",
+                "type": "depository",
+                "subtype": "checking",
+                "balance_current": 100.0,
+                "balance_available": 90.0,
+                "balance_limit": None,
+                "iso_currency": "USD",
+            }
+        ]
+        with patch("db._pool", return_value=pool):
+            asyncio.run(db_mod._db_upsert_plaid_accounts("u1", 1, accounts))
+        conn.execute.assert_awaited_once()
+
+    def test_list_plaid_accounts(self):
+        rows = [{"id": 1, "item_id": 1, "account_id": "a1", "name": "Checking", "official_name": "", "mask": "1234", "type": "depository", "subtype": "checking", "balance_current": 100.0, "balance_available": 90.0, "balance_limit": None, "iso_currency": "USD"}]
+        pool, conn = _mock_asyncpg_pool(fetch=rows)
+        with patch("db._pool", return_value=pool):
+            result = asyncio.run(db_mod._db_list_plaid_accounts("u1"))
+        assert result == rows
+
+    def test_upsert_plaid_transactions_with_removals(self):
+        pool, conn = _mock_asyncpg_pool()
+        upserts = [
+            {
+                "account_id": "a1",
+                "transaction_id": "t1",
+                "amount": 10.0,
+                "iso_currency": "USD",
+                "date": datetime.date(2026, 7, 1),
+                "merchant_name": "Coffee Shop",
+                "name": "COFFEE",
+                "category": "Food",
+                "personal_finance_category": "FOOD_AND_DRINK",
+                "pending": False,
+            }
+        ]
+        with patch("db._pool", return_value=pool):
+            asyncio.run(db_mod._db_upsert_plaid_transactions("u1", upserts, ["t2"]))
+        assert conn.execute.await_count == 2
+
+    def test_get_recent_transactions(self):
+        rows = [{"id": 1, "transaction_id": "t1", "amount": 10.0, "date": datetime.date(2026, 7, 1), "merchant_name": "Coffee Shop", "name": "COFFEE", "category": "Food", "personal_finance_category": "", "category_override": None, "pending": False}]
+        pool, conn = _mock_asyncpg_pool(fetch=rows)
+        with patch("db._pool", return_value=pool):
+            result = asyncio.run(db_mod._db_get_recent_transactions("u1"))
+        assert result == rows
+
+    def test_get_spending_by_category(self):
+        rows = [{"category": "Food", "total": 42.5}]
+        pool, conn = _mock_asyncpg_pool(fetch=rows)
+        with patch("db._pool", return_value=pool):
+            result = asyncio.run(db_mod._db_get_spending_by_category("u1"))
+        assert result == [{"category": "Food", "total": 42.5}]
+
+    def test_find_transaction_by_merchant_found(self):
+        row = {"id": 1, "transaction_id": "t1", "amount": 10.0, "date": datetime.date(2026, 7, 1), "merchant_name": "Coffee Shop", "name": "COFFEE"}
+        pool, conn = _mock_asyncpg_pool(fetchrow=row)
+        with patch("db._pool", return_value=pool):
+            result = asyncio.run(db_mod._db_find_transaction_by_merchant("u1", "Coffee"))
+        assert result == row
+
+    def test_find_transaction_by_merchant_not_found(self):
+        pool, conn = _mock_asyncpg_pool(fetchrow=None)
+        with patch("db._pool", return_value=pool):
+            result = asyncio.run(db_mod._db_find_transaction_by_merchant("u1", "Nowhere"))
+        assert result is None
+
+    def test_set_transaction_category_override_true(self):
+        pool, conn = _mock_asyncpg_pool(execute="UPDATE 1")
+        with patch("db._pool", return_value=pool):
+            assert asyncio.run(db_mod._db_set_transaction_category_override("u1", 1, "Business")) is True
