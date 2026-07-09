@@ -501,13 +501,13 @@ Run the full lint, format, and test suite:
 make lint
 ```
 
-This runs ruff, ty, prettier, and pytest (coverage threshold: 25%).
+This runs ruff, ty, prettier, and pytest (coverage threshold: 50%).
 
 Run with hot-reload (no Docker):
 
 ```bash
 pip install -r requirements/local/requirements.txt
-uvicorn app:app --reload --port 5000
+uvicorn app:app --reload --port 5000 --app-dir python
 ```
 
 Note: you'll still need a running Postgres and `.env` set up.

@@ -56,7 +56,7 @@ fi
 
 # ─── Install the daemon script ────────────────────────────────────────────────
 info "Installing wake daemon to /usr/local/bin/jarvis-wake…"
-cp "$REPO_DIR/wake_daemon.py" /usr/local/bin/jarvis-wake
+cp "$REPO_DIR/python/wake_daemon.py" /usr/local/bin/jarvis-wake
 chmod +x /usr/local/bin/jarvis-wake
 
 # ─── Collect configuration ───────────────────────────────────────────────────
@@ -151,5 +151,5 @@ info "Live logs:      journalctl -fu jarvis-wake@${RUN_USER}"
 info "Config:         $ENV_FILE"
 echo ""
 info "To update the daemon after pulling new code:"
-info "  sudo cp wake_daemon.py /usr/local/bin/jarvis-wake"
+info "  sudo cp python/wake_daemon.py /usr/local/bin/jarvis-wake"
 info "  sudo systemctl restart jarvis-wake@${RUN_USER}"
