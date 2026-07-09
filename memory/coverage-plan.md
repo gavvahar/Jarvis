@@ -14,14 +14,14 @@ steps, backed by real tests each time, rather than a single risky jump.
 
 ## Status
 
-| Step                                                                | Threshold | Actual | Status         |
-| ------------------------------------------------------------------- | --------- | ------ | -------------- |
-| Baseline                                                            | 25%       | 37%    | ✅ Done        |
-| Step 1 — auth/ha/snapcast/apple_music/dav/tesla tests               | 40%       | 46%    | ✅ Done        |
-| Step 2 — spotify/contacts/finance/automation/calendar/presence      | 50%       | 55%    | ✅ Done        |
-| Step 3 — db.py full coverage + tesla/apple_music/dav remaining gaps | 62%       | 66%    | ✅ Done        |
-| Step 4 — app.py route handlers + background loops                   | 78%       | 80%    | ✅ Done        |
-| Step 5 — vision.py (stretch goal beyond the original 80% target)    | 84%       | 87%    | ✅ Done        |
+| Step                                                                | Threshold | Actual | Status  |
+| ------------------------------------------------------------------- | --------- | ------ | ------- |
+| Baseline                                                            | 25%       | 37%    | ✅ Done |
+| Step 1 — auth/ha/snapcast/apple_music/dav/tesla tests               | 40%       | 46%    | ✅ Done |
+| Step 2 — spotify/contacts/finance/automation/calendar/presence      | 50%       | 55%    | ✅ Done |
+| Step 3 — db.py full coverage + tesla/apple_music/dav remaining gaps | 62%       | 66%    | ✅ Done |
+| Step 4 — app.py route handlers + background loops                   | 78%       | 80%    | ✅ Done |
+| Step 5 — vision.py (stretch goal beyond the original 80% target)    | 84%       | 87%    | ✅ Done |
 
 ## What was done in Step 1 (2026-07-08, branch `tests`)
 
@@ -288,7 +288,7 @@ around functions that mock cleanly:
 - `TestExecuteVisionTool` — all `manage_camera`/`get_who_is_home`/
   `get_security_events` branches. **Gotcha:** `action="bogus"` alone doesn't
   reach the "Unknown action" fallthrough — the code checks for a missing
-  `camera_id` *before* the action-name lookup, so an unrecognized action
+  `camera_id` _before_ the action-name lookup, so an unrecognized action
   without a `camera_id` returns "Provide 'camera_id'" instead. Needed
   `{"action": "bogus", "camera_id": 1}` to actually exercise the fallthrough.
 - `TestVisionAppHelpers` — `_list_cameras`/`_add_camera`/`_delete_camera`/
