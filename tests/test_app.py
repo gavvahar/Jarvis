@@ -10,6 +10,8 @@ import asyncio
 import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from fastapi import HTTPException
+
 import app as jarvis
 import auth
 from app import (
@@ -29,6 +31,12 @@ from app import (
 from integrations.ha import _ha_call_service, _ha_get_entity_state, _ha_get_states, _ha_headers, _validate_ha
 from integrations.music.spotify import _execute_spotify_tool, _get_spotify_tools
 from integrations.music import apple_music as apple_music_mod
+from integrations.music import spotify as spotify_mod
+from integrations.multiroom import presence as presence_mod
+import integrations.automation as automation_mod
+import integrations.finance as finance_mod
+from integrations.pim import calendar as calendar_mod
+from integrations.pim.contacts import _dedupe_preserve_order, _format_contact, _lookup_contacts, _score_contact_match
 from integrations.music.apple_music import (
     _am_callbacks,
     _apple_music_configured,
@@ -1894,3 +1902,288 @@ class TestTeslaPickVehicle:
         with patch("integrations.tesla._tesla_vehicles", new=AsyncMock(return_value=vehicles)):
             method, vehicle = asyncio.run(_tesla_pick_vehicle("u1", {"tesla_method": "unofficial"}, name_hint="Y"))
         assert vehicle["display_name"] == "Model Y"
+
+
+# ── integrations/multiroom/presence.py ────────────────────────────────────────
+
+
+class TestPresenceRegistry:
+    def test_register_device_room(self):
+        presence_mod.register_device_room("dev1", "kitchen")
+        assert presence_mod._device_room["dev1"] == "kitchen"
+
+    def test_register_device_room_empty_room_noop(self):
+        presence_mod._device_room.pop("dev2", None)
+        presence_mod.register_device_room("dev2", "")
+        assert "dev2" not in presence_mod._device_room
+
+    def test_update_user_room_uses_explicit_room(self):
+        presence_mod.update_user_room("u1", "dev1", "bedroom")
+        assert presence_mod.get_user_room("u1") == "bedroom"
+
+    def test_update_user_room_falls_back_to_device_room(self):
+        presence_mod.register_device_room("dev3", "office")
+        presence_mod.update_user_room("u2", "dev3", "")
+        assert presence_mod.get_user_room("u2") == "office"
+
+    def test_update_user_room_noop_when_no_room_found(self):
+        presence_mod._user_last_room.pop("u3", None)
+        presence_mod.update_user_room("u3", "unknown-device", "")
+        assert presence_mod.get_user_room("u3") == ""
+
+    def test_register_and_deregister_sid_room(self):
+        presence_mod.register_sid_room("sid1", "kitchen")
+        assert presence_mod._sid_room["sid1"] == "kitchen"
+        presence_mod.register_sid_room("sid1", "")
+        assert "sid1" not in presence_mod._sid_room
+
+    def test_deregister_sid(self):
+        presence_mod.register_sid_room("sid2", "office")
+        presence_mod.deregister_sid("sid2")
+        assert "sid2" not in presence_mod._sid_room
+
+    def test_get_user_room_default_empty(self):
+        assert presence_mod.get_user_room("never-seen-user") == ""
+
+    def test_get_sids_for_user_in_room_scopes_by_room(self):
+        presence_mod.update_user_room("u4", "devX", "kitchen")
+        presence_mod.register_sid_room("sidA", "kitchen")
+        presence_mod.register_sid_room("sidB", "bedroom")
+        result = presence_mod.get_sids_for_user_in_room("u4", lambda uid: ["sidA", "sidB"])
+        assert result == ["sidA"]
+
+    def test_get_sids_for_user_in_room_falls_back_to_all_when_no_room_match(self):
+        presence_mod.update_user_room("u5", "devY", "garage")
+        result = presence_mod.get_sids_for_user_in_room("u5", lambda uid: ["sidC", "sidD"])
+        assert result == ["sidC", "sidD"]
+
+    def test_get_sids_for_user_in_room_returns_all_when_no_known_room(self):
+        presence_mod._user_last_room.pop("brand-new-user", None)
+        result = presence_mod.get_sids_for_user_in_room("brand-new-user", lambda uid: ["sidE"])
+        assert result == ["sidE"]
+
+
+# ── integrations/music/spotify.py ─────────────────────────────────────────────
+
+
+def _mock_asyncpg_pool():
+    conn = MagicMock()
+    conn.execute = AsyncMock()
+    cm = MagicMock()
+    cm.__aenter__ = AsyncMock(return_value=conn)
+    cm.__aexit__ = AsyncMock(return_value=False)
+    pool = MagicMock()
+    pool.acquire = MagicMock(return_value=cm)
+    return pool, conn
+
+
+class TestSpotifyAccessToken:
+    def test_raises_when_not_connected(self):
+        with patch.object(spotify_mod, "_spotify_tokens", {}):
+            try:
+                asyncio.run(spotify_mod._spotify_access_token("u1", {}))
+                raise AssertionError("expected ValueError")
+            except ValueError as e:
+                assert "not connected" in str(e).lower()
+
+    def test_uses_cached_token_when_valid(self):
+        future_expiry = datetime.datetime.now().timestamp() + 3600
+        with patch.object(spotify_mod, "_spotify_tokens", {"u1": {"access": "cached-tok", "expiry": future_expiry}}):
+            token = asyncio.run(spotify_mod._spotify_access_token("u1", {"spotify_refresh_token": "rt"}))
+        assert token == "cached-tok"
+
+    def test_refreshes_when_expired(self):
+        pool, conn = _mock_asyncpg_pool()
+        cfg = {"spotify_refresh_token": "old-rt"}
+        with (
+            patch.object(spotify_mod, "_spotify_tokens", {}),
+            patch("integrations.music.spotify._pool", return_value=pool),
+            patch(
+                "integrations.music.spotify.refresh_oauth_token",
+                new=AsyncMock(return_value={"access_token": "new-tok", "refresh_token": "new-rt", "expires_in": 3600}),
+            ),
+        ):
+            token = asyncio.run(spotify_mod._spotify_access_token("u1", cfg))
+        assert token == "new-tok"
+        assert cfg["spotify_refresh_token"] == "new-rt"
+        conn.execute.assert_awaited_once()
+
+
+class TestSpotifyReq:
+    def test_calls_correct_endpoint_with_token(self):
+        resp = MagicMock(status_code=200)
+        mock_client = MagicMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.get = AsyncMock(return_value=resp)
+        future_expiry = datetime.datetime.now().timestamp() + 3600
+        with (
+            patch.object(spotify_mod, "_spotify_tokens", {"u1": {"access": "tok", "expiry": future_expiry}}),
+            patch("httpx.AsyncClient", return_value=mock_client),
+        ):
+            result = asyncio.run(spotify_mod._spotify_req("get", "/me/player", "u1", {"spotify_refresh_token": "rt"}))
+        assert result is resp
+        mock_client.get.assert_awaited_once()
+
+
+class TestSpotifyStartParty:
+    def test_calls_shuffle_and_play(self):
+        mock_req = AsyncMock(return_value=MagicMock(status_code=204))
+        with patch.object(spotify_mod, "_spotify_req", new=mock_req):
+            asyncio.run(spotify_mod._spotify_start_party("u1", {}))
+        assert mock_req.await_count == 2
+
+    def test_swallows_exceptions(self):
+        mock_req = AsyncMock(side_effect=Exception("boom"))
+        with patch.object(spotify_mod, "_spotify_req", new=mock_req):
+            asyncio.run(spotify_mod._spotify_start_party("u1", {}))
+
+
+class TestSpotifyAuthUrl:
+    def test_raises_when_not_configured(self):
+        with patch("integrations.music.spotify.SPOTIFY_CLIENT_ID", ""):
+            try:
+                spotify_mod._spotify_auth_url("u1")
+                raise AssertionError("expected HTTPException")
+            except HTTPException as e:
+                assert e.status_code == 503
+
+    def test_returns_url_with_state(self):
+        with (
+            patch("integrations.music.spotify.SPOTIFY_CLIENT_ID", "cid"),
+            patch("integrations.music.spotify.APP_URL", "https://jarvis.example.com"),
+        ):
+            url = spotify_mod._spotify_auth_url("u1")
+        assert url.startswith("https://accounts.spotify.com/authorize?")
+        assert "client_id=cid" in url
+
+
+class TestSpotifyFinishAuth:
+    def test_invalid_state_raises(self):
+        try:
+            asyncio.run(spotify_mod._spotify_finish_auth(None, "code", AsyncMock(), MagicMock()))
+            raise AssertionError("expected HTTPException")
+        except HTTPException as e:
+            assert e.status_code == 400
+
+    def test_success_saves_tokens(self):
+        spotify_mod._spotify_auth_pending["state123"] = "u1"
+        resp = MagicMock()
+        resp.raise_for_status = MagicMock()
+        resp.json = MagicMock(return_value={"access_token": "at", "refresh_token": "rt", "expires_in": 3600})
+        mock_client = MagicMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.post = AsyncMock(return_value=resp)
+
+        config = {}
+        state = {"config": config}
+
+        async def get_user_state(uid):
+            return state
+
+        lock_cm = MagicMock()
+        lock_cm.__aenter__ = AsyncMock(return_value=None)
+        lock_cm.__aexit__ = AsyncMock(return_value=False)
+
+        def get_user_lock(uid):
+            return lock_cm
+
+        pool, conn = _mock_asyncpg_pool()
+        with (
+            patch("httpx.AsyncClient", return_value=mock_client),
+            patch("integrations.music.spotify._pool", return_value=pool),
+        ):
+            result_uid = asyncio.run(spotify_mod._spotify_finish_auth("state123", "authcode", get_user_state, get_user_lock))
+        assert result_uid == "u1"
+        assert config["spotify_access_token"] == "at"
+        conn.execute.assert_awaited_once()
+
+    def test_token_exchange_failure_raises_502(self):
+        spotify_mod._spotify_auth_pending["state456"] = "u1"
+        mock_client = MagicMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.post = AsyncMock(side_effect=Exception("network error"))
+        with patch("httpx.AsyncClient", return_value=mock_client):
+            try:
+                asyncio.run(spotify_mod._spotify_finish_auth("state456", "authcode", AsyncMock(), MagicMock()))
+                raise AssertionError("expected HTTPException")
+            except HTTPException as e:
+                assert e.status_code == 502
+
+
+class TestSpotifyDisconnect:
+    def test_clears_tokens(self):
+        config = {"spotify_access_token": "at", "spotify_refresh_token": "rt", "spotify_token_expiry": 123.0}
+        state = {"config": config}
+
+        async def get_user_state(uid):
+            return state
+
+        lock_cm = MagicMock()
+        lock_cm.__aenter__ = AsyncMock(return_value=None)
+        lock_cm.__aexit__ = AsyncMock(return_value=False)
+
+        def get_user_lock(uid):
+            return lock_cm
+
+        pool, conn = _mock_asyncpg_pool()
+        spotify_mod._spotify_tokens["u1"] = {"access": "at", "expiry": 123.0}
+        with patch("integrations.music.spotify._pool", return_value=pool):
+            asyncio.run(spotify_mod._spotify_disconnect("u1", get_user_state, get_user_lock))
+        assert config["spotify_access_token"] == ""
+        assert config["spotify_refresh_token"] == ""
+        assert "u1" not in spotify_mod._spotify_tokens
+
+
+class TestExecuteSpotifyToolSearchVariants:
+    _cfg = {"spotify_refresh_token": "rtok"}
+
+    def _mock_resp(self, status=204, text="", json_data=None):
+        r = MagicMock()
+        r.status_code = status
+        r.text = text
+        if json_data is not None:
+            r.json = MagicMock(return_value=json_data)
+        return r
+
+    def test_search_and_play_playlist(self):
+        search_data = {"playlists": {"items": [{"uri": "spotify:playlist:xyz", "name": "Chill Vibes"}]}}
+
+        async def mock_req(method, _endpoint, *_a, **_kw):
+            return self._mock_resp(200, "x", search_data) if method == "get" else self._mock_resp(204)
+
+        with patch("integrations.music.spotify._spotify_req", new=mock_req):
+            result = asyncio.run(_execute_spotify_tool("spotify_search_and_play", {"query": "chill", "type": "playlist"}, "u1", self._cfg))
+        assert "Chill Vibes" in result
+
+    def test_search_and_play_artist(self):
+        search_data = {"artists": {"items": [{"uri": "spotify:artist:xyz", "name": "Daft Punk"}]}}
+
+        async def mock_req(method, _endpoint, *_a, **_kw):
+            return self._mock_resp(200, "x", search_data) if method == "get" else self._mock_resp(204)
+
+        with patch("integrations.music.spotify._spotify_req", new=mock_req):
+            result = asyncio.run(_execute_spotify_tool("spotify_search_and_play", {"query": "daft punk", "type": "artist"}, "u1", self._cfg))
+        assert "Daft Punk" in result
+
+    def test_search_and_play_album(self):
+        search_data = {"albums": {"items": [{"uri": "spotify:album:xyz", "name": "Discovery", "artists": [{"name": "Daft Punk"}]}]}}
+
+        async def mock_req(method, _endpoint, *_a, **_kw):
+            return self._mock_resp(200, "x", search_data) if method == "get" else self._mock_resp(204)
+
+        with patch("integrations.music.spotify._spotify_req", new=mock_req):
+            result = asyncio.run(_execute_spotify_tool("spotify_search_and_play", {"query": "discovery", "type": "album"}, "u1", self._cfg))
+        assert "Discovery" in result
+
+    def test_search_and_play_found_but_playback_fails(self):
+        search_data = {"tracks": {"items": [{"uri": "spotify:track:abc", "name": "Track", "artists": [{"name": "Artist"}]}]}}
+
+        async def mock_req(method, _endpoint, *_a, **_kw):
+            return self._mock_resp(200, "x", search_data) if method == "get" else self._mock_resp(500)
+
+        with patch("integrations.music.spotify._spotify_req", new=mock_req):
+            result = asyncio.run(_execute_spotify_tool("spotify_search_and_play", {"query": "track", "type": "track"}, "u1", self._cfg))
+        assert "playback failed" in result
