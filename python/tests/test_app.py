@@ -2439,9 +2439,7 @@ class TestExecuteTeslaTool:
             patch("integrations.tesla._tesla_access_token", new=AsyncMock(return_value="tok")),
             patch("integrations.tesla._tesla_cmd", new=mock_cmd),
         ):
-            result = asyncio.run(
-                _execute_tesla_tool({"tesla_method": "fleet", "tesla_fleet_refresh_token": "ft"}, "set_climate", {"action": "start", "temperature_f": 70}, "u1")
-            )
+            result = asyncio.run(_execute_tesla_tool({"tesla_method": "fleet", "tesla_fleet_refresh_token": "ft"}, "set_climate", {"action": "start", "temperature_f": 70}, "u1"))
         assert result == "Climate started on Model Y."
         assert mock_cmd.await_count == 2
 
@@ -2452,9 +2450,7 @@ class TestExecuteTeslaTool:
             patch("integrations.tesla._tesla_access_token", new=AsyncMock(return_value="tok")),
             patch("integrations.tesla._tesla_cmd", new=AsyncMock(return_value={"result": True})),
         ):
-            result = asyncio.run(
-                _execute_tesla_tool({"tesla_method": "fleet", "tesla_fleet_refresh_token": "ft"}, "actuate_trunk", {"which": "rear"}, "u1")
-            )
+            result = asyncio.run(_execute_tesla_tool({"tesla_method": "fleet", "tesla_fleet_refresh_token": "ft"}, "actuate_trunk", {"which": "rear"}, "u1"))
         assert result == "Rear trunk command sent to Model Y."
 
 
@@ -3755,7 +3751,22 @@ class TestDbPlaid:
         conn.execute.assert_awaited_once()
 
     def test_list_plaid_accounts(self):
-        rows = [{"id": 1, "item_id": 1, "account_id": "a1", "name": "Checking", "official_name": "", "mask": "1234", "type": "depository", "subtype": "checking", "balance_current": 100.0, "balance_available": 90.0, "balance_limit": None, "iso_currency": "USD"}]
+        rows = [
+            {
+                "id": 1,
+                "item_id": 1,
+                "account_id": "a1",
+                "name": "Checking",
+                "official_name": "",
+                "mask": "1234",
+                "type": "depository",
+                "subtype": "checking",
+                "balance_current": 100.0,
+                "balance_available": 90.0,
+                "balance_limit": None,
+                "iso_currency": "USD",
+            }
+        ]
         pool, conn = _mock_asyncpg_pool(fetch=rows)
         with patch("db._pool", return_value=pool):
             result = asyncio.run(db_mod._db_list_plaid_accounts("u1"))
@@ -3782,7 +3793,20 @@ class TestDbPlaid:
         assert conn.execute.await_count == 2
 
     def test_get_recent_transactions(self):
-        rows = [{"id": 1, "transaction_id": "t1", "amount": 10.0, "date": datetime.date(2026, 7, 1), "merchant_name": "Coffee Shop", "name": "COFFEE", "category": "Food", "personal_finance_category": "", "category_override": None, "pending": False}]
+        rows = [
+            {
+                "id": 1,
+                "transaction_id": "t1",
+                "amount": 10.0,
+                "date": datetime.date(2026, 7, 1),
+                "merchant_name": "Coffee Shop",
+                "name": "COFFEE",
+                "category": "Food",
+                "personal_finance_category": "",
+                "category_override": None,
+                "pending": False,
+            }
+        ]
         pool, conn = _mock_asyncpg_pool(fetch=rows)
         with patch("db._pool", return_value=pool):
             result = asyncio.run(db_mod._db_get_recent_transactions("u1"))

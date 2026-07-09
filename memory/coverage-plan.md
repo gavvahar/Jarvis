@@ -14,14 +14,14 @@ steps, backed by real tests each time, rather than a single risky jump.
 
 ## Status
 
-| Step                                                                    | Threshold | Actual | Status         |
-| -------------------------------------------------------------------------- | --------- | ------ | -------------- |
-| Baseline                                                                | 25%       | 37%    | ✅ Done        |
-| Step 1 — auth/ha/snapcast/apple_music/dav/tesla tests                  | 40%       | 46%    | ✅ Done        |
-| Step 2 — spotify/contacts/finance/automation/calendar/presence         | 50%       | 55%    | ✅ Done        |
-| Step 3 — db.py full coverage + tesla/apple_music/dav remaining gaps    | 62%       | 66%    | ✅ Done        |
-| Step 4 — app.py route handlers                                         | TBD       | TBD    | ⬜ Not started |
-| Step 5 — vision.py (target: 80%)                                        | 80%       | —      | ⬜ Not started |
+| Step                                                                | Threshold | Actual | Status         |
+| ------------------------------------------------------------------- | --------- | ------ | -------------- |
+| Baseline                                                            | 25%       | 37%    | ✅ Done        |
+| Step 1 — auth/ha/snapcast/apple_music/dav/tesla tests               | 40%       | 46%    | ✅ Done        |
+| Step 2 — spotify/contacts/finance/automation/calendar/presence      | 50%       | 55%    | ✅ Done        |
+| Step 3 — db.py full coverage + tesla/apple_music/dav remaining gaps | 62%       | 66%    | ✅ Done        |
+| Step 4 — app.py route handlers                                      | TBD       | TBD    | ⬜ Not started |
+| Step 5 — vision.py (target: 80%)                                    | 80%       | —      | ⬜ Not started |
 
 ## What was done in Step 1 (2026-07-08, branch `tests`)
 
@@ -179,7 +179,7 @@ Only two modules remain far below par — everything else in `integrations/` is
 essentially done:
 
 1. **`app.py`** — 26% (825 of 1121 statements uncovered). By far the biggest
-   gap, and now the *only* thing standing between 66% and something close to
+   gap, and now the _only_ thing standing between 66% and something close to
    80% besides vision.py. Mostly FastAPI route handlers (`@fast_app.get/post`)
    plus Socket.IO handlers and background tasks. This needs real
    infrastructure, not incremental extension:
