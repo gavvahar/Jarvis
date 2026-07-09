@@ -6,14 +6,9 @@ Webhook auth tests use the `api_client` fixture from conftest.py which
 stubs out the database so no running PostgreSQL is required.
 """
 
-import asyncio
-import datetime
+import asyncio, datetime, app as jarvis, auth, integrations.automation as automation_mod, integrations.finance as finance_mod
 from unittest.mock import AsyncMock, MagicMock, patch
-
 from fastapi import HTTPException
-
-import app as jarvis
-import auth
 from app import (
     _build_client,
     _calendar_configured,
@@ -33,8 +28,6 @@ from integrations.music.spotify import _execute_spotify_tool, _get_spotify_tools
 from integrations.music import apple_music as apple_music_mod
 from integrations.music import spotify as spotify_mod
 from integrations.multiroom import presence as presence_mod
-import integrations.automation as automation_mod
-import integrations.finance as finance_mod
 from integrations.pim import calendar as calendar_mod
 from integrations.pim.contacts import _dedupe_preserve_order, _format_contact, _lookup_contacts, _score_contact_match
 from integrations.music.apple_music import (
