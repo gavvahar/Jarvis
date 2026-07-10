@@ -3,6 +3,8 @@
 # docker-language-server: ignore=DS002
 FROM python:3-slim
 
+ENV PYTHONDONTWRITEBYTECODE=1
+
 WORKDIR /app
 
 RUN apt-get update && apt-get upgrade -y \
@@ -18,4 +20,4 @@ COPY . .
 
 EXPOSE 5000
 
-CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "5000"]
+CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "5000", "--app-dir", "python"]

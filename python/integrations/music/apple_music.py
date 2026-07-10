@@ -4,6 +4,7 @@ import secrets
 
 from config import APPLE_MUSIC_KEY_ID, APPLE_MUSIC_PRIVATE_KEY, APPLE_MUSIC_TEAM_ID
 from db import _pool
+from tool_schemas import anthropic_tools_to_openai
 
 try:
     import jwt
@@ -127,39 +128,7 @@ APPLE_MUSIC_TOOLS_ANTHROPIC = [
     },
 ]
 
-APPLE_MUSIC_TOOLS_OPENAI = [
-    {
-        "type": "function",
-        "function": {"name": "apple_music_now_playing", "description": "Get the currently playing track on Apple Music.", "parameters": {"type": "object", "properties": {}}},
-    },
-    {"type": "function", "function": {"name": "apple_music_play", "description": "Resume or start Apple Music playback.", "parameters": {"type": "object", "properties": {}}}},
-    {"type": "function", "function": {"name": "apple_music_pause", "description": "Pause Apple Music playback.", "parameters": {"type": "object", "properties": {}}}},
-    {"type": "function", "function": {"name": "apple_music_next", "description": "Skip to the next track on Apple Music.", "parameters": {"type": "object", "properties": {}}}},
-    {
-        "type": "function",
-        "function": {"name": "apple_music_previous", "description": "Go back to the previous track on Apple Music.", "parameters": {"type": "object", "properties": {}}},
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "apple_music_volume",
-            "description": "Set the Apple Music playback volume (0–100).",
-            "parameters": {"type": "object", "properties": {"volume_percent": {"type": "integer", "description": "Volume 0–100."}}, "required": ["volume_percent"]},
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "apple_music_search_and_play",
-            "description": "Search Apple Music and play the best matching song, artist, album, or playlist.",
-            "parameters": {
-                "type": "object",
-                "properties": {"query": {"type": "string", "description": "Search query"}, "type": {"type": "string", "enum": ["track", "artist", "album", "playlist"]}},
-                "required": ["query"],
-            },
-        },
-    },
-]
+APPLE_MUSIC_TOOLS_OPENAI = anthropic_tools_to_openai(APPLE_MUSIC_TOOLS_ANTHROPIC)
 
 _AM_TOOL_NAMES = {t["name"] for t in APPLE_MUSIC_TOOLS_ANTHROPIC}
 

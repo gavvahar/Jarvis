@@ -12,7 +12,7 @@
 | 4        | GitHub Actions & CI/CD                         | Complete    |
 | 5        | app.py Modularisation                          | Complete    |
 | 6        | Phase 4 — Smart Speaker & Local Hardware       | Complete    |
-| 7        | Phase 5 — Deeper Smart Home                    | In Progress |
+| 7        | Phase 5 — Deeper Smart Home                    | Complete    |
 | 8        | Phase 6 — Proactive & Ambient Intelligence     | Planned     |
 | 9        | Phase 8 — Developer & Extensibility Platform   | In Progress |
 | 10       | Phase 9 — Financial Intelligence               | In Progress |
@@ -80,11 +80,11 @@ Deploy Jarvis on dedicated always-on hardware around the home.
 
 Extend beyond Home Assistant to cover all major smart home ecosystems.
 
-- [ ] **Matter/Thread support** — native Matter controller alongside Home Assistant
-- [x] **Zigbee direct** — zigbee2mqtt integration via MQTT (`zigbee_control` tool)
-- [ ] **Z-Wave** — Z-Wave JS integration
-- [ ] **Apple HomeKit** — read/write HomeKit accessories via HAP-python
-- [ ] **Lutron, Ecobee, Nest** — direct cloud integrations for lighting and climate
+- [x] **Matter/Thread support** — not built directly; Home Assistant has a native Matter integration, so Matter devices added to HA are already controllable via `call_ha_service`/`get_ha_states`
+- [x] **Zigbee direct** — zigbee2mqtt integration via MQTT (`zigbee_control` tool), for devices deliberately kept outside Home Assistant
+- [x] **Z-Wave** — not built directly; Home Assistant has a native Z-Wave JS integration
+- [x] **Apple HomeKit** — not built directly; Home Assistant has a native HomeKit Controller integration
+- [x] **Lutron, Ecobee, Nest** — not built directly; Home Assistant has native integrations for all three
 - [x] **Routine engine** — `manage_routine` tool; trigger phrases + multi-step execution stored in DB
 - [x] **Proactive alerts** — `manage_device_alert` tool; condition-based rules with cooldown stored in DB
 
@@ -206,7 +206,7 @@ Automated workflows to keep the repo healthy and branches in sync.
 - [x] **Cascade merge on push** — when `staging` or `main` receives a push, automatically attempt to merge it into every other open branch; on conflict, open a detailed issue describing the conflicting files and assign it to whoever made the last commit on that branch
 - [x] **Auto-deploy on push to `main`** — `deploy-main.yml` runs on `[self-hosted, homelab]`; pulls latest, restarts the stack with `docker compose up -d --build`, and health-checks `/login` before reporting success
 - [x] **Playwright browser checks in `testing-smoke.yml`** — the smoke test currently only curls `/login` and `/` for non-5xx status; add a headless Playwright pass (with a seeded test account/session) that logs in and clicks through core UI (Settings panel tabs, chat send) so a broken button/JS bundle fails CI, not just a broken route
-- [ ] **Self-hosted GitHub Actions runner** — register the home server (or a dedicated Pi) as a self-hosted runner so CI jobs get persistent Docker layer cache (faster builds), can test ARM-specific daemon packages (onnxruntime, sounddevice, rpi_ws281x) on real hardware, and aren't subject to GitHub's free-tier minute limits. Candidate jobs to move first: `docker-build` (biggest cache win), `testing-smoke` (runs against real stack). Keep `android-build` and `actionlint` on `ubuntu-latest` for clean environments. Add runner labels (`homelab`, `arm64`) so jobs can target the right host. Docs: https://docs.github.com/en/actions/concepts/runners/self-hosted-runners
+- [ ] **Self-hosted GitHub Actions runner** — register the home server (or a dedicated Pi) as a self-hosted runner so CI jobs get persistent Docker layer cache (faster builds), can test ARM-specific daemon packages (onnxruntime, sounddevice, rpi_ws281x) on real hardware, and aren't subject to GitHub's free-tier minute limits. Candidate jobs to move first: `docker-build` (biggest cache win), `testing-smoke` (runs against real stack). Keep `android-build` and `actionlint` on `ubuntu-latest` for clean environments. Add runner labels (`homelab`, `arm64`) so jobs can target the right host. Docs: [Self-hosted runners](https://docs.github.com/en/actions/concepts/runners/self-hosted-runners)
 
 ---
 
