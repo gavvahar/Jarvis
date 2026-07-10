@@ -62,8 +62,8 @@ invalid-argument-type = "ignore"
 # =============================================================================
 
 [tool.pytest.ini_options]
-pythonpath = ["."]
-testpaths = ["tests"]
+pythonpath = ["python"]
+testpaths = ["python/tests"]
 
 # =============================================================================
 # TOX — Test & task runner
@@ -113,7 +113,7 @@ commands = [
 [tool.tox.env."no-classes-check"]
 skip_install = true
 deps = []
-commands = [["python3", "scripts/no_classes_check.py"]]
+commands = [["python3", "python/scripts/no_classes_check.py"]]
 
 # --- Formatting -------------------------------------------------------------
 
@@ -200,14 +200,14 @@ deps = [
 commands = [
   [
     "pytest",
-    "tests/",
+    "python/tests/",
     "-v",
     "--cov=app",
     "--cov=integrations",
     "--cov=db",
     "--cov=auth",
     "--cov-report=term-missing",
-    "--cov-fail-under=25",
+    "--cov-fail-under=80",
   ],
 ]
 
