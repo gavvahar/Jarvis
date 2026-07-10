@@ -2,7 +2,7 @@ import datetime
 import re
 import uuid
 
-from integrations.phase1.dav import (
+from integrations.pim.dav import (
     _DAV_NS,
     _dav_join,
     _dav_multistatus_responses,
@@ -10,6 +10,7 @@ from integrations.phase1.dav import (
     _dav_request,
     _dav_response_prop,
 )
+from tool_schemas import anthropic_tools_to_openai
 
 type _CalendarEvent = dict[str, datetime.datetime | str | bool]
 
@@ -237,27 +238,7 @@ _CALENDAR_TOOL_ANTHROPIC = {
     },
 }
 
-_CALENDAR_TOOL_OPENAI = {
-    "type": "function",
-    "function": {
-        "name": "manage_calendar",
-        "description": "Read upcoming calendar events or create a new event in the user's CalDAV calendar.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "action": {"type": "string", "enum": ["list", "create"]},
-                "start": {"type": "string"},
-                "end": {"type": "string"},
-                "title": {"type": "string"},
-                "location": {"type": "string"},
-                "description": {"type": "string"},
-                "all_day": {"type": "boolean"},
-                "limit": {"type": "integer"},
-            },
-            "required": ["action"],
-        },
-    },
-}
+_CALENDAR_TOOL_OPENAI = anthropic_tools_to_openai([_CALENDAR_TOOL_ANTHROPIC])[0]
 
 
 # ─── Execution ──────────────────────────────────────────────────────────────
