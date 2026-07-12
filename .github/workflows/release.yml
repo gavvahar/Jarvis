@@ -1,0 +1,47 @@
+name: Release
+
+on:
+  workflow_run:
+    workflows:
+      - "Auto Merge Staging to Main"
+    types:
+      - completed
+  workflow_dispatch:
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: main
+
+      - name: Skip if main hasn't moved since last release
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          HEAD_SHA=$(git rev-parse HEAD)
+          LATEST_TAG=$(gh release view --json tagName -q .tagName 2>/dev/null || echo "")
+          if [ -n "$LATEST_TAG" ] && [ "$(git rev-parse "$LATEST_TAG")" = "$HEAD_SHA" ]; then
+            echo "main is unchanged since $LATEST_TAG, skipping release"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create release
+        if: steps.check.outputs.skip == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="v$(date -u +%Y.%m.%d)"
+          if git rev-parse "$TAG" >/dev/null 2>&1; then
+            TAG="${TAG}-${GITHUB_RUN_NUMBER}"
+          fi
+          gh release create "$TAG" --target main --title "$TAG" --generate-notes
