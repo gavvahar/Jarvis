@@ -1,0 +1,28 @@
+changelog:
+  exclude:
+    labels:
+      - duplicate
+      - invalid
+      - wontfix
+      - question
+      - merge-conflict
+  categories:
+    - title: New Features
+      labels:
+        - enhancement
+    - title: Bug Fixes
+      labels:
+        - bug
+        - ci-failure
+    - title: Documentation
+      labels:
+        - documentation
+    - title: Refactoring & Maintenance
+      labels:
+        - refactor
+        - chore
+        - devops
+        - ci
+    - title: Other Changes
+      labels:
+        - "*"
