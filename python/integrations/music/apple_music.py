@@ -1,6 +1,4 @@
-import asyncio
-import datetime
-import secrets
+import asyncio, datetime, secrets
 
 from config import APPLE_MUSIC_KEY_ID, APPLE_MUSIC_PRIVATE_KEY, APPLE_MUSIC_TEAM_ID
 from db import _pool

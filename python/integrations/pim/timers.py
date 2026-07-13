@@ -1,7 +1,5 @@
-import datetime
-import xml.etree.ElementTree as ET
+import datetime, xml.etree.ElementTree as ET, httpx
 
-import httpx
 
 from db import _db_cancel_reminder, _db_cancel_timer, _db_list_reminders, _db_list_timers, _db_set_reminder, _db_set_timer
 from integrations.pim.calendar import _CALENDAR_TOOL_ANTHROPIC, _CALENDAR_TOOL_OPENAI, _calendar_configured

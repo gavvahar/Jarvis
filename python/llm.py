@@ -1,5 +1,4 @@
-import datetime
-import json
+import datetime, json
 
 from config import DEFAULT_MODELS, MQTT_BROKER
 from db import _db_get_recent_doorbell_events
