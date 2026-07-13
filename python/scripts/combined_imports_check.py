@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
-"""Pre-commit check that flags adjacent single-module `import x` statements
-that should be combined onto one line (`import x, y`), matching this
-codebase's style. Imports with an `as` alias are left alone, since combining
-those with plain imports reads worse and this repo doesn't do it (see
-wake_daemon.py's `import numpy as np` / `import httpx` block, which stays
-split). Only top-level statements are checked, so guarded imports
-(try/except, TYPE_CHECKING) are untouched.
+"""Pre-commit check that flags a file with more than one top-level bare
+`import x` statement, since they should all be combined onto a single line
+(`import x, y as z, ...`) regardless of aliases or blank-line grouping.
+`from x import y` statements are left untouched wherever they are. Only
+top-level statements are checked, so guarded imports (try/except,
+TYPE_CHECKING) are untouched.
 
 Pass --fix to rewrite violations in place instead of just reporting them.
 """
@@ -35,35 +34,31 @@ def iter_py_files():
                 yield os.path.join(root, f)
 
 
-def combinable_runs(tree):
-    """Yield runs of >1 consecutive, alias-free `import x` statements in a module body."""
-    run = []
-    for node in tree.body:
-        plain = isinstance(node, ast.Import) and len(node.names) == 1 and node.names[0].asname is None
-        if plain and (not run or node.lineno == run[-1].lineno + 1):
-            run.append(node)
-        else:
-            if len(run) > 1:
-                yield run
-            run = [node] if plain else []
-    if len(run) > 1:
-        yield run
+def plain_imports(tree):
+    """Return all top-level `import x` statements in a module body, in source order."""
+    return [n for n in tree.body if isinstance(n, ast.Import)]
 
 
-def fix_file(path, runs):
-    """Rewrite the given combinable runs in path into single merged import lines."""
+def alias_text(alias):
+    """Render a single import alias as it should appear in source (`x` or `x as y`)."""
+    return f"{alias.name} as {alias.asname}" if alias.asname else alias.name
+
+
+def fix_file(path, imports):
+    """Rewrite path so all its top-level bare imports are merged onto one line."""
     with open(path) as fh:
         lines = fh.readlines()
-    for run in sorted(runs, key=lambda r: r[0].lineno, reverse=True):
-        start, end = run[0].lineno, run[-1].end_lineno
-        names = ", ".join(n.names[0].name for n in run)
-        lines[start - 1 : end] = [f"import {names}\n"]
+    names = ", ".join(alias_text(a) for n in imports for a in n.names)
+    for node in sorted(imports[1:], key=lambda n: n.lineno, reverse=True):
+        del lines[node.lineno - 1 : node.end_lineno]
+    first = imports[0]
+    lines[first.lineno - 1 : first.end_lineno] = [f"import {names}\n"]
     with open(path, "w") as fh:
         fh.writelines(lines)
 
 
 def main():
-    """Report combinable imports found in the codebase, or fix them with --fix."""
+    """Report files with multiple bare imports, or fix them with --fix."""
     fix = "--fix" in sys.argv
     violations = []
     fixed_files = []
@@ -73,16 +68,15 @@ def main():
                 tree = ast.parse(fh.read(), filename=path)
         except SyntaxError:
             continue
-        runs = list(combinable_runs(tree))
-        if not runs:
+        imports = plain_imports(tree)
+        if len(imports) <= 1:
             continue
         if fix:
-            fix_file(path, runs)
+            fix_file(path, imports)
             fixed_files.append(path)
         else:
-            for run in runs:
-                names = ", ".join(n.names[0].name for n in run)
-                violations.append(f"{path}:{run[0].lineno}: combine into one line: import {names}")
+            names = ", ".join(alias_text(a) for n in imports for a in n.names)
+            violations.append(f"{path}:{imports[0].lineno}: combine into one line: import {names}")
     if fix:
         if fixed_files:
             print(f"✅ Combined imports in {len(fixed_files)} file(s):")
@@ -91,7 +85,7 @@ def main():
             print("✅ No combinable imports found. All good!")
         return
     if violations:
-        print("❌ Error: adjacent imports found that should be combined onto one line!")
+        print("❌ Error: files with multiple bare imports that should be combined onto one line!")
         print("\n".join(violations))
         sys.exit(1)
     print("✅ No combinable imports found. All good!")
