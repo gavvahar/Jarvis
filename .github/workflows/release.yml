@@ -1,0 +1,99 @@
+name: Release
+
+on:
+  workflow_run:
+    workflows:
+      - "Auto Merge Staging to Main"
+    types:
+      - completed
+  workflow_dispatch:
+
+jobs:
+  release:
+    runs-on: [self-hosted, homelab]
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: main
+
+      - name: Ensure gh CLI is available
+        run: |
+          if command -v gh >/dev/null 2>&1; then
+            echo "gh already installed: $(gh --version | head -1)"
+            exit 0
+          fi
+          GH_VERSION=$(curl -sf https://api.github.com/repos/cli/cli/releases/latest \
+            | python3 -c "import sys,json; print(json.load(sys.stdin)['tag_name'].lstrip('v'))")
+          curl -fsSL "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_amd64.tar.gz" \
+            | tar -xz -C /tmp
+          mkdir -p "$HOME/.local/bin"
+          cp "/tmp/gh_${GH_VERSION}_linux_amd64/bin/gh" "$HOME/.local/bin/gh"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Determine next version
+        id: version
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          HEAD_SHA=$(git rev-parse HEAD)
+          LATEST_TAG=$(gh release view --json tagName -q .tagName 2>/dev/null || echo "")
+
+          if [ -n "$LATEST_TAG" ] && [ "$(git rev-parse "$LATEST_TAG")" = "$HEAD_SHA" ]; then
+            echo "main is unchanged since $LATEST_TAG, skipping release"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Base commit to diff for bump detection: previous release, or repo root if none exists
+          if [ -n "$LATEST_TAG" ]; then
+            BASE_SHA=$(git rev-parse "$LATEST_TAG")
+          else
+            BASE_SHA=$(git rev-list --max-parents=0 HEAD)
+          fi
+
+          LOG=$(git log --format="%s%n%b" "$BASE_SHA..$HEAD_SHA")
+
+          if echo "$LOG" | grep -qE '^[a-z]+(\([^)]+\))?!:|^BREAKING CHANGE:'; then
+            BUMP="major"
+          elif echo "$LOG" | grep -qE '^feat(\([^)]+\))?:'; then
+            BUMP="minor"
+          else
+            BUMP="patch"
+          fi
+
+          # Version counter tracks semver tags only, independent of the tag naming used previously (e.g. date tags)
+          PREV_SEMVER=$(git tag -l 'v[0-9]*.[0-9]*.[0-9]*' | sort -V | tail -1)
+          PREV_SEMVER="${PREV_SEMVER#v}"
+          PREV_SEMVER="${PREV_SEMVER:-0.0.0}"
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$PREV_SEMVER"
+
+          case "$BUMP" in
+            major) MAJOR=$((MAJOR+1)); MINOR=0; PATCH=0 ;;
+            minor) MINOR=$((MINOR+1)); PATCH=0 ;;
+            patch) PATCH=$((PATCH+1)) ;;
+          esac
+
+          NEW_TAG="v${MAJOR}.${MINOR}.${PATCH}"
+          if git rev-parse "$NEW_TAG" >/dev/null 2>&1; then
+            echo "Tag $NEW_TAG already exists, skipping release"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+          echo "tag=$NEW_TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Create release
+        if: steps.version.outputs.skip == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ steps.version.outputs.tag }}" \
+            --target main \
+            --title "${{ steps.version.outputs.tag }}" \
+            --generate-notes
