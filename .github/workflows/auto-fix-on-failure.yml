@@ -67,6 +67,17 @@ jobs:
           script: |
             const fs = require('fs');
 
+            // GitHub issue bodies cap out at 65536 characters; a verbose `tox -e
+            // github` run (e.g. `pytest -v` over 650+ tests) can blow past that on
+            // its own. Keep the head and tail — the failure is almost always at the
+            // end, but the head shows which tox env was running — and drop the
+            // middle instead of failing the whole issue-creation call.
+            function truncateOutput(text, maxChars = 50000) {
+              if (text.length <= maxChars) return text;
+              const half = Math.floor(maxChars / 2);
+              return `${text.slice(0, half)}\n\n... [truncated ${text.length - maxChars} characters] ...\n\n${text.slice(-half)}`;
+            }
+
             // GITHUB_TOKEN can't access user-level ProjectV2 boards, so this needs
             // its own octokit authenticated with a PAT (same as pr-description.yml's
             // "Add PR to project" step) rather than the default `github` client.
@@ -146,7 +157,7 @@ jobs:
 
             let body;
             if (process.env.FORMAT_OUTCOME === 'failure') {
-              const output = fs.readFileSync('/tmp/format_output.txt', 'utf8').trim();
+              const output = truncateOutput(fs.readFileSync('/tmp/format_output.txt', 'utf8').trim());
               body = [
                 '## CI Failure Report',
                 '',
@@ -164,7 +175,7 @@ jobs:
                 '```',
               ].join('\n');
             } else {
-              const output = fs.readFileSync('/tmp/verify_output.txt', 'utf8').trim();
+              const output = truncateOutput(fs.readFileSync('/tmp/verify_output.txt', 'utf8').trim());
               body = [
                 '## CI Failure Report',
                 '',
