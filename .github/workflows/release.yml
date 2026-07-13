@@ -59,11 +59,11 @@ jobs:
           LOG=$(git log --format="%s%n%b" "$BASE_SHA..$HEAD_SHA")
 
           if echo "$LOG" | grep -qE '^[a-z]+(\([^)]+\))?!:|^BREAKING CHANGE:'; then
-            BUMP=major
+            BUMP="major"
           elif echo "$LOG" | grep -qE '^feat(\([^)]+\))?:'; then
-            BUMP=minor
+            BUMP="minor"
           else
-            BUMP=patch
+            BUMP="patch"
           fi
 
           # Version counter tracks semver tags only, independent of the tag naming used previously (e.g. date tags)
