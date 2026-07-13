@@ -4016,6 +4016,24 @@ class TestIndexRoute:
         assert "text/html" in resp.headers["content-type"]
 
 
+class TestPWARoutes:
+    def test_manifest_served_at_root(self, api_client):
+        resp = api_client.get("/manifest.json")
+        assert resp.status_code == 200
+        assert resp.headers["content-type"] == "application/manifest+json"
+        data = resp.json()
+        assert data["name"] == "J.A.R.V.I.S."
+        assert data["start_url"] == "/"
+        assert len(data["icons"]) >= 2
+
+    def test_service_worker_served_at_root_scope(self, api_client):
+        # Must be served from "/" (not "/static/") so its default scope
+        # covers the whole origin.
+        resp = api_client.get("/sw.js")
+        assert resp.status_code == 200
+        assert "javascript" in resp.headers["content-type"]
+
+
 class TestApiStatus:
     def test_returns_status_fields(self, api_client):
         _seed_user_state(config={"provider": "anthropic", "model": "claude-haiku-4-5"})
