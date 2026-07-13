@@ -19,7 +19,7 @@
 | 11       | Phase 10 — Computer Vision & Spatial Awareness | Complete    |
 | 12       | Phase 11 — Accessibility & Hearing Assistance  | Planned     |
 | 13       | Phase 12 — Mental Wellness & Social Assistance | Planned     |
-| 14       | Phase 3 — Mobile PWA                           | Last        |
+| 14       | Phase 3 — Mobile PWA                           | In Progress |
 
 ---
 
@@ -56,7 +56,7 @@ Move from browser/spacebar activation to always-listening hardware-grade detecti
 Replace native iOS/Android apps with a Progressive Web App to avoid app store copyright issues. (Note: the notification-listener app in `android/` is a separate, narrow SMS-forwarding tool for the phone-message-triage feature — not the mobile client this phase builds.)
 
 - [x] **Responsive layout pass 1** — phone/tablet breakpoints in `responsive.css`; device-tailored orb particle count + FPS cap
-- [ ] **PWA manifest & service worker** — installable from browser; requires HTTPS (service workers won't register over plain HTTP except on localhost)
+- [x] **PWA manifest & service worker** — `static/manifest.json` + `static/sw.js`, served at `/manifest.json` and `/sw.js` (root scope, not `/static/`) via dedicated FastAPI routes; registered from `pwa.js`. Cache-first for `/static/v2/` assets. Installability still requires HTTPS in production (service workers won't register over plain HTTP except on localhost)
 - [ ] **Mobile UI pass 2** — audit remaining panels (settings tabs, telemetry panels, party mode, meeting panel) for touch targets and viewport overflow; add a mobile-viewport project to `playwright.config.js` so regressions are caught in CI
 - [ ] **Tap-to-talk mic flow** — background mic access is OS-restricted, so mobile uses an explicit mic button (`MediaRecorder`) instead of the always-on wake daemon; iOS Safari and Android Chrome differ on audio formats/permission prompts and need separate testing
 - [ ] **Push notifications** — Web Push (VAPID) + service worker push handler, wired into existing alert sources (doorbell, reminders/timers, device alerts) via a `pywebpush` layer server-side
