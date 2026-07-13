@@ -1,7 +1,6 @@
 """Fallback PR description generator using commit messages and diff stat."""
 
-import re
-import sys
+import re, sys
 
 commits = open("/tmp/commits.txt").read().strip().splitlines()
 diff_stat = open("/tmp/diff_stat.txt").read().strip()

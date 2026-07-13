@@ -6,7 +6,7 @@ Webhook auth tests use the `api_client` fixture from conftest.py which
 stubs out the database so no running PostgreSQL is required.
 """
 
-import asyncio, datetime, app as jarvis, auth, db as db_mod, integrations.automation as automation_mod, integrations.finance as finance_mod, integrations.vision as vision_mod
+import asyncio, datetime, app as jarvis, auth, db as db_mod, integrations.automation as automation_mod, integrations.finance as finance_mod, integrations.vision as vision_mod, integrations.tesla as tesla_mod
 from unittest.mock import AsyncMock, MagicMock, patch
 from fastapi import HTTPException
 from app import (
@@ -62,7 +62,6 @@ from integrations.automation import _evaluate_alert_condition, _execute_device_a
 from integrations.shared_lists import _execute_shared_list_tool
 from integrations.multiroom.snapcast import _execute_snapcast_tool, _get_snapcast_tools, _snapcast_get_status
 from integrations.tesla import _execute_tesla_tool, _get_tesla_tools, _tesla_base_url, _tesla_pick_vehicle
-import integrations.tesla as tesla_mod
 from llm import _build_system_prompt
 from integrations.tesla import _c_to_f
 from integrations.finance import _execute_finance_tool, _finance_configured, _get_finance_tools, _normalize_account, _normalize_transaction
