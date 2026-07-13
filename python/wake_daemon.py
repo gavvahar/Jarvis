@@ -32,13 +32,9 @@ Install dependencies:
   pip install -r requirements/daemon/requirements.txt
 """
 
-import os, socket, time, sys, signal, logging
+import os, socket, time, sys, signal, logging, numpy as np, httpx, sounddevice as sd, onnxruntime as ort
 from collections import deque
 
-import numpy as np
-import httpx
-import sounddevice as sd
-import onnxruntime as ort
 from huggingface_hub import hf_hub_download
 
 logging.basicConfig(

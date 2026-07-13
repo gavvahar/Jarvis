@@ -19,7 +19,7 @@
 | 11       | Phase 10 — Computer Vision & Spatial Awareness | Complete    |
 | 12       | Phase 11 — Accessibility & Hearing Assistance  | Planned     |
 | 13       | Phase 12 — Mental Wellness & Social Assistance | Planned     |
-| 14       | Phase 3 — Mobile PWA                           | Last        |
+| 14       | Phase 3 — Mobile PWA                           | In Progress |
 
 ---
 
@@ -53,13 +53,21 @@ Move from browser/spacebar activation to always-listening hardware-grade detecti
 
 ## Phase 3 — Mobile PWA (Last)
 
-Replace native iOS/Android apps with a Progressive Web App to avoid app store copyright issues.
+Replace native iOS/Android apps with a Progressive Web App to avoid app store copyright issues. (Note: the notification-listener app in `android/` is a separate, narrow SMS-forwarding tool for the phone-message-triage feature — not the mobile client this phase builds.)
 
-- [ ] **PWA manifest & service worker** — installable from browser, works offline
-- [ ] **Mobile-optimized UI** — touch-friendly orb, fullscreen mode
-- [ ] **Mobile microphone access** — wake via tap since background mic is OS-restricted
-- [ ] **Push notifications** — alerts, reminders, doorbell events delivered to home screen
-- [ ] **Offline mode** — cached UI + queue commands for when server is unreachable
+- [x] **Responsive layout pass 1** — phone/tablet breakpoints in `responsive.css`; device-tailored orb particle count + FPS cap
+- [x] **PWA manifest & service worker** — `static/manifest.json` + `static/sw.js`, served at `/manifest.json` and `/sw.js` (root scope, not `/static/`) via dedicated FastAPI routes; registered from `pwa.js`. Cache-first for `/static/v2/` assets. Installability still requires HTTPS in production (service workers won't register over plain HTTP except on localhost)
+- [ ] **Mobile UI pass 2** — audit remaining panels (settings tabs, telemetry panels, party mode, meeting panel) for touch targets and viewport overflow; add a mobile-viewport project to `playwright.config.js` so regressions are caught in CI
+- [ ] **Tap-to-talk mic flow** — background mic access is OS-restricted, so mobile uses an explicit mic button (`MediaRecorder`) instead of the always-on wake daemon; iOS Safari and Android Chrome differ on audio formats/permission prompts and need separate testing
+- [ ] **Push notifications** — Web Push (VAPID) + service worker push handler, wired into existing alert sources (doorbell, reminders/timers, device alerts) via a `pywebpush` layer server-side
+- [ ] **Offline mode** — service worker caches the app shell; IndexedDB queue holds outbound commands issued while offline and replays them on reconnect, with a visible "reconnecting" state
+
+**Planned build order** (safest first, each item its own commit):
+
+1. **UI pass 2** — pure CSS (`responsive.css`) + Playwright config; no runtime risk, doesn't touch `sw.js`/backend. Adds `.settings-tab-btn`/`.msg-tab`/`.doorbell-tab` touch-target sizing, collapses the absolutely-positioned telemetry `.panel` parallax elements to a static stacked/hidden layout below 768px/480px, audits `party.html`'s own CSS. Playwright gets a `projects` array (`devices["iPhone 13"]`, `devices["Pixel 5"]`, plus the existing desktop project) so every current spec re-runs on mobile viewports for free, plus a new `tests/browser/mobile.spec.js` for touch-target and overflow assertions.
+2. **Tap-to-talk** — client-only JS, no protocol changes; reuses the existing `/api/transcribe` endpoint `core.js` already calls. New `#ptt-btn` in the topbar (shown via CSS media query, same convention as the rest of `responsive.css`), press-and-hold via `pointerdown`/`pointerup`, coexists with (doesn't replace) the always-on `_vadLoop`. Mime-negotiation logic (currently duplicated between `core.js` and `meeting.js`) gets extracted into a shared `static/v2/js/app/media_utils.js` helper; add `audio/mp4` to the candidate list for iOS Safari.
+3. **Push notifications** — additive only: new `push_subscriptions` table (mirrors `phone_messages`/`doorbell_events` shape), new `python/integrations/push.py` module (`_send_push`, no class, fans out via `pywebpush.webpush()` off the event loop via `asyncio.to_thread`), VAPID keys as env vars (`VAPID_PUBLIC_KEY`/`VAPID_PRIVATE_KEY`/`VAPID_SUBJECT`, generated once by the operator, exposed to the frontend via `/api/status`). Wired into all 6 existing alert emit-sites (`message_alert`, `doorbell_alert`, `security_alert`, `timer_fired`, `reminder_fired`, `device_alert`) — push is sent unconditionally alongside each socket emit (not gated on "no live sid") since mobile OSes can silently suspend a socket long before the server sees it drop. Only appends new `push`/`notificationclick` listeners to `sw.js`; doesn't touch the existing `install`/`fetch`/`activate` handlers.
+4. **Offline mode** — last and riskiest, since it's the only item that changes the existing cache-first `fetch` logic in `sw.js`. Along the way, fixes a latent bug: `caches.match(event.request, { ignoreSearch: true })` ignores the `?v=` cache-busting query string, so once an asset is cached by pathname, bumping `?v=2` → `?v=3` doesn't actually invalidate it — switching to `CACHE_NAME`-based versioning (bumped alongside `?v=N`) fixes this and is required before app-shell pre-caching can be trusted. Offline queue scope is deliberately narrow: only typed/spoken-then-transcribed chat text sent via the `user_message` socket event gets queued in IndexedDB (mic capture itself needs a live Whisper round-trip and can't be queued). Dedup via a client-generated `client_msg_id` + a socket ack from `on_user_message`, with a small in-memory server-side dict as a second line of defense against double-sends on flaky reconnects.
 
 ---
 

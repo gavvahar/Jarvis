@@ -35,6 +35,10 @@ Beyond conversation, J.A.R.V.I.S. can:
 - Transcribe meetings and generate structured notes
 - Read the latest news headlines by category
 
+See [ROADMAP.md](ROADMAP.md) for what's shipped, in progress, and planned next
+(mobile PWA push notifications, offline mode, and a tap-to-talk mic flow are
+next up).
+
 ## WHICH AI CAN HE USE?
 
 Each user picks their own on the setup screen after first login:

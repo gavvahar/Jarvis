@@ -20,3 +20,4 @@ import "./spotify.js";
 import "./apple_music.js";
 import "./party.js";
 import "./boot.js";
+import "./pwa.js";
