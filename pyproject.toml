@@ -71,7 +71,7 @@ testpaths = ["python/tests"]
 
 # Default envs run when you type `tox` with no arguments
 [tool.tox]
-env_list = ["lint", "txt-lint", "format", "prettier", "toml-lint"]
+env_list = ["lint", "txt-lint", "format", "prettier", "toml-lint", "actionlint"]
 work_dir = "/tmp/.tox"
 
 # Shared base config inherited by all envs
@@ -114,6 +114,21 @@ commands = [
 skip_install = true
 deps = []
 commands = [["python3", "python/scripts/no_classes_check.py"]]
+
+[tool.tox.env.actionlint]
+skip_install = true
+allowlist_externals = ["bash"]
+commands = [
+  [
+    "bash",
+    "-c",
+    '''
+    VER=$(curl -sf https://api.github.com/repos/rhysd/actionlint/releases/latest | python3 -c "import sys,json; print(json.load(sys.stdin)['tag_name'].lstrip('v'))")
+    curl -fsSL "https://github.com/rhysd/actionlint/releases/download/v${VER}/actionlint_${VER}_linux_amd64.tar.gz" | tar -xz -C /tmp actionlint
+    /tmp/actionlint
+    ''',
+  ],
+]
 
 # --- Formatting -------------------------------------------------------------
 
@@ -213,7 +228,7 @@ commands = [
 
 # --- Aggregate (CI) ---------------------------------------------------------
 
-# Runs the full CI chain: no-classes-check → lint → txt-lint → prettier → tests
+# Runs the full CI chain: no-classes-check → lint → txt-lint → prettier → tests → actionlint
 [tool.tox.env.github]
 skip_install = true
 deps = []
@@ -248,6 +263,11 @@ commands = [
     "tox",
     "-e",
     "tests",
+  ],
+  [
+    "tox",
+    "-e",
+    "actionlint",
   ],
 ]
 
