@@ -1,8 +1,5 @@
-import datetime
-import secrets
-import urllib.parse
+import datetime, secrets, urllib.parse, httpx
 
-import httpx
 from fastapi import HTTPException
 
 from config import APP_URL, SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET
