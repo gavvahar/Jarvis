@@ -6,6 +6,8 @@ those with plain imports reads worse and this repo doesn't do it (see
 wake_daemon.py's `import numpy as np` / `import httpx` block, which stays
 split). Only top-level statements are checked, so guarded imports
 (try/except, TYPE_CHECKING) are untouched.
+
+Pass --fix to rewrite violations in place instead of just reporting them.
 """
 
 import ast, os, sys
@@ -48,18 +50,46 @@ def combinable_runs(tree):
         yield run
 
 
+def fix_file(path, runs):
+    """Rewrite the given combinable runs in path into single merged import lines."""
+    with open(path) as fh:
+        lines = fh.readlines()
+    for run in sorted(runs, key=lambda r: r[0].lineno, reverse=True):
+        start, end = run[0].lineno, run[-1].end_lineno
+        names = ", ".join(n.names[0].name for n in run)
+        lines[start - 1 : end] = [f"import {names}\n"]
+    with open(path, "w") as fh:
+        fh.writelines(lines)
+
+
 def main():
-    """Report combinable imports found in the codebase and exit non-zero if any exist."""
+    """Report combinable imports found in the codebase, or fix them with --fix."""
+    fix = "--fix" in sys.argv
     violations = []
+    fixed_files = []
     for path in iter_py_files():
         try:
             with open(path, "rb") as fh:
                 tree = ast.parse(fh.read(), filename=path)
         except SyntaxError:
             continue
-        for run in combinable_runs(tree):
-            names = ", ".join(n.names[0].name for n in run)
-            violations.append(f"{path}:{run[0].lineno}: combine into one line: import {names}")
+        runs = list(combinable_runs(tree))
+        if not runs:
+            continue
+        if fix:
+            fix_file(path, runs)
+            fixed_files.append(path)
+        else:
+            for run in runs:
+                names = ", ".join(n.names[0].name for n in run)
+                violations.append(f"{path}:{run[0].lineno}: combine into one line: import {names}")
+    if fix:
+        if fixed_files:
+            print(f"✅ Combined imports in {len(fixed_files)} file(s):")
+            print("\n".join(fixed_files))
+        else:
+            print("✅ No combinable imports found. All good!")
+        return
     if violations:
         print("❌ Error: adjacent imports found that should be combined onto one line!")
         print("\n".join(violations))
