@@ -1,5 +1,4 @@
-import json, secrets, datetime, pathlib
-import asyncpg
+import json, secrets, datetime, pathlib, asyncpg
 from config import DATABASE_URL, MAX_HISTORY, VISION_AWAY_TIMEOUT
 from db_helpers import db_exec_affected
 

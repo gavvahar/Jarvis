@@ -10,14 +10,13 @@ Three providers:
   • openai_compatible — any OpenAI-compatible endpoint (Ollama, OpenRouter, …)
 """
 
-import json, os, re, asyncio, secrets, tempfile, urllib.parse, httpx, datetime, hashlib, base64, pathlib, socketio
+import json, os, re, asyncio, secrets, tempfile, urllib.parse, httpx, datetime, hashlib, base64, pathlib, socketio, auth as _auth, integrations.tesla as _tesla_mod, integrations.vision as _vision_mod, integrations.finance as _finance_mod, integrations.automation as _automation_mod, integrations.multiroom.presence as _presence_mod, integrations.multiroom.snapcast as _snapcast_mod
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Request, File, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from embeddings import average_embedding, best_match
-import auth as _auth
 from auth import (
     init_signer,
     _get_oidc_config,
@@ -28,9 +27,6 @@ from auth import (
 )
 from integrations.myq import _myq_configured, _myq_get_status
 from integrations.ha import _ha_configured, _validate_ha
-import integrations.tesla as _tesla_mod
-import integrations.vision as _vision_mod
-import integrations.finance as _finance_mod
 from integrations.finance import _finance_configured, _plaid_create_link_token, _plaid_exchange_public_token, _plaid_remove_item
 from integrations.tesla import _tesla_access_token, _tesla_configured
 from integrations.vision import (
@@ -63,9 +59,6 @@ from integrations.music.apple_music import (
     _disconnect_apple_music_user_token,
     _resolve_apple_music_callback,
 )
-import integrations.automation as _automation_mod
-import integrations.multiroom.presence as _presence_mod
-import integrations.multiroom.snapcast as _snapcast_mod
 from integrations.pim.dav import _resolve_dav_collection
 from integrations.pim.calendar import _calendar_configured
 from integrations.pim.contacts import _contacts_configured
