@@ -238,7 +238,7 @@ commands = [
 
 # --- Aggregate (CI) ---------------------------------------------------------
 
-# Runs the full CI chain: no-classes-check → combined-imports-check → lint → txt-lint → prettier → tests → actionlint
+# Runs the full CI chain: no-classes-check → combined-imports-check → lint → txt-lint → prettier → tests
 [tool.tox.env.github]
 skip_install = true
 deps = []
@@ -279,16 +279,29 @@ commands = [
     "-e",
     "tests",
   ],
+]
+
+# Runs format then the full github chain, plus actionlint (kept out of the
+# github chain so auto-fix-on-failure.yml's local re-verification doesn't
+# re-report a failure the "actionlint" CI job already reports on its own).
+[tool.tox.env.all]
+skip_install = true
+deps = []
+allowlist_externals = ["tox"]
+commands = [
+  [
+    "tox",
+    "-e",
+    "format",
+  ],
+  [
+    "tox",
+    "-e",
+    "github",
+  ],
   [
     "tox",
     "-e",
     "actionlint",
   ],
 ]
-
-# Runs format then the full github chain
-[tool.tox.env.all]
-skip_install = true
-deps = []
-allowlist_externals = ["tox"]
-commands = [["tox", "-e", "format"], ["tox", "-e", "github"]]
