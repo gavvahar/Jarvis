@@ -8,14 +8,22 @@ self.addEventListener("activate", (event) => {
   event.waitUntil(
     caches
       .keys()
-      .then((names) => Promise.all(names.filter((name) => name !== CACHE_NAME).map((name) => caches.delete(name))))
+      .then((names) =>
+        Promise.all(
+          names
+            .filter((name) => name !== CACHE_NAME)
+            .map((name) => caches.delete(name)),
+        ),
+      )
       .then(() => self.clients.claim()),
   );
 });
 
 self.addEventListener("fetch", (event) => {
   const url = new URL(event.request.url);
-  const isStaticAsset = url.origin === self.location.origin && url.pathname.startsWith("/static/v2/");
+  const isStaticAsset =
+    url.origin === self.location.origin &&
+    url.pathname.startsWith("/static/v2/");
   if (event.request.method !== "GET" || !isStaticAsset) return;
 
   event.respondWith(
@@ -24,7 +32,9 @@ self.addEventListener("fetch", (event) => {
         cached ||
         fetch(event.request).then((response) => {
           const copy = response.clone();
-          caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy));
+          caches
+            .open(CACHE_NAME)
+            .then((cache) => cache.put(event.request, copy));
           return response;
         }),
     ),
