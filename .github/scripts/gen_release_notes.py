@@ -12,9 +12,7 @@ Usage: python3 gen_release_notes.py <context.json>
 Requires GITHUB_REPOSITORY in the environment (set automatically by Actions).
 """
 
-import json
-import os
-import sys
+import json, os, sys
 
 # Keep in sync with pyproject.toml's [tool.git-cliff.git] commit_parsers order.
 CATEGORY_ORDER = [
