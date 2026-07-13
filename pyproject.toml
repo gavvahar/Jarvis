@@ -288,4 +288,20 @@ commands = [
 skip_install = true
 deps = []
 allowlist_externals = ["tox"]
-commands = [["tox", "-e", "format"], ["tox", "-e", "github"], ["tox", "-e", "actionlint"]]
+commands = [
+  [
+    "tox",
+    "-e",
+    "format",
+  ],
+  [
+    "tox",
+    "-e",
+    "github",
+  ],
+  [
+    "tox",
+    "-e",
+    "actionlint",
+  ],
+]
