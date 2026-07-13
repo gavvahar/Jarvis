@@ -143,6 +143,11 @@ deps = ["ruff", "ty"]
 allowlist_externals = ["npx"]
 commands = [
   [
+    "python3",
+    "python/scripts/combined_imports_check.py",
+    "--fix",
+  ],
+  [
     "ruff",
     "format",
     "--no-cache",
