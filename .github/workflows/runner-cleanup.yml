@@ -12,3 +12,8 @@ jobs:
     steps:
       - name: Prune Docker data untouched in the last 7 days
         run: docker system prune -af --filter "until=168h"
+
+      - name: TEST — deliberate actionlint break, revert after testing issue-to-project flow
+        run: |
+          STATUS="all clear"
+          echo Cleanup $STATUS
