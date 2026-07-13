@@ -2,8 +2,10 @@ name: Auto Merge Staging to Main
 
 on:
   schedule:
-    - cron: "0 5 * * 1,3,5" # Mon/Wed/Fri 12am EST (UTC-5, Nov–Mar)
-    - cron: "0 4 * * 1,3,5" # Mon/Wed/Fri 12am EDT (UTC-4, Mar–Nov)
+    # Mon/Wed/Fri 12am EDT (UTC-4). GitHub Actions cron has no DST awareness,
+    # so during EST (Nov-Mar) this runs at 11pm EST instead of 12am - a ~4-month,
+    # 1-hour drift that's preferable to firing twice year-round.
+    - cron: "0 4 * * 1,3,5"
   workflow_dispatch: # Allow manual trigger
 
 jobs:
