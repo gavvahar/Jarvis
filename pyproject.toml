@@ -115,6 +115,11 @@ skip_install = true
 deps = []
 commands = [["python3", "python/scripts/no_classes_check.py"]]
 
+[tool.tox.env."combined-imports-check"]
+skip_install = true
+deps = []
+commands = [["python3", "python/scripts/combined_imports_check.py"]]
+
 [tool.tox.env.actionlint]
 skip_install = true
 allowlist_externals = ["bash"]
@@ -228,7 +233,7 @@ commands = [
 
 # --- Aggregate (CI) ---------------------------------------------------------
 
-# Runs the full CI chain: no-classes-check → lint → txt-lint → prettier → tests → actionlint
+# Runs the full CI chain: no-classes-check → combined-imports-check → lint → txt-lint → prettier → tests → actionlint
 [tool.tox.env.github]
 skip_install = true
 deps = []
@@ -238,6 +243,11 @@ commands = [
     "tox",
     "-e",
     "no-classes-check",
+  ],
+  [
+    "tox",
+    "-e",
+    "combined-imports-check",
   ],
   [
     "tox",
