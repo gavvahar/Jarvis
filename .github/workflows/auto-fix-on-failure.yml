@@ -62,9 +62,83 @@ jobs:
         uses: actions/github-script@v7
         env:
           FORMAT_OUTCOME: ${{ steps.format.outcome }}
+          GH_PAT: ${{ secrets.GH_PAT }}
         with:
           script: |
             const fs = require('fs');
+
+            // GitHub issue bodies cap out at 65536 characters; a verbose `tox -e
+            // github` run (e.g. `pytest -v` over 650+ tests) can blow past that on
+            // its own. Keep the head and tail — the failure is almost always at the
+            // end, but the head shows which tox env was running — and drop the
+            // middle instead of failing the whole issue-creation call.
+            function truncateOutput(text, maxChars = 50000) {
+              if (text.length <= maxChars) return text;
+              const half = Math.floor(maxChars / 2);
+              return `${text.slice(0, half)}\n\n... [truncated ${text.length - maxChars} characters] ...\n\n${text.slice(-half)}`;
+            }
+
+            // GITHUB_TOKEN can't access user-level ProjectV2 boards, so this needs
+            // its own octokit authenticated with a PAT (same as pr-description.yml's
+            // "Add PR to project" step) rather than the default `github` client.
+            async function addIssueToProject(issueNodeId) {
+              const { getOctokit } = require('@actions/github');
+              const octokit = getOctokit(process.env.GH_PAT);
+              try {
+                const owner = context.repo.owner;
+                const { user } = await octokit.graphql(
+                  `query($owner: String!, $number: Int!) {
+                    user(login: $owner) { projectV2(number: $number) { id } }
+                  }`,
+                  { owner, number: 9 }
+                );
+                const projectId = user.projectV2.id;
+
+                const { addProjectV2ItemById } = await octokit.graphql(
+                  `mutation($pid: ID!, $cid: ID!) {
+                    addProjectV2ItemById(input: {projectId: $pid, contentId: $cid}) {
+                      item { id }
+                    }
+                  }`,
+                  { pid: projectId, cid: issueNodeId }
+                );
+                const itemId = addProjectV2ItemById.item.id;
+
+                const { node } = await octokit.graphql(
+                  `query($pid: ID!) {
+                    node(id: $pid) {
+                      ... on ProjectV2 {
+                        fields(first: 20) {
+                          nodes {
+                            ... on ProjectV2SingleSelectField { id name options { id name } }
+                          }
+                        }
+                      }
+                    }
+                  }`,
+                  { pid: projectId }
+                );
+
+                const PREFERRED = ['todo', 'backlog', 'in progress'];
+                const statusField = node.fields.nodes.find(f => (f.name || '').toLowerCase() === 'status');
+                if (!statusField) return;
+                const opts = Object.fromEntries((statusField.options || []).map(o => [o.name.toLowerCase(), o]));
+                const bestOption = PREFERRED.map(p => opts[p]).find(Boolean) || statusField.options[0];
+                if (!bestOption) return;
+
+                await octokit.graphql(
+                  `mutation($pid: ID!, $iid: ID!, $fid: ID!, $oid: String!) {
+                    updateProjectV2ItemFieldValue(input: {
+                      projectId: $pid, itemId: $iid, fieldId: $fid,
+                      value: { singleSelectOptionId: $oid }
+                    }) { projectV2Item { id } }
+                  }`,
+                  { pid: projectId, iid: itemId, fid: statusField.id, oid: bestOption.id }
+                );
+              } catch (e) {
+                console.log(`Could not add issue to project: ${e.message}`);
+              }
+            }
             const branch = context.payload.workflow_run.head_branch;
             const fullSha = context.payload.workflow_run.head_sha;
             const shortSha = fullSha.substring(0, 7);
@@ -83,7 +157,7 @@ jobs:
 
             let body;
             if (process.env.FORMAT_OUTCOME === 'failure') {
-              const output = fs.readFileSync('/tmp/format_output.txt', 'utf8').trim();
+              const output = truncateOutput(fs.readFileSync('/tmp/format_output.txt', 'utf8').trim());
               body = [
                 '## CI Failure Report',
                 '',
@@ -101,7 +175,7 @@ jobs:
                 '```',
               ].join('\n');
             } else {
-              const output = fs.readFileSync('/tmp/verify_output.txt', 'utf8').trim();
+              const output = truncateOutput(fs.readFileSync('/tmp/verify_output.txt', 'utf8').trim());
               body = [
                 '## CI Failure Report',
                 '',
@@ -133,7 +207,7 @@ jobs:
               });
             } catch (e) {}
 
-            await github.rest.issues.create({
+            const created = await github.rest.issues.create({
               owner: context.repo.owner,
               repo: context.repo.repo,
               title: `CI: tests and auto-format failed on \`${branch}\` (${shortSha})`,
@@ -141,11 +215,76 @@ jobs:
               assignees: actor ? [actor] : [],
               labels: ['ci-failure'],
             });
+            await addIssueToProject(created.data.node_id);
 
       - name: Report non-format CI failures
         uses: actions/github-script@v7
+        env:
+          GH_PAT: ${{ secrets.GH_PAT }}
         with:
           script: |
+            // GITHUB_TOKEN can't access user-level ProjectV2 boards, so this needs
+            // its own octokit authenticated with a PAT (same as pr-description.yml's
+            // "Add PR to project" step) rather than the default `github` client.
+            async function addIssueToProject(issueNodeId) {
+              const { getOctokit } = require('@actions/github');
+              const octokit = getOctokit(process.env.GH_PAT);
+              try {
+                const owner = context.repo.owner;
+                const { user } = await octokit.graphql(
+                  `query($owner: String!, $number: Int!) {
+                    user(login: $owner) { projectV2(number: $number) { id } }
+                  }`,
+                  { owner, number: 9 }
+                );
+                const projectId = user.projectV2.id;
+
+                const { addProjectV2ItemById } = await octokit.graphql(
+                  `mutation($pid: ID!, $cid: ID!) {
+                    addProjectV2ItemById(input: {projectId: $pid, contentId: $cid}) {
+                      item { id }
+                    }
+                  }`,
+                  { pid: projectId, cid: issueNodeId }
+                );
+                const itemId = addProjectV2ItemById.item.id;
+
+                const { node } = await octokit.graphql(
+                  `query($pid: ID!) {
+                    node(id: $pid) {
+                      ... on ProjectV2 {
+                        fields(first: 20) {
+                          nodes {
+                            ... on ProjectV2SingleSelectField { id name options { id name } }
+                          }
+                        }
+                      }
+                    }
+                  }`,
+                  { pid: projectId }
+                );
+
+                const PREFERRED = ['todo', 'backlog', 'in progress'];
+                const statusField = node.fields.nodes.find(f => (f.name || '').toLowerCase() === 'status');
+                if (!statusField) return;
+                const opts = Object.fromEntries((statusField.options || []).map(o => [o.name.toLowerCase(), o]));
+                const bestOption = PREFERRED.map(p => opts[p]).find(Boolean) || statusField.options[0];
+                if (!bestOption) return;
+
+                await octokit.graphql(
+                  `mutation($pid: ID!, $iid: ID!, $fid: ID!, $oid: String!) {
+                    updateProjectV2ItemFieldValue(input: {
+                      projectId: $pid, itemId: $iid, fieldId: $fid,
+                      value: { singleSelectOptionId: $oid }
+                    }) { projectV2Item { id } }
+                  }`,
+                  { pid: projectId, iid: itemId, fid: statusField.id, oid: bestOption.id }
+                );
+              } catch (e) {
+                console.log(`Could not add issue to project: ${e.message}`);
+              }
+            }
+
             // 'quality' is the only job auto-format can fix; everything else needs a manual fix
             const autoFixable = new Set(['quality']);
 
@@ -196,7 +335,7 @@ jobs:
 
             const actor = context.payload.workflow_run.actor?.login;
             const jobNames = failed.map(j => j.name).join(', ');
-            await github.rest.issues.create({
+            const created = await github.rest.issues.create({
               owner: context.repo.owner,
               repo: context.repo.repo,
               title: `CI: ${jobNames} failed on \`${branch}\` (${shortSha})`,
@@ -204,6 +343,7 @@ jobs:
               assignees: actor ? [actor] : [],
               labels: ['ci-failure'],
             });
+            await addIssueToProject(created.data.node_id);
 
   auto-close:
     if: ${{ github.event.workflow_run.conclusion == 'success' }}
