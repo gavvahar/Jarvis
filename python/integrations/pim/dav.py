@@ -1,8 +1,5 @@
-import re
-import urllib.parse
-import xml.etree.ElementTree as ET
+import re, urllib.parse, xml.etree.ElementTree as ET, httpx
 
-import httpx
 
 # ─── CALENDAR & CONTACTS (CALDAV / CARDDAV) ─────────────────────────────────
 _DAV_NS = {
