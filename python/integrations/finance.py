@@ -1,6 +1,5 @@
-import asyncio, datetime
+import asyncio, datetime, plaid
 
-import plaid
 from plaid.api import plaid_api
 from plaid.model.accounts_get_request import AccountsGetRequest
 from plaid.model.country_code import CountryCode

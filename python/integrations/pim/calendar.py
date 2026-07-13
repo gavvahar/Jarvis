@@ -1,6 +1,4 @@
-import datetime
-import re
-import uuid
+import datetime, re, uuid
 
 from integrations.pim.dav import (
     _DAV_NS,
