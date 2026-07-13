@@ -388,6 +388,18 @@ async def index(request: Request):
     return templates.TemplateResponse(request, "index.html")
 
 
+@fast_app.get("/manifest.json")
+async def pwa_manifest():
+    return FileResponse("static/manifest.json", media_type="application/manifest+json")
+
+
+@fast_app.get("/sw.js")
+async def service_worker():
+    # Served from the root path (not /static/) so its default scope covers
+    # the whole origin instead of just /static/.
+    return FileResponse("static/sw.js", media_type="text/javascript")
+
+
 @fast_app.get("/api/status")
 async def api_status(request: Request):
     user_id = _require_user(request)
