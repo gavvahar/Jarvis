@@ -100,6 +100,7 @@
       if (on) log.scrollTop = log.scrollHeight;
     },
     isOpen: () => open,
+    setOpen, // lets Silent Mode (core.js) pop the panel open programmatically
   };
 
   form.addEventListener("submit", (e) => {
