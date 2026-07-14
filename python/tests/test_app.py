@@ -1757,7 +1757,7 @@ class TestAuthSession:
     def test_get_user_from_environ_parses_cookie(self):
         auth.init_signer("test-secret-key")
         token = auth._sign_session("user-789")
-        environ = {"headers": [(b"cookie", f"other=1; jarvis_session={token}".encode())]}
+        environ = {"HTTP_COOKIE": f"other=1; jarvis_session={token}"}
         with patch.object(auth, "_oidc_config", {"issuer": "x"}):
             assert auth._get_user_from_environ(environ) == "user-789"
 
