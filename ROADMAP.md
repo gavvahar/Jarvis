@@ -179,6 +179,7 @@ Give Jarvis eyes — know who is home, where they are, what they're doing, and f
 - [x] **Activity recognition** — classify what someone is doing (cooking, sleeping, exercising, watching TV) and use it to shape Jarvis behavior (e.g. don't interrupt during sleep)
 - [x] **Security alerts** — detect unfamiliar faces, motion during night/away mode, or unexpected presence; push notification + optional camera snapshot
 - [x] **Away mode** — automatically detect when the house is empty and arm alerts; disarm when a known face returns
+- [ ] **Sentry Mode** — explicit arm/disarm/auto control layered on top of the existing presence-based away/night detection; populate the already-present but unused `security_events.snapshot` column at trigger time; add motion-only detection (frame differencing) so a camera with no matched face still fires an event; wire alerts into the planned push-notification layer (Phase 4 build order, item 3) once it ships
 - [x] **Privacy controls** — per-camera opt-in, all inference runs locally (no video leaves the network), configurable retention window
 
 ---
