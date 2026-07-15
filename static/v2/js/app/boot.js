@@ -9,6 +9,8 @@ import {
   hideSetup,
   applyMode,
   startRecognition,
+  isSilentMode,
+  setSilentMode,
 } from "./core.js";
 import { setHaStatus, haTokenInput } from "./ha.js";
 import {
@@ -103,6 +105,8 @@ fetch("/api/status")
     else showSetup();
     applyMode();
     startRecognition();
+    // reapply Silent Mode's wake + chat-open side effects if it was left on
+    if (isSilentMode()) setSilentMode(true);
   })
   .catch(() => {
     showSetup();

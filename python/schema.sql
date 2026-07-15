@@ -179,6 +179,27 @@ CREATE TABLE IF NOT EXISTS security_events (
     detected_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS sentry_state (
+    id          BIGINT PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+    mode        TEXT NOT NULL DEFAULT 'auto',
+    updated_by  TEXT REFERENCES user_configs(user_id) ON DELETE SET NULL,
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+INSERT INTO sentry_state (id, mode) VALUES (1, 'auto') ON CONFLICT (id) DO NOTHING;
+
+CREATE TABLE IF NOT EXISTS push_subscriptions (
+    id          BIGSERIAL PRIMARY KEY,
+    user_id     TEXT NOT NULL REFERENCES user_configs(user_id) ON DELETE CASCADE,
+    endpoint    TEXT NOT NULL,
+    p256dh      TEXT NOT NULL,
+    auth        TEXT NOT NULL,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (user_id, endpoint)
+);
+
+CREATE INDEX IF NOT EXISTS idx_push_subscriptions_user ON push_subscriptions (user_id);
+
 CREATE TABLE IF NOT EXISTS plaid_items (
     id               BIGSERIAL PRIMARY KEY,
     user_id          TEXT NOT NULL REFERENCES user_configs(user_id) ON DELETE CASCADE,
