@@ -21,6 +21,7 @@ insightface>=0.7.3
 onnxruntime>=1.18.0
 Pillow>=10.0.0
 plaid-python>=27.0.0
+pywebpush>=2.0.0
 ruff
 nodeenv
 tox
