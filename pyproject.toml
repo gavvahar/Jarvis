@@ -71,7 +71,7 @@ testpaths = ["python/tests"]
 
 # Default envs run when you type `tox` with no arguments
 [tool.tox]
-env_list = ["lint", "txt-lint", "format", "prettier", "toml-lint"]
+env_list = ["lint", "txt-lint", "format", "prettier", "toml-lint", "actionlint"]
 work_dir = "/tmp/.tox"
 
 # Shared base config inherited by all envs
@@ -115,6 +115,26 @@ skip_install = true
 deps = []
 commands = [["python3", "python/scripts/no_classes_check.py"]]
 
+[tool.tox.env."combined-imports-check"]
+skip_install = true
+deps = []
+commands = [["python3", "python/scripts/combined_imports_check.py"]]
+
+[tool.tox.env.actionlint]
+skip_install = true
+allowlist_externals = ["bash"]
+commands = [
+  [
+    "bash",
+    "-c",
+    '''
+    VER=$(curl -sf https://api.github.com/repos/rhysd/actionlint/releases/latest | python3 -c "import sys,json; print(json.load(sys.stdin)['tag_name'].lstrip('v'))")
+    curl -fsSL "https://github.com/rhysd/actionlint/releases/download/v${VER}/actionlint_${VER}_linux_amd64.tar.gz" | tar -xz -C /tmp actionlint
+    /tmp/actionlint
+    ''',
+  ],
+]
+
 # --- Formatting -------------------------------------------------------------
 
 [tool.tox.env.format]
@@ -122,6 +142,11 @@ skip_install = true
 deps = ["ruff", "ty"]
 allowlist_externals = ["npx"]
 commands = [
+  [
+    "python3",
+    "python/scripts/combined_imports_check.py",
+    "--fix",
+  ],
   [
     "ruff",
     "format",
@@ -213,7 +238,7 @@ commands = [
 
 # --- Aggregate (CI) ---------------------------------------------------------
 
-# Runs the full CI chain: no-classes-check → lint → txt-lint → prettier → tests
+# Runs the full CI chain: no-classes-check → combined-imports-check → lint → txt-lint → prettier → tests
 [tool.tox.env.github]
 skip_install = true
 deps = []
@@ -223,6 +248,11 @@ commands = [
     "tox",
     "-e",
     "no-classes-check",
+  ],
+  [
+    "tox",
+    "-e",
+    "combined-imports-check",
   ],
   [
     "tox",
@@ -251,9 +281,27 @@ commands = [
   ],
 ]
 
-# Runs format then the full github chain
+# Runs format then the full github chain, plus actionlint (kept out of the
+# github chain so auto-fix-on-failure.yml's local re-verification doesn't
+# re-report a failure the "actionlint" CI job already reports on its own).
 [tool.tox.env.all]
 skip_install = true
 deps = []
 allowlist_externals = ["tox"]
-commands = [["tox", "-e", "format"], ["tox", "-e", "github"]]
+commands = [
+  [
+    "tox",
+    "-e",
+    "format",
+  ],
+  [
+    "tox",
+    "-e",
+    "github",
+  ],
+  [
+    "tox",
+    "-e",
+    "actionlint",
+  ],
+]
