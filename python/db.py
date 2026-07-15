@@ -599,10 +599,7 @@ async def _db_get_recent_security_events(user_id: str, hours: float = 24) -> lis
             user_id,
             datetime.timedelta(hours=hours),
         )
-    return [
-        {"id": r["id"], "event_type": r["event_type"], "room": r["room"], "detected_at": r["detected_at"].isoformat(), "has_snapshot": r["has_snapshot"]}
-        for r in rows
-    ]
+    return [{"id": r["id"], "event_type": r["event_type"], "room": r["room"], "detected_at": r["detected_at"].isoformat(), "has_snapshot": r["has_snapshot"]} for r in rows]
 
 
 async def _db_get_security_event_snapshot(user_id: str, event_id: int) -> bytes | None:

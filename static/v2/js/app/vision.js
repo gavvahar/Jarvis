@@ -125,7 +125,8 @@ async function loadSecurityEvents() {
     }
     visionSecurityEvents.innerHTML = events
       .map((e) => {
-        const label = SECURITY_EVENT_LABELS[e.event_type] || e.event_type.toUpperCase();
+        const label =
+          SECURITY_EVENT_LABELS[e.event_type] || e.event_type.toUpperCase();
         const when = new Date(e.detected_at).toLocaleString();
         const thumb = e.has_snapshot
           ? `<img class="vision-event-thumb" src="/api/security-events/${e.id}/snapshot" loading="lazy" />`
@@ -253,7 +254,10 @@ socket.on("sentry_mode_changed", ({ mode }) => {
 });
 
 socket.on("security_alert", () => {
-  if (visionSettingsEl && !visionSettingsEl.classList.contains("setup-hidden")) {
+  if (
+    visionSettingsEl &&
+    !visionSettingsEl.classList.contains("setup-hidden")
+  ) {
     loadSecurityEvents();
   }
 });
