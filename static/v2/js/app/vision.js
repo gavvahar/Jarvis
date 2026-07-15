@@ -2,6 +2,7 @@
    VISION SETTINGS PANEL — cameras, presence, face enrollment
    =========================================================== */
 import { $, socket } from "./core.js";
+import { subscribePush } from "./pwa.js";
 
 const visionSettingsEl = $("vision-settings");
 const visionBtn = $("vision-btn");
@@ -13,6 +14,10 @@ const visionEnrollBtn = $("vision-enroll-btn");
 const visionEnrollClear = $("vision-enroll-clear-btn");
 const visionFaceFile = $("vision-face-file");
 const visionEnrollStatus = $("vision-enroll-status");
+const visionSentryButtons = document.querySelectorAll(".vision-sentry-btn");
+const visionEnablePushBtn = $("vision-enable-push-btn");
+const visionPushStatus = $("vision-push-status");
+const visionSecurityEvents = $("vision-security-events");
 
 async function loadCameras() {
   if (!visionCameraList) return;
@@ -71,12 +76,93 @@ async function loadPresence() {
   }
 }
 
+function setSentryModeUI(mode) {
+  visionSentryButtons.forEach((btn) => {
+    btn.classList.toggle("active", btn.dataset.mode === mode);
+  });
+}
+
+async function loadSentryMode() {
+  if (!visionSentryButtons.length) return;
+  try {
+    const r = await fetch("/api/sentry-mode");
+    const { mode } = await r.json();
+    setSentryModeUI(mode);
+  } catch {
+    /* leave buttons in their last-known state */
+  }
+}
+
+visionSentryButtons.forEach((btn) => {
+  btn.addEventListener("click", async () => {
+    const mode = btn.dataset.mode;
+    setSentryModeUI(mode);
+    try {
+      await fetch("/api/sentry-mode", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mode }),
+      });
+    } catch {
+      loadSentryMode();
+    }
+  });
+});
+
+const SECURITY_EVENT_LABELS = {
+  unknown_person: "UNKNOWN PERSON",
+  motion: "MOTION",
+};
+
+async function loadSecurityEvents() {
+  if (!visionSecurityEvents) return;
+  try {
+    const r = await fetch("/api/security-events?hours=24");
+    const { events } = await r.json();
+    if (!events || !events.length) {
+      visionSecurityEvents.innerHTML = "<em>No events in the last 24h.</em>";
+      return;
+    }
+    visionSecurityEvents.innerHTML = events
+      .map((e) => {
+        const label = SECURITY_EVENT_LABELS[e.event_type] || e.event_type.toUpperCase();
+        const when = new Date(e.detected_at).toLocaleString();
+        const thumb = e.has_snapshot
+          ? `<img class="vision-event-thumb" src="/api/security-events/${e.id}/snapshot" loading="lazy" />`
+          : `<div class="vision-event-thumb"></div>`;
+        return `<div class="vision-event-row">
+          ${thumb}
+          <div class="vision-event-info">
+            <span class="vision-event-type">${label}</span>
+            <span class="vision-event-meta">${when}${e.room ? " · " + e.room : ""}</span>
+          </div>
+        </div>`;
+      })
+      .join("");
+  } catch {
+    visionSecurityEvents.innerHTML = "<em>Could not load events.</em>";
+  }
+}
+
+if (visionEnablePushBtn) {
+  visionEnablePushBtn.addEventListener("click", async () => {
+    if (visionPushStatus) visionPushStatus.textContent = "Requesting…";
+    const result = await subscribePush();
+    if (visionPushStatus)
+      visionPushStatus.textContent = result.ok
+        ? "Push notifications enabled."
+        : result.error;
+  });
+}
+
 if (visionBtn) {
   visionBtn.addEventListener("click", () => {
     if (visionSettingsEl) {
       visionSettingsEl.classList.remove("setup-hidden");
       loadPresence();
       loadCameras();
+      loadSentryMode();
+      loadSecurityEvents();
     }
   });
 }
@@ -160,4 +246,14 @@ socket.on("presence_update", ({ name, is_home, room }) => {
   const where = room ? ` (${room})` : "";
   console.log(`[presence] ${name} ${action}${where}`);
   loadPresence();
+});
+
+socket.on("sentry_mode_changed", ({ mode }) => {
+  setSentryModeUI(mode);
+});
+
+socket.on("security_alert", () => {
+  if (visionSettingsEl && !visionSettingsEl.classList.contains("setup-hidden")) {
+    loadSecurityEvents();
+  }
 });

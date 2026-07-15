@@ -6,7 +6,7 @@ Webhook auth tests use the `api_client` fixture from conftest.py which
 stubs out the database so no running PostgreSQL is required.
 """
 
-import asyncio, datetime, app as jarvis, auth, db as db_mod, integrations.automation as automation_mod, integrations.finance as finance_mod, integrations.vision as vision_mod, integrations.tesla as tesla_mod
+import asyncio, datetime, app as jarvis, auth, db as db_mod, integrations.automation as automation_mod, integrations.finance as finance_mod, integrations.vision as vision_mod, integrations.tesla as tesla_mod, integrations.sentry as sentry_mod, integrations.push as push_mod
 from unittest.mock import AsyncMock, MagicMock, patch
 from fastapi import HTTPException
 from app import (
@@ -3707,11 +3707,57 @@ class TestDbCameras:
         conn.execute.assert_awaited_once()
 
     def test_get_recent_security_events(self):
-        rows = [{"event_type": "unknown_person", "room": "Kitchen", "detected_at": datetime.datetime(2026, 7, 1, 8, 0)}]
+        rows = [{"id": 7, "event_type": "unknown_person", "room": "Kitchen", "detected_at": datetime.datetime(2026, 7, 1, 8, 0), "has_snapshot": True}]
         pool, conn = _mock_asyncpg_pool(fetch=rows)
         with patch("db._pool", return_value=pool):
             result = asyncio.run(db_mod._db_get_recent_security_events("u1"))
         assert result[0]["detected_at"] == "2026-07-01T08:00:00"
+        assert result[0]["id"] == 7
+        assert result[0]["has_snapshot"] is True
+
+    def test_get_security_event_snapshot(self):
+        pool, conn = _mock_asyncpg_pool(fetchval=b"jpegbytes")
+        with patch("db._pool", return_value=pool):
+            result = asyncio.run(db_mod._db_get_security_event_snapshot("u1", 7))
+        assert result == b"jpegbytes"
+
+
+class TestDbSentryMode:
+    def test_get_sentry_mode_defaults_to_auto(self):
+        pool, conn = _mock_asyncpg_pool(fetchval=None)
+        with patch("db._pool", return_value=pool):
+            result = asyncio.run(db_mod._db_get_sentry_mode())
+        assert result == "auto"
+
+    def test_get_sentry_mode_returns_stored_value(self):
+        pool, conn = _mock_asyncpg_pool(fetchval="armed")
+        with patch("db._pool", return_value=pool):
+            result = asyncio.run(db_mod._db_get_sentry_mode())
+        assert result == "armed"
+
+    def test_set_sentry_mode_updates_row(self):
+        pool, conn = _mock_asyncpg_pool()
+        with patch("db._pool", return_value=pool):
+            asyncio.run(db_mod._db_set_sentry_mode("disarmed", "u1"))
+        conn.execute.assert_awaited_once()
+        assert conn.execute.call_args.args[1] == "disarmed"
+        assert conn.execute.call_args.args[2] == "u1"
+
+
+class TestDbPushSubscriptions:
+    def test_add_and_list_push_subscription(self):
+        pool, conn = _mock_asyncpg_pool(fetch=[{"endpoint": "https://push.example/1", "p256dh": "key", "auth": "secret"}])
+        with patch("db._pool", return_value=pool):
+            asyncio.run(db_mod._db_add_push_subscription("u1", "https://push.example/1", "key", "secret"))
+            result = asyncio.run(db_mod._db_get_push_subscriptions("u1"))
+        conn.execute.assert_awaited_once()
+        assert result == [{"endpoint": "https://push.example/1", "p256dh": "key", "auth": "secret"}]
+
+    def test_remove_push_subscription(self):
+        pool, conn = _mock_asyncpg_pool()
+        with patch("db._pool", return_value=pool):
+            asyncio.run(db_mod._db_remove_push_subscription("u1", "https://push.example/1"))
+        conn.execute.assert_awaited_once_with("DELETE FROM push_subscriptions WHERE user_id=$1 AND endpoint=$2", "u1", "https://push.example/1")
 
 
 class TestInferActivity:
@@ -5382,6 +5428,7 @@ class TestVisionLoop:
             patch.object(vision_mod, "_VISION_OK", True),
             patch.object(vision_mod, "_pool", return_value=pool),
             patch.object(vision_mod, "_db_get_all_face_embeddings", new=AsyncMock(return_value={})),
+            patch.object(vision_mod, "_db_get_sentry_mode", new=AsyncMock(return_value="auto")),
             patch.object(vision_mod, "_get_ha_camera_snapshot", new=AsyncMock(return_value=b"jpeg")),
             patch.object(vision_mod, "_identify_faces_in_image", return_value=[{"detected_user_id": "u2", "name": "Bob", "confidence": 0.9}]),
             patch.object(vision_mod, "_db_record_detection", new=AsyncMock()),
@@ -5411,18 +5458,20 @@ class TestVisionLoop:
             patch.object(vision_mod, "_VISION_OK", True),
             patch.object(vision_mod, "_pool", return_value=pool),
             patch.object(vision_mod, "_db_get_all_face_embeddings", new=AsyncMock(return_value={})),
+            patch.object(vision_mod, "_db_get_sentry_mode", new=AsyncMock(return_value="auto")),
             patch.object(vision_mod, "_capture_rtsp_frame", return_value=b"jpeg"),
             patch.object(vision_mod, "_identify_faces_in_image", return_value=[{"detected_user_id": None, "name": "unknown", "confidence": 0.0}]),
             patch.object(vision_mod, "_db_record_detection", new=AsyncMock()),
             patch.object(vision_mod, "_db_record_security_event", new=AsyncMock()) as mock_security,
             patch.object(vision_mod, "_db_get_who_is_home", new=AsyncMock(return_value=[])),
+            patch.object(vision_mod, "_send_push", new=AsyncMock()),
         ):
             try:
                 asyncio.run(vision_mod._vision_loop())
                 raise AssertionError("expected loop to stop")
             except RuntimeError:
                 pass
-        mock_security.assert_awaited_once_with("u1", 1, "unknown_person", "Entry")
+        mock_security.assert_awaited_once_with("u1", 1, "unknown_person", "Entry", b"jpeg")
         sio.emit.assert_awaited_once()
         assert sio.emit.call_args.args[0] == "security_alert"
 
@@ -5442,6 +5491,7 @@ class TestVisionLoop:
             patch.object(vision_mod, "_VISION_OK", True),
             patch.object(vision_mod, "_pool", return_value=pool),
             patch.object(vision_mod, "_db_get_all_face_embeddings", new=AsyncMock(return_value={})),
+            patch.object(vision_mod, "_db_get_sentry_mode", new=AsyncMock(return_value="auto")),
             patch.object(vision_mod, "_get_ha_camera_snapshot", new=AsyncMock(side_effect=[None, b"jpeg"])),
             patch.object(vision_mod, "_identify_faces_in_image", return_value=[]),
             patch.object(vision_mod, "_db_get_who_is_home", new=AsyncMock(return_value=[])),
@@ -5465,6 +5515,7 @@ class TestVisionLoop:
             patch.object(vision_mod, "_VISION_OK", True),
             patch.object(vision_mod, "_pool", return_value=pool),
             patch.object(vision_mod, "_db_get_all_face_embeddings", new=AsyncMock(return_value={})),
+            patch.object(vision_mod, "_db_get_sentry_mode", new=AsyncMock(return_value="auto")),
             patch.object(vision_mod, "_db_update_presence", new=AsyncMock()) as mock_presence,
             patch.object(vision_mod, "_db_get_who_is_home", new=AsyncMock(return_value=[])),
         ):
@@ -5476,6 +5527,95 @@ class TestVisionLoop:
         mock_presence.assert_awaited_once_with("u3", False)
         sio.emit.assert_awaited_once()
         assert sio.emit.call_args.args[0] == "presence_update"
+
+    def test_motion_triggers_alert_when_armed(self):
+        cam_rows = [{"id": 1, "user_id": "u1", "name": "Front Door", "room": "Entry", "source_type": "ha", "source": "camera.front_door", "ha_url": "http://ha.local", "ha_token": "tok"}]
+        pool, conn = _mock_asyncpg_pool()
+        conn.fetch = AsyncMock(side_effect=[cam_rows, []])
+        conn.fetchval = AsyncMock(return_value=0)
+        sio = MagicMock()
+        sio.emit = AsyncMock()
+        vision_mod.init(sio, lambda uid: ["sid1"])
+        with (
+            patch("integrations.vision.asyncio.sleep", new=self._fake_sleep(2)),
+            patch.object(vision_mod, "_db_ready", return_value=True),
+            patch.object(vision_mod, "_VISION_OK", True),
+            patch.object(vision_mod, "_pool", return_value=pool),
+            patch.object(vision_mod, "_db_get_all_face_embeddings", new=AsyncMock(return_value={})),
+            patch.object(vision_mod, "_db_get_sentry_mode", new=AsyncMock(return_value="armed")),
+            patch.object(vision_mod, "_get_ha_camera_snapshot", new=AsyncMock(return_value=b"jpeg")),
+            patch.object(vision_mod, "_identify_faces_in_image", return_value=[]),
+            patch.object(vision_mod, "_frame_motion_score", return_value=99.0),
+            patch.object(vision_mod, "_db_record_security_event", new=AsyncMock()) as mock_security,
+            patch.object(vision_mod, "_db_get_who_is_home", new=AsyncMock(return_value=[])),
+            patch.object(vision_mod, "_send_push", new=AsyncMock()) as mock_push,
+        ):
+            try:
+                asyncio.run(vision_mod._vision_loop())
+                raise AssertionError("expected loop to stop")
+            except RuntimeError:
+                pass
+        mock_security.assert_awaited_once_with("u1", 1, "motion", "Entry", b"jpeg")
+        sio.emit.assert_awaited_once()
+        assert sio.emit.call_args.args[0] == "security_alert"
+        assert sio.emit.call_args.args[1]["event_type"] == "motion"
+        mock_push.assert_awaited_once()
+
+    def test_motion_below_threshold_is_ignored(self):
+        cam_rows = [{"id": 1, "user_id": "u1", "name": "Front Door", "room": "Entry", "source_type": "ha", "source": "camera.front_door", "ha_url": "http://ha.local", "ha_token": "tok"}]
+        pool, conn = _mock_asyncpg_pool()
+        conn.fetch = AsyncMock(side_effect=[cam_rows, []])
+        conn.fetchval = AsyncMock(return_value=0)
+        sio = MagicMock()
+        sio.emit = AsyncMock()
+        vision_mod.init(sio, lambda uid: ["sid1"])
+        with (
+            patch("integrations.vision.asyncio.sleep", new=self._fake_sleep(2)),
+            patch.object(vision_mod, "_db_ready", return_value=True),
+            patch.object(vision_mod, "_VISION_OK", True),
+            patch.object(vision_mod, "_pool", return_value=pool),
+            patch.object(vision_mod, "_db_get_all_face_embeddings", new=AsyncMock(return_value={})),
+            patch.object(vision_mod, "_db_get_sentry_mode", new=AsyncMock(return_value="armed")),
+            patch.object(vision_mod, "_get_ha_camera_snapshot", new=AsyncMock(return_value=b"jpeg")),
+            patch.object(vision_mod, "_identify_faces_in_image", return_value=[]),
+            patch.object(vision_mod, "_frame_motion_score", return_value=1.0),
+            patch.object(vision_mod, "_db_get_who_is_home", new=AsyncMock(return_value=[])),
+        ):
+            try:
+                asyncio.run(vision_mod._vision_loop())
+                raise AssertionError("expected loop to stop")
+            except RuntimeError:
+                pass
+        sio.emit.assert_not_awaited()
+
+    def test_disarmed_suppresses_unknown_person_alert(self):
+        cam_rows = [{"id": 1, "user_id": "u1", "name": "Front Door", "room": "Entry", "source_type": "rtsp", "source": "rtsp://x", "ha_url": "", "ha_token": ""}]
+        pool, conn = _mock_asyncpg_pool()
+        conn.fetch = AsyncMock(side_effect=[cam_rows, []])
+        conn.fetchval = AsyncMock(return_value=0)
+        sio = MagicMock()
+        sio.emit = AsyncMock()
+        vision_mod.init(sio, lambda uid: ["sid1"])
+        with (
+            patch("integrations.vision.asyncio.sleep", new=self._fake_sleep(2)),
+            patch.object(vision_mod, "_db_ready", return_value=True),
+            patch.object(vision_mod, "_VISION_OK", True),
+            patch.object(vision_mod, "_pool", return_value=pool),
+            patch.object(vision_mod, "_db_get_all_face_embeddings", new=AsyncMock(return_value={})),
+            patch.object(vision_mod, "_db_get_sentry_mode", new=AsyncMock(return_value="disarmed")),
+            patch.object(vision_mod, "_capture_rtsp_frame", return_value=b"jpeg"),
+            patch.object(vision_mod, "_identify_faces_in_image", return_value=[{"detected_user_id": None, "name": "unknown", "confidence": 0.0}]),
+            patch.object(vision_mod, "_db_record_detection", new=AsyncMock()),
+            patch.object(vision_mod, "_db_record_security_event", new=AsyncMock()) as mock_security,
+            patch.object(vision_mod, "_db_get_who_is_home", new=AsyncMock(return_value=[])),
+        ):
+            try:
+                asyncio.run(vision_mod._vision_loop())
+                raise AssertionError("expected loop to stop")
+            except RuntimeError:
+                pass
+        mock_security.assert_not_awaited()
+        sio.emit.assert_not_awaited()
 
     def test_skips_when_not_ready(self):
         with (
@@ -5503,3 +5643,91 @@ class TestVisionLoop:
                 raise AssertionError("expected loop to stop")
             except RuntimeError:
                 pass
+
+
+class TestSentryIntegration:
+    def test_get_sentry_tools_returns_both_tools(self):
+        names = {t["name"] for t in sentry_mod._get_sentry_tools("anthropic")}
+        assert names == {"set_sentry_mode", "get_sentry_mode"}
+
+    def test_set_sentry_mode_rejects_invalid_mode(self):
+        try:
+            asyncio.run(sentry_mod._set_sentry_mode("bogus", "u1"))
+            raise AssertionError("expected HTTPException")
+        except HTTPException as e:
+            assert e.status_code == 400
+
+    def test_set_sentry_mode_updates_and_broadcasts(self):
+        mock_broadcast = AsyncMock()
+        sentry_mod.init(mock_broadcast)
+        with patch.object(sentry_mod, "_db_set_sentry_mode", new=AsyncMock()) as mock_set:
+            result = asyncio.run(sentry_mod._set_sentry_mode("ARMED", "u1"))
+        assert result == {"ok": True, "mode": "armed"}
+        mock_set.assert_awaited_once_with("armed", "u1")
+        mock_broadcast.assert_awaited_once_with("sentry_mode_changed", {"mode": "armed", "updated_by": "u1"})
+
+    def test_execute_sentry_tool_set_mode_returns_speak_text(self):
+        sentry_mod.init(AsyncMock())
+        with patch.object(sentry_mod, "_db_set_sentry_mode", new=AsyncMock()):
+            result = asyncio.run(sentry_mod._execute_sentry_tool("set_sentry_mode", {"mode": "disarmed"}, "u1"))
+        assert "disarmed" in result.lower()
+
+    def test_execute_sentry_tool_set_mode_invalid(self):
+        result = asyncio.run(sentry_mod._execute_sentry_tool("set_sentry_mode", {"mode": "nope"}, "u1"))
+        assert "mode must be one of" in result
+
+    def test_execute_sentry_tool_get_mode(self):
+        with patch.object(sentry_mod, "_db_get_sentry_mode", new=AsyncMock(return_value="auto")):
+            result = asyncio.run(sentry_mod._execute_sentry_tool("get_sentry_mode", {}, "u1"))
+        assert "auto" in result
+
+    def test_execute_sentry_tool_unknown_name(self):
+        result = asyncio.run(sentry_mod._execute_sentry_tool("nonsense", {}, "u1"))
+        assert "Unknown sentry tool" in result
+
+
+class TestPushIntegration:
+    def test_send_push_noop_when_not_configured(self):
+        with (
+            patch.object(push_mod, "_PUSH_OK", False),
+            patch.object(push_mod, "_db_get_push_subscriptions", new=AsyncMock()) as mock_subs,
+        ):
+            asyncio.run(push_mod._send_push("u1", "Title", "Body"))
+        mock_subs.assert_not_awaited()
+
+    def test_send_push_noop_when_no_subscriptions(self):
+        with (
+            patch.object(push_mod, "_PUSH_OK", True),
+            patch.object(push_mod, "VAPID_PUBLIC_KEY", "pub"),
+            patch.object(push_mod, "VAPID_PRIVATE_KEY", "priv"),
+            patch.object(push_mod, "_db_get_push_subscriptions", new=AsyncMock(return_value=[])),
+            patch.object(push_mod, "_send_one") as mock_send_one,
+        ):
+            asyncio.run(push_mod._send_push("u1", "Title", "Body"))
+        mock_send_one.assert_not_called()
+
+    def test_send_push_prunes_expired_subscription(self):
+        subs = [{"endpoint": "https://push.example/1", "p256dh": "key", "auth": "secret"}]
+        with (
+            patch.object(push_mod, "_PUSH_OK", True),
+            patch.object(push_mod, "VAPID_PUBLIC_KEY", "pub"),
+            patch.object(push_mod, "VAPID_PRIVATE_KEY", "priv"),
+            patch.object(push_mod, "_db_get_push_subscriptions", new=AsyncMock(return_value=subs)),
+            patch.object(push_mod, "_send_one", return_value=410),
+            patch.object(push_mod, "_db_remove_push_subscription", new=AsyncMock()) as mock_remove,
+        ):
+            asyncio.run(push_mod._send_push("u1", "Title", "Body"))
+        mock_remove.assert_awaited_once_with("u1", "https://push.example/1")
+
+    def test_send_push_keeps_subscription_on_success(self):
+        subs = [{"endpoint": "https://push.example/1", "p256dh": "key", "auth": "secret"}]
+        with (
+            patch.object(push_mod, "_PUSH_OK", True),
+            patch.object(push_mod, "VAPID_PUBLIC_KEY", "pub"),
+            patch.object(push_mod, "VAPID_PRIVATE_KEY", "priv"),
+            patch.object(push_mod, "_db_get_push_subscriptions", new=AsyncMock(return_value=subs)),
+            patch.object(push_mod, "_send_one", return_value=None),
+            patch.object(push_mod, "_db_remove_push_subscription", new=AsyncMock()) as mock_remove,
+        ):
+            asyncio.run(push_mod._send_push("u1", "Title", "Body"))
+        mock_remove.assert_not_awaited()
