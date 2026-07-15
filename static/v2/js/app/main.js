@@ -19,4 +19,6 @@ import "./tesla.js";
 import "./spotify.js";
 import "./apple_music.js";
 import "./party.js";
+import "./silent.js";
 import "./boot.js";
+import "./pwa.js";

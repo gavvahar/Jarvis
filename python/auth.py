@@ -59,11 +59,10 @@ def _get_current_user(request: Request) -> str | None:
 
 
 def _get_user_from_environ(environ: dict) -> str | None:
-    """Extract and verify the session cookie from a Socket.IO ASGI environ."""
+    """Extract and verify the session cookie from a Socket.IO WSGI-style environ."""
     if _oidc_config is None:
         return "local"
-    headers = dict(environ.get("headers", []))
-    cookie_str = headers.get(b"cookie", b"").decode()
+    cookie_str = environ.get("HTTP_COOKIE", "")
     for part in cookie_str.split(";"):
         part = part.strip()
         if part.startswith("jarvis_session="):

@@ -35,6 +35,10 @@ Beyond conversation, J.A.R.V.I.S. can:
 - Transcribe meetings and generate structured notes
 - Read the latest news headlines by category
 
+See [ROADMAP.md](ROADMAP.md) for what's shipped, in progress, and planned next
+(mobile PWA push notifications, offline mode, and a tap-to-talk mic flow are
+next up).
+
 ## WHICH AI CAN HE USE?
 
 Each user picks their own on the setup screen after first login:
@@ -74,23 +78,31 @@ Required variables:
 
 Optional:
 
-| Variable                | What it is                                                                  |
-| ----------------------- | --------------------------------------------------------------------------- |
-| `OIDC_DISCOVERY_URL`    | Override the OIDC discovery URL if it doesn't follow the Authentik pattern  |
-| `OIDC_ADMIN_GROUP`      | Authentik group whose members get the admin role (default: `jarvis-admins`) |
-| `MQTT_BROKER`           | Hostname/IP of your Zigbee2MQTT MQTT broker (enables Zigbee control)        |
-| `MQTT_PORT`             | MQTT broker port (default: `1883`)                                          |
-| `MQTT_USER`             | MQTT username (optional)                                                    |
-| `MQTT_PASSWORD`         | MQTT password (optional)                                                    |
-| `Z2M_BASE_TOPIC`        | Zigbee2MQTT base topic (default: `zigbee2mqtt`)                             |
-| `SNAPCAST_URL`          | Snapcast server JSON-RPC URL, e.g. `http://192.168.1.100:1780`              |
-| `PLAID_CLIENT_ID`       | Plaid client ID (enables the FINANCE panel)                                 |
-| `PLAID_SECRET`          | Plaid secret matching `PLAID_ENV`                                           |
-| `PLAID_ENV`             | `sandbox` (default, no real bank needed) or `production`                    |
-| `FINANCE_POLL_INTERVAL` | Seconds between background transaction syncs (default: `14400`, 4h)         |
-| `VISION_POLL_INTERVAL`  | Seconds between camera presence checks (default: `30`)                      |
-| `VISION_AWAY_TIMEOUT`   | Seconds without a detection before someone is marked away (default: `1800`) |
-| `VISION_FACE_THRESHOLD` | Face-match distance threshold, lower = stricter (default: `0.4`)            |
+| Variable                  | What it is                                                                                           |
+| ------------------------- | ---------------------------------------------------------------------------------------------------- |
+| `OIDC_DISCOVERY_URL`      | Override the OIDC discovery URL if it doesn't follow the Authentik pattern                           |
+| `OIDC_ADMIN_GROUP`        | Authentik group whose members get the admin role (default: `jarvis-admins`)                          |
+| `MQTT_BROKER`             | Hostname/IP of your Zigbee2MQTT MQTT broker (enables Zigbee control)                                 |
+| `MQTT_PORT`               | MQTT broker port (default: `1883`)                                                                   |
+| `MQTT_USER`               | MQTT username (optional)                                                                             |
+| `MQTT_PASSWORD`           | MQTT password (optional)                                                                             |
+| `Z2M_BASE_TOPIC`          | Zigbee2MQTT base topic (default: `zigbee2mqtt`)                                                      |
+| `SNAPCAST_URL`            | Snapcast server JSON-RPC URL, e.g. `http://192.168.1.100:1780`                                       |
+| `PLAID_CLIENT_ID`         | Plaid client ID (enables the FINANCE panel)                                                          |
+| `PLAID_SECRET`            | Plaid secret matching `PLAID_ENV`                                                                    |
+| `PLAID_ENV`               | `sandbox` (default, no real bank needed) or `production`                                             |
+| `FINANCE_POLL_INTERVAL`   | Seconds between background transaction syncs (default: `14400`, 4h)                                  |
+| `VISION_POLL_INTERVAL`    | Seconds between camera presence checks (default: `30`)                                               |
+| `VISION_AWAY_TIMEOUT`     | Seconds without a detection before someone is marked away (default: `1800`)                          |
+| `VISION_FACE_THRESHOLD`   | Face-match distance threshold, lower = stricter (default: `0.4`)                                     |
+| `VISION_MOTION_THRESHOLD` | Mean-pixel-diff threshold for Sentry Mode motion detection, lower = more sensitive (default: `15.0`) |
+| `VAPID_PUBLIC_KEY`        | Web Push public key (enables push notifications for Sentry Mode alerts)                              |
+| `VAPID_PRIVATE_KEY`       | Web Push private key matching `VAPID_PUBLIC_KEY`                                                     |
+| `VAPID_SUBJECT`           | Contact URI for Web Push, e.g. `mailto:you@example.com` (default: `mailto:admin@example.com`)        |
+
+Generate a VAPID key pair once with `vapid --gen` (installed alongside
+`pywebpush`), then copy `applicationServerKey`/`privateKey` into
+`VAPID_PUBLIC_KEY`/`VAPID_PRIVATE_KEY`.
 
 **Step 2 — Set up Authentik.** In your Authentik admin panel:
 
@@ -459,11 +471,17 @@ Once set up:
 - "Any security events today?"
 - "Add a camera for the backyard."
 - "Turn on privacy mode for the office camera." _(pauses detection for that camera)_
+- "Arm Sentry Mode." / "Disarm Sentry Mode." / "Put Sentry Mode back on auto."
 
 Cameras are polled every 30 seconds by default (`VISION_POLL_INTERVAL`); a
 household member is marked away after no detection for 30 minutes
-(`VISION_AWAY_TIMEOUT`). Unrecognized faces and motion while everyone's away
-are logged as security events.
+(`VISION_AWAY_TIMEOUT`). Unrecognized faces and motion (frame-difference
+detection, threshold `VISION_MOTION_THRESHOLD`) are logged as security events
+with a snapshot whenever Sentry Mode is heightened — which happens
+automatically while everyone's away or it's night (**AUTO**, the default),
+always (**ARMED**), or never (**DISARMED**). Toggle it by voice or in the
+VISION settings panel. If you've enabled push notifications there, alerts
+reach you even when the app isn't open.
 
 ## MEETING RECORDER
 

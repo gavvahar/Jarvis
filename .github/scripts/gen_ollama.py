@@ -1,9 +1,6 @@
 """Generate a PR title and description via a remote Ollama instance."""
 
-import json
-import sys
-import urllib.error
-import urllib.request
+import json, sys, urllib.error, urllib.request
 
 commits = open("/tmp/commits.txt").read().strip()
 diff_stat = open("/tmp/diff_stat.txt").read().strip()
