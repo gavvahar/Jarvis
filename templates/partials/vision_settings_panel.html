@@ -8,6 +8,32 @@
     <div class="vision-section-label" style="margin-top: 1.2rem">CAMERAS</div>
     <div id="vision-camera-list"><em>Loading…</em></div>
 
+    <div class="vision-section-label" style="margin-top: 1.2rem">
+      SENTRY MODE
+    </div>
+    <p class="doorbell-settings-note">
+      AUTO heightens monitoring automatically when everyone's away or it's
+      night. ARMED always watches. DISARMED turns off security alerts.
+    </p>
+    <div id="vision-sentry-mode-control">
+      <button type="button" class="vision-sentry-btn" data-mode="auto">
+        AUTO
+      </button>
+      <button type="button" class="vision-sentry-btn" data-mode="armed">
+        ARMED
+      </button>
+      <button type="button" class="vision-sentry-btn" data-mode="disarmed">
+        DISARMED
+      </button>
+    </div>
+    <button id="vision-enable-push-btn">ENABLE PUSH NOTIFICATIONS</button>
+    <div id="vision-push-status"></div>
+
+    <div class="vision-section-label" style="margin-top: 1.2rem">
+      RECENT EVENTS
+    </div>
+    <div id="vision-security-events"><em>Loading…</em></div>
+
     <form id="vision-add-camera-form" autocomplete="off">
       <label class="setup-label" for="vision-cam-name">NAME</label>
       <input id="vision-cam-name" type="text" placeholder="Front Door" />
