@@ -10,9 +10,9 @@ Three providers:
   • openai_compatible — any OpenAI-compatible endpoint (Ollama, OpenRouter, …)
 """
 
-import json, os, re, asyncio, secrets, tempfile, urllib.parse, httpx, datetime, hashlib, base64, pathlib, socketio, auth as _auth, integrations.tesla as _tesla_mod, integrations.vision as _vision_mod, integrations.finance as _finance_mod, integrations.automation as _automation_mod, integrations.multiroom.presence as _presence_mod, integrations.multiroom.snapcast as _snapcast_mod
+import json, os, re, asyncio, secrets, tempfile, urllib.parse, httpx, datetime, hashlib, base64, pathlib, socketio, auth as _auth, integrations.tesla as _tesla_mod, integrations.vision as _vision_mod, integrations.finance as _finance_mod, integrations.automation as _automation_mod, integrations.multiroom.presence as _presence_mod, integrations.multiroom.snapcast as _snapcast_mod, integrations.sentry as _sentry_mod
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, HTTPException, Request, File, UploadFile
+from fastapi import FastAPI, HTTPException, Request, File, UploadFile, Response
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -36,10 +36,12 @@ from integrations.vision import (
     _update_camera,
     _get_presence_members,
     _get_security_events,
+    _get_security_event_snapshot,
     _face_enroll_sample,
     _face_enroll_finish,
     _face_enroll_delete,
 )
+from integrations.sentry import _get_sentry_mode, _set_sentry_mode
 from integrations.music.spotify import (
     _spotify_configured,
     _spotify_req,
@@ -84,6 +86,7 @@ from config import (
     PLAID_CLIENT_ID,
     PLAID_SECRET,
     PLAID_ENV,
+    VAPID_PUBLIC_KEY,
 )
 
 try:
@@ -127,6 +130,8 @@ from db import (
     _db_get_plaid_item,
     _db_delete_plaid_item,
     _db_set_transaction_category_override,
+    _db_add_push_subscription,
+    _db_remove_push_subscription,
 )
 
 
@@ -159,6 +164,11 @@ _sid_to_user: dict[str, str] = {}
 
 def _sids_for_user(user_id: str) -> list[str]:
     return [sid for sid, uid in _sid_to_user.items() if uid == user_id]
+
+
+async def _broadcast_all(event: str, data: dict):
+    for sid in list(_sid_to_user.keys()):
+        await sio.emit(event, data, to=sid)
 
 
 _whisper = None
@@ -261,6 +271,7 @@ sio = socketio.AsyncServer(async_mode="asgi", cors_allowed_origins="*")
 _init_apple_music(sio, _sid_to_user)
 _vision_mod.init(sio, _sids_for_user)
 _automation_mod.init(sio, _sids_for_user, _user_states)
+_sentry_mod.init(_broadcast_all)
 
 
 @asynccontextmanager
@@ -422,6 +433,7 @@ async def api_status(request: Request):
         "plaid_client_enabled": bool(PLAID_CLIENT_ID and PLAID_SECRET),
         "plaid_env": PLAID_ENV,
         "role": state.get("role", "user"),
+        "vapid_public_key": VAPID_PUBLIC_KEY,
     }
 
 
@@ -531,6 +543,48 @@ async def api_presence(request: Request):
 @fast_app.get("/api/security-events")
 async def api_security_events(request: Request):
     return await _get_security_events(_require_user(request), float(request.query_params.get("hours", "24")))
+
+
+@fast_app.get("/api/security-events/{event_id}/snapshot")
+async def api_security_event_snapshot(event_id: int, request: Request):
+    snapshot = await _get_security_event_snapshot(_require_user(request), event_id)
+    return Response(content=snapshot, media_type="image/jpeg")
+
+
+@fast_app.get("/api/sentry-mode")
+async def api_get_sentry_mode(request: Request):
+    _require_user(request)
+    return await _get_sentry_mode()
+
+
+@fast_app.post("/api/sentry-mode")
+async def api_set_sentry_mode(request: Request):
+    user_id = _require_user(request)
+    return await _set_sentry_mode((await request.json()).get("mode", ""), user_id)
+
+
+@fast_app.post("/api/push/subscribe")
+async def api_push_subscribe(request: Request):
+    user_id = _require_user(request)
+    body = await request.json()
+    keys = body.get("keys", {})
+    endpoint = (body.get("endpoint") or "").strip()
+    p256dh = (keys.get("p256dh") or "").strip()
+    auth = (keys.get("auth") or "").strip()
+    if not endpoint or not p256dh or not auth:
+        raise HTTPException(400, "endpoint and keys.p256dh/keys.auth are required")
+    await _db_add_push_subscription(user_id, endpoint, p256dh, auth)
+    return {"ok": True}
+
+
+@fast_app.post("/api/push/unsubscribe")
+async def api_push_unsubscribe(request: Request):
+    user_id = _require_user(request)
+    endpoint = (await request.json()).get("endpoint", "").strip()
+    if not endpoint:
+        raise HTTPException(400, "endpoint is required")
+    await _db_remove_push_subscription(user_id, endpoint)
+    return {"ok": True}
 
 
 @fast_app.post("/api/face/enroll-sample")

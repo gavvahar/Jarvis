@@ -594,11 +594,55 @@ async def _db_record_security_event(user_id: str, camera_id: int | None, event_t
 async def _db_get_recent_security_events(user_id: str, hours: float = 24) -> list:
     async with _pool().acquire() as conn:
         rows = await conn.fetch(
-            "SELECT event_type, room, detected_at FROM security_events WHERE user_id=$1 AND detected_at > NOW()-$2 ORDER BY detected_at DESC LIMIT 50",
+            "SELECT id, event_type, room, detected_at, (snapshot IS NOT NULL) AS has_snapshot "
+            "FROM security_events WHERE user_id=$1 AND detected_at > NOW()-$2 ORDER BY detected_at DESC LIMIT 50",
             user_id,
             datetime.timedelta(hours=hours),
         )
-    return [{"event_type": r["event_type"], "room": r["room"], "detected_at": r["detected_at"].isoformat()} for r in rows]
+    return [{"id": r["id"], "event_type": r["event_type"], "room": r["room"], "detected_at": r["detected_at"].isoformat(), "has_snapshot": r["has_snapshot"]} for r in rows]
+
+
+async def _db_get_security_event_snapshot(user_id: str, event_id: int) -> bytes | None:
+    async with _pool().acquire() as conn:
+        return await conn.fetchval("SELECT snapshot FROM security_events WHERE id=$1 AND user_id=$2", event_id, user_id)
+
+
+async def _db_get_sentry_mode() -> str:
+    async with _pool().acquire() as conn:
+        mode = await conn.fetchval("SELECT mode FROM sentry_state WHERE id=1")
+    return mode or "auto"
+
+
+async def _db_set_sentry_mode(mode: str, updated_by: str) -> None:
+    async with _pool().acquire() as conn:
+        await conn.execute(
+            "UPDATE sentry_state SET mode=$1, updated_by=$2, updated_at=NOW() WHERE id=1",
+            mode,
+            updated_by,
+        )
+
+
+async def _db_add_push_subscription(user_id: str, endpoint: str, p256dh: str, auth: str) -> None:
+    async with _pool().acquire() as conn:
+        await conn.execute(
+            "INSERT INTO push_subscriptions (user_id, endpoint, p256dh, auth) VALUES ($1,$2,$3,$4) "
+            "ON CONFLICT (user_id, endpoint) DO UPDATE SET p256dh=EXCLUDED.p256dh, auth=EXCLUDED.auth",
+            user_id,
+            endpoint,
+            p256dh,
+            auth,
+        )
+
+
+async def _db_remove_push_subscription(user_id: str, endpoint: str) -> None:
+    async with _pool().acquire() as conn:
+        await conn.execute("DELETE FROM push_subscriptions WHERE user_id=$1 AND endpoint=$2", user_id, endpoint)
+
+
+async def _db_get_push_subscriptions(user_id: str) -> list:
+    async with _pool().acquire() as conn:
+        rows = await conn.fetch("SELECT endpoint, p256dh, auth FROM push_subscriptions WHERE user_id=$1", user_id)
+    return [{"endpoint": r["endpoint"], "p256dh": r["p256dh"], "auth": r["auth"]} for r in rows]
 
 
 # ─── FACE / PRESENCE ──────────────────────────────────────────────────────────
