@@ -104,6 +104,7 @@ let _ttsQ = [],
   _ttsActive = false;
 export function speak(text) {
   if (!text) return;
+  if (_silent) return; // Silent Mode: text only, never speak
   if (!synth) return; // no speech synthesis → silent (chat still shows text)
   _ttsQ.push(text);
   if (!_ttsActive) _ttsNext();
@@ -185,7 +186,17 @@ driveViz();
 // ===================================================================
 //  SPEECH RECOGNITION  — local Whisper via VAD + MediaRecorder
 // ===================================================================
+let _micStream = null,
+  _vadCtx = null,
+  _vadRafId = null,
+  _vadRec = null;
+
 export function startRecognition() {
+  if (_silent) {
+    window.__recognition = "SILENT — TEXT ONLY";
+    return;
+  }
+  if (_micStream) return; // already running
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
     window.__recognition = "MIC NOT SUPPORTED";
     return;
@@ -194,6 +205,7 @@ export function startRecognition() {
     .getUserMedia({ audio: true, video: false })
     .then((stream) => {
       _micOk = true;
+      _micStream = stream;
       window.__recognition = "LISTENING…";
       _vadLoop(stream);
     })
@@ -208,8 +220,34 @@ export function startRecognition() {
     });
 }
 
+// stops and fully releases the mic (used by Silent Mode) — safe to call anytime
+export function stopRecognition() {
+  if (_vadRafId) cancelAnimationFrame(_vadRafId);
+  _vadRafId = null;
+  if (_vadRec && _vadRec.state === "recording") {
+    _vadRec.ondataavailable = null;
+    _vadRec.onstop = null;
+    try {
+      _vadRec.stop();
+    } catch (e) {}
+  }
+  _vadRec = null;
+  if (_micStream) {
+    _micStream.getTracks().forEach((t) => t.stop());
+    _micStream = null;
+  }
+  if (_vadCtx) {
+    try {
+      _vadCtx.close();
+    } catch (e) {}
+    _vadCtx = null;
+  }
+  _micOk = false;
+}
+
 function _vadLoop(stream) {
   const ctx = new (window.AudioContext || window.webkitAudioContext)();
+  _vadCtx = ctx;
   const source = ctx.createMediaStreamSource(stream);
   const analyser = ctx.createAnalyser();
   analyser.fftSize = 512;
@@ -231,7 +269,7 @@ function _vadLoop(stream) {
     lastLoud = 0;
 
   function tick() {
-    requestAnimationFrame(tick);
+    _vadRafId = requestAnimationFrame(tick);
     analyser.getByteFrequencyData(buf);
     const avg = buf.reduce((s, v) => s + v, 0) / buf.length;
     const now = Date.now();
@@ -243,10 +281,12 @@ function _vadLoop(stream) {
       chunks = [];
       recStart = now;
       rec = new MediaRecorder(stream, mime ? { mimeType: mime } : {});
+      _vadRec = rec;
       rec.ondataavailable = (e) => e.data.size > 0 && chunks.push(e.data);
       rec.onstop = () => {
         const r = rec;
         rec = null;
+        _vadRec = null;
         if (Date.now() - recStart >= MIN_MS && chunks.length)
           _transcribe(new Blob(chunks, { type: r.mimeType }));
       };
@@ -259,6 +299,35 @@ function _vadLoop(stream) {
   }
 
   tick();
+}
+
+// ===================================================================
+//  SILENT MODE  — text in, text out: mic fully released, TTS muted
+// ===================================================================
+let _silent = false;
+try {
+  _silent = localStorage.getItem("jarvis_silent_mode") === "1";
+} catch (e) {}
+
+export function isSilentMode() {
+  return _silent;
+}
+export function setSilentMode(v) {
+  v = !!v;
+  _silent = v;
+  try {
+    localStorage.setItem("jarvis_silent_mode", v ? "1" : "0");
+  } catch (e) {}
+  if (v) {
+    stopSpeaking();
+    stopRecognition();
+    if (_standby) wake();
+    window.__recognition = "SILENT — TEXT ONLY";
+    if (window.__chat && window.__chat.setOpen) window.__chat.setOpen(true);
+  } else {
+    startRecognition();
+    if (!_standby) window.__recognition = "LISTENING…";
+  }
 }
 
 let _lastSpeakerId = null;
@@ -367,7 +436,12 @@ socket.on("status", ({ state }) => {
     endTurn();
     if (window.__chat) window.__chat.setTyping(true);
   }
-  if (!_standby) window.__recognition = RECOG[state] || state.toUpperCase();
+  if (!_standby) {
+    window.__recognition =
+      _silent && state === "idle"
+        ? "SILENT — TEXT ONLY"
+        : RECOG[state] || state.toUpperCase();
+  }
 });
 
 socket.on("speak_sentence", ({ text }) => {

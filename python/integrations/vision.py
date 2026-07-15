@@ -1,15 +1,18 @@
 import asyncio, datetime, httpx
 from fastapi import HTTPException
 
-from config import VISION_AWAY_TIMEOUT, VISION_FACE_THRESHOLD, VISION_POLL_INTERVAL
+from config import VISION_AWAY_TIMEOUT, VISION_FACE_THRESHOLD, VISION_MOTION_THRESHOLD, VISION_POLL_INTERVAL
 from embeddings import average_embedding, best_match
 from tool_schemas import anthropic_tools_to_openai
+from integrations.push import _send_push
 from db import (
     _db_add_camera,
     _db_clear_face_embedding,
     _db_delete_camera,
     _db_get_all_face_embeddings,
     _db_get_recent_security_events,
+    _db_get_security_event_snapshot,
+    _db_get_sentry_mode,
     _db_get_who_is_home,
     _db_list_cameras,
     _db_ready,
@@ -159,6 +162,24 @@ def _capture_rtsp_frame(rtsp_url: str) -> bytes | None:
         cap.release()
 
 
+_motion_frame_cache: dict = {}
+
+
+def _frame_motion_score(camera_id: int, image_bytes: bytes) -> float:
+    if not _VISION_OK:
+        return 0.0
+    arr = _np_v.frombuffer(image_bytes, dtype=_np_v.uint8)
+    img = _cv2.imdecode(arr, _cv2.IMREAD_GRAYSCALE)
+    if img is None:
+        return 0.0
+    small = _cv2.resize(img, (160, 90))
+    prev = _motion_frame_cache.get(camera_id)
+    _motion_frame_cache[camera_id] = small
+    if prev is None:
+        return 0.0
+    return float(_np_v.mean(_cv2.absdiff(small, prev)))
+
+
 VISION_TOOLS_ANTHROPIC = [
     {
         "name": "get_who_is_home",
@@ -264,6 +285,19 @@ async def _vision_loop():
             continue
         try:
             await _refresh_face_cache()
+            mode = await _db_get_sentry_mode()
+            now = datetime.datetime.now(datetime.timezone.utc)
+            hour = now.hour
+            async with _pool().acquire() as conn:
+                cutoff = datetime.timedelta(seconds=VISION_AWAY_TIMEOUT)
+                home_count = await conn.fetchval(
+                    "SELECT COUNT(*) FROM user_configs WHERE face_embedding IS NOT NULL AND is_home=TRUE AND last_seen_at > NOW()-$1",
+                    cutoff,
+                )
+            away_mode = home_count == 0
+            night = hour >= 22 or hour < 6
+            heightened = mode != "disarmed" and (mode == "armed" or away_mode or night)
+
             async with _pool().acquire() as conn:
                 cam_rows = await conn.fetch(
                     "SELECT c.id, c.user_id, c.name, c.room, c.source_type, c.source, "
@@ -283,11 +317,17 @@ async def _vision_loop():
                     continue
 
                 detections = await asyncio.to_thread(_identify_faces_in_image, snapshot)
+
                 if not detections:
+                    motion_score = await asyncio.to_thread(_frame_motion_score, cam_id, snapshot)
+                    if heightened and motion_score > VISION_MOTION_THRESHOLD:
+                        await _db_record_security_event(user_id, cam_id, "motion", room, snapshot)
+                        speak = f"Motion detected{' at ' + cam['name'] if cam['name'] else ''}."
+                        for sid in sids_fn(user_id):
+                            await sio.emit("security_alert", {"event_type": "motion", "camera": cam["name"], "room": room, "speak": speak}, to=sid)
+                        await _send_push(user_id, "Motion detected", speak)
                     continue
 
-                now = datetime.datetime.now(datetime.timezone.utc)
-                hour = now.hour
                 for det in detections:
                     await _db_record_detection(user_id, cam_id, det["detected_user_id"], det["confidence"], room)
                     if det["detected_user_id"]:
@@ -305,20 +345,12 @@ async def _vision_loop():
                                     {"user_id": det["detected_user_id"], "name": det["name"], "is_home": True, "room": room, "activity": activity},
                                     to=sid,
                                 )
-                    else:
-                        async with _pool().acquire() as conn:
-                            cutoff = datetime.timedelta(seconds=VISION_AWAY_TIMEOUT)
-                            home_count = await conn.fetchval(
-                                "SELECT COUNT(*) FROM user_configs WHERE face_embedding IS NOT NULL AND is_home=TRUE AND last_seen_at > NOW()-$1",
-                                cutoff,
-                            )
-                        away_mode = home_count == 0
-                        night = hour >= 22 or hour < 6
-                        if away_mode or night:
-                            await _db_record_security_event(user_id, cam_id, "unknown_person", room)
-                            speak = f"Unknown person detected{' at ' + cam['name'] if cam['name'] else ''}."
-                            for sid in sids_fn(user_id):
-                                await sio.emit("security_alert", {"event_type": "unknown_person", "camera": cam["name"], "room": room, "speak": speak}, to=sid)
+                    elif heightened:
+                        await _db_record_security_event(user_id, cam_id, "unknown_person", room, snapshot)
+                        speak = f"Unknown person detected{' at ' + cam['name'] if cam['name'] else ''}."
+                        for sid in sids_fn(user_id):
+                            await sio.emit("security_alert", {"event_type": "unknown_person", "camera": cam["name"], "room": room, "speak": speak}, to=sid)
+                        await _send_push(user_id, "Unknown person detected", speak)
 
             async with _pool().acquire() as conn:
                 cutoff = datetime.timedelta(seconds=VISION_AWAY_TIMEOUT)
@@ -376,6 +408,13 @@ async def _get_presence_members() -> dict:
 
 async def _get_security_events(user_id: str, hours: float) -> dict:
     return {"events": await _db_get_recent_security_events(user_id, hours)}
+
+
+async def _get_security_event_snapshot(user_id: str, event_id: int) -> bytes:
+    snapshot = await _db_get_security_event_snapshot(user_id, event_id)
+    if not snapshot:
+        raise HTTPException(404, "No snapshot for this event")
+    return snapshot
 
 
 async def _face_enroll_sample(image_bytes: bytes) -> dict:
