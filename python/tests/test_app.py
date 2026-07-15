@@ -5529,7 +5529,9 @@ class TestVisionLoop:
         assert sio.emit.call_args.args[0] == "presence_update"
 
     def test_motion_triggers_alert_when_armed(self):
-        cam_rows = [{"id": 1, "user_id": "u1", "name": "Front Door", "room": "Entry", "source_type": "ha", "source": "camera.front_door", "ha_url": "http://ha.local", "ha_token": "tok"}]
+        cam_rows = [
+            {"id": 1, "user_id": "u1", "name": "Front Door", "room": "Entry", "source_type": "ha", "source": "camera.front_door", "ha_url": "http://ha.local", "ha_token": "tok"}
+        ]
         pool, conn = _mock_asyncpg_pool()
         conn.fetch = AsyncMock(side_effect=[cam_rows, []])
         conn.fetchval = AsyncMock(return_value=0)
@@ -5562,7 +5564,9 @@ class TestVisionLoop:
         mock_push.assert_awaited_once()
 
     def test_motion_below_threshold_is_ignored(self):
-        cam_rows = [{"id": 1, "user_id": "u1", "name": "Front Door", "room": "Entry", "source_type": "ha", "source": "camera.front_door", "ha_url": "http://ha.local", "ha_token": "tok"}]
+        cam_rows = [
+            {"id": 1, "user_id": "u1", "name": "Front Door", "room": "Entry", "source_type": "ha", "source": "camera.front_door", "ha_url": "http://ha.local", "ha_token": "tok"}
+        ]
         pool, conn = _mock_asyncpg_pool()
         conn.fetch = AsyncMock(side_effect=[cam_rows, []])
         conn.fetchval = AsyncMock(return_value=0)
