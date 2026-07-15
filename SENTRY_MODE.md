@@ -16,15 +16,18 @@ system.
 ## What changed
 
 **Schema** (`python/schema.sql`)
+
 - `sentry_state` — single-row table (`id=1`), `mode` is `auto` / `armed` / `disarmed`
 - `push_subscriptions` — one row per browser subscription (`user_id`, `endpoint`, `p256dh`, `auth`)
 - `security_events.snapshot` (already existed) is now actually populated
 
 **New modules**
+
 - `python/integrations/sentry.py` — `set_sentry_mode`/`get_sentry_mode` voice tools, `_set_sentry_mode()`/`_get_sentry_mode()` used by the REST routes, broadcasts `sentry_mode_changed` to every connected socket on change
 - `python/integrations/push.py` — `_send_push(user_id, title, body)` fans out via `pywebpush`; no-ops silently if VAPID keys aren't configured or the `pywebpush` import fails (same optional-dependency pattern as `vision.py`'s OpenCV/insightface guard); prunes subscriptions that come back 404/410
 
 **Modified**
+
 - `python/integrations/vision.py` — `_vision_loop` now: computes `mode`/`away_mode`/`night` once per poll, derives `heightened = mode != "disarmed" and (mode == "armed" or away_mode or night)`; when a frame has zero face matches it now runs OpenCV frame-differencing (`_frame_motion_score`, threshold `VISION_MOTION_THRESHOLD`, default `15.0`) instead of just skipping; unknown-person and motion events both now pass the raw JPEG through to `_db_record_security_event` and call `_send_push`
 - `python/llm.py` — registered the two sentry tools alongside the existing vision tools (both the Anthropic and OpenAI dispatch paths)
 - `python/app.py` — new routes below; `_broadcast_all()` helper (iterates `_sid_to_user`) wired into `sentry.init()`
@@ -39,6 +42,7 @@ system.
 - `ROADMAP.md` — Phase 10 Sentry Mode marked done; Phase 4 push-notifications item updated to note the shared infra already exists, just needs wiring into the other 5 alert types
 
 **New routes**
+
 - `GET/POST /api/sentry-mode`
 - `GET /api/security-events/{id}/snapshot`
 - `POST /api/push/subscribe` / `POST /api/push/unsubscribe`
@@ -46,9 +50,9 @@ system.
 
 ## New env vars (all optional, documented in README)
 
-| Var | Purpose |
-| --- | --- |
-| `VISION_MOTION_THRESHOLD` | Mean-pixel-diff threshold for motion detection (default `15.0`) |
+| Var                                                        | Purpose                                                                       |
+| ---------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| `VISION_MOTION_THRESHOLD`                                  | Mean-pixel-diff threshold for motion detection (default `15.0`)               |
 | `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` / `VAPID_SUBJECT` | Web Push keys — generate once with `vapid --gen` (installed with `pywebpush`) |
 
 Without VAPID keys set, push notifications silently no-op — everything else
