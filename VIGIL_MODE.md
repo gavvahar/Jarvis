@@ -90,8 +90,8 @@ the rename itself — see the diff for the mechanical `sentry`→`vigil` swap
 across `python/`, `static/`, `templates/`, `README.md`, `ROADMAP.md`.
 
 Also built the previously-unstarted **Device-camera lock** add-on (the 5-part
-item in `ROADMAP.md` Phase 10) — while Vigil Mode is ARMED, the *device's own
-webcam* (client-side `getUserMedia`, not a network camera) blanks the JARVIS
+item in `ROADMAP.md` Phase 10) — while Vigil Mode is ARMED, the _device's own
+webcam_ (client-side `getUserMedia`, not a network camera) blanks the JARVIS
 UI in that browser tab if someone other than the logged-in user is seen
 without the logged-in user also in frame, for 3 consecutive ~5s checks.
 
