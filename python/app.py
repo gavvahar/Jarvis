@@ -10,7 +10,7 @@ Three providers:
   • openai_compatible — any OpenAI-compatible endpoint (Ollama, OpenRouter, …)
 """
 
-import json, os, re, asyncio, secrets, tempfile, urllib.parse, httpx, datetime, hashlib, base64, pathlib, socketio, auth as _auth, integrations.tesla as _tesla_mod, integrations.vision as _vision_mod, integrations.finance as _finance_mod, integrations.automation as _automation_mod, integrations.multiroom.presence as _presence_mod, integrations.multiroom.snapcast as _snapcast_mod, integrations.sentry as _sentry_mod
+import json, os, re, asyncio, secrets, tempfile, urllib.parse, httpx, datetime, hashlib, base64, pathlib, socketio, auth as _auth, integrations.tesla as _tesla_mod, integrations.vision as _vision_mod, integrations.finance as _finance_mod, integrations.automation as _automation_mod, integrations.multiroom.presence as _presence_mod, integrations.multiroom.snapcast as _snapcast_mod, integrations.vigil as _vigil_mod, integrations.briefing as _briefing_mod, integrations.habits as _habits_mod
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Request, File, UploadFile, Response
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, FileResponse
@@ -40,8 +40,13 @@ from integrations.vision import (
     _face_enroll_sample,
     _face_enroll_finish,
     _face_enroll_delete,
+    _check_presence,
+    _record_device_lock,
+    _user_has_face_enrollment,
 )
-from integrations.sentry import _get_sentry_mode, _set_sentry_mode
+from integrations.vigil import _get_vigil_mode, _set_vigil_mode
+from integrations.briefing import _get_briefing_prefs, _set_briefing_prefs
+from integrations.habits import _get_habit_prefs, _set_habit_prefs
 from integrations.music.spotify import (
     _spotify_configured,
     _spotify_req,
@@ -271,7 +276,9 @@ sio = socketio.AsyncServer(async_mode="asgi", cors_allowed_origins="*")
 _init_apple_music(sio, _sid_to_user)
 _vision_mod.init(sio, _sids_for_user)
 _automation_mod.init(sio, _sids_for_user, _user_states)
-_sentry_mod.init(_broadcast_all)
+_vigil_mod.init(_broadcast_all)
+_briefing_mod.init(sio, _sids_for_user, _location_context)
+_habits_mod.init(sio, _sids_for_user)
 
 
 @asynccontextmanager
@@ -292,8 +299,10 @@ async def lifespan(application: FastAPI):
     t5 = asyncio.create_task(_automation_mod._device_alert_loop())
     t6 = asyncio.create_task(_vision_mod._vision_loop())
     t7 = asyncio.create_task(_finance_mod._finance_loop())
+    t8 = asyncio.create_task(_briefing_mod._briefing_loop())
+    t9 = asyncio.create_task(_habits_mod._habit_nudge_loop())
     yield
-    for t in (t1, t2, t3, t4, t5, t6, t7):
+    for t in (t1, t2, t3, t4, t5, t6, t7, t8, t9):
         t.cancel()
     await _db_close()
 
@@ -411,6 +420,7 @@ async def api_status(request: Request):
     config = state["config"]
     return {
         "configured": _user_configured(state),
+        "user_id": user_id,
         "provider": config.get("provider", "anthropic"),
         "model": config.get("model", ""),
         "ha_configured": _ha_configured(config),
@@ -434,6 +444,7 @@ async def api_status(request: Request):
         "plaid_env": PLAID_ENV,
         "role": state.get("role", "user"),
         "vapid_public_key": VAPID_PUBLIC_KEY,
+        "face_enrolled": _user_has_face_enrollment(user_id),
     }
 
 
@@ -551,16 +562,16 @@ async def api_security_event_snapshot(event_id: int, request: Request):
     return Response(content=snapshot, media_type="image/jpeg")
 
 
-@fast_app.get("/api/sentry-mode")
-async def api_get_sentry_mode(request: Request):
+@fast_app.get("/api/vigil-mode")
+async def api_get_vigil_mode(request: Request):
     _require_user(request)
-    return await _get_sentry_mode()
+    return await _get_vigil_mode()
 
 
-@fast_app.post("/api/sentry-mode")
-async def api_set_sentry_mode(request: Request):
+@fast_app.post("/api/vigil-mode")
+async def api_set_vigil_mode(request: Request):
     user_id = _require_user(request)
-    return await _set_sentry_mode((await request.json()).get("mode", ""), user_id)
+    return await _set_vigil_mode((await request.json()).get("mode", ""), user_id)
 
 
 @fast_app.post("/api/push/subscribe")
@@ -601,6 +612,19 @@ async def api_face_enroll_finish(request: Request):
 @fast_app.delete("/api/face/enrollment")
 async def api_face_enroll_delete(request: Request):
     return await _face_enroll_delete(_require_user(request))
+
+
+@fast_app.post("/api/face/check-presence")
+async def api_face_check_presence(request: Request, image: UploadFile = File(...)):
+    _require_user(request)
+    return await _check_presence(await image.read())
+
+
+@fast_app.post("/api/face/lock-event")
+async def api_face_lock_event(request: Request, image: UploadFile = File(None)):
+    user_id = _require_user(request)
+    data = await image.read() if image else None
+    return await _record_device_lock(user_id, data)
 
 
 @fast_app.post("/api/save_ha")
@@ -701,6 +725,26 @@ async def api_save_pim(request: Request):
         "contacts_url": config.get("contacts_url", ""),
         "contacts_username": config.get("contacts_username", ""),
     }
+
+
+@fast_app.get("/api/briefing")
+async def api_get_briefing_prefs(request: Request):
+    return await _get_briefing_prefs(_require_user(request))
+
+
+@fast_app.post("/api/briefing")
+async def api_set_briefing_prefs(request: Request):
+    return await _set_briefing_prefs(_require_user(request), await request.json())
+
+
+@fast_app.get("/api/habits")
+async def api_get_habits(request: Request):
+    return await _get_habit_prefs(_require_user(request))
+
+
+@fast_app.post("/api/habits")
+async def api_set_habits(request: Request):
+    return await _set_habit_prefs(_require_user(request), await request.json())
 
 
 @fast_app.post("/api/save_myq")
