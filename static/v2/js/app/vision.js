@@ -18,6 +18,8 @@ const visionVigilButtons = document.querySelectorAll(".vision-vigil-btn");
 const visionEnablePushBtn = $("vision-enable-push-btn");
 const visionPushStatus = $("vision-push-status");
 const visionSecurityEvents = $("vision-security-events");
+const visionHabitsSummary = $("vision-habits-summary");
+const visionHabitsNudgeEnabled = $("vision-habits-nudge-enabled");
 
 async function loadCameras() {
   if (!visionCameraList) return;
@@ -146,6 +148,52 @@ async function loadSecurityEvents() {
   }
 }
 
+const HABIT_BUCKET_LABELS = { weekday: "weekdays", weekend: "weekends" };
+
+function formatHabit(label, habit) {
+  if (!habit) return `<em>${label}: not enough data yet.</em>`;
+  const bits = Object.keys(HABIT_BUCKET_LABELS)
+    .filter((b) => habit[b])
+    .map((b) => {
+      const mins = Math.round(habit[b].typical_minutes);
+      const h = Math.floor(mins / 60);
+      const m = mins % 60;
+      const period = h < 12 ? "AM" : "PM";
+      const h12 = h % 12 || 12;
+      return `around ${h12}:${String(m).padStart(2, "0")} ${period} on ${HABIT_BUCKET_LABELS[b]}`;
+    });
+  return `${label}: ${bits.join(" and ")}.`;
+}
+
+async function loadHabits() {
+  if (!visionHabitsSummary) return;
+  try {
+    const r = await fetch("/api/habits");
+    const { enabled, departed, arrived } = await r.json();
+    visionHabitsSummary.innerHTML = [
+      formatHabit("Leaves home", departed),
+      formatHabit("Arrives home", arrived),
+    ].join("<br>");
+    if (visionHabitsNudgeEnabled) visionHabitsNudgeEnabled.checked = !!enabled;
+  } catch {
+    visionHabitsSummary.innerHTML = "<em>Could not load habits.</em>";
+  }
+}
+
+if (visionHabitsNudgeEnabled) {
+  visionHabitsNudgeEnabled.addEventListener("change", async () => {
+    try {
+      await fetch("/api/habits", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled: visionHabitsNudgeEnabled.checked }),
+      });
+    } catch {
+      loadHabits();
+    }
+  });
+}
+
 if (visionEnablePushBtn) {
   visionEnablePushBtn.addEventListener("click", async () => {
     if (visionPushStatus) visionPushStatus.textContent = "Requesting…";
@@ -165,6 +213,7 @@ if (visionBtn) {
       loadCameras();
       loadVigilMode();
       loadSecurityEvents();
+      loadHabits();
     }
   });
 }

@@ -56,6 +56,13 @@ socket.on("briefing_ready", ({ text, speak: speakText }) => {
   speak(msg);
 });
 
+socket.on("habit_nudge", ({ speak: speakText }) => {
+  const msg = speakText || "Just a heads up, sir.";
+  if (window.__chat) window.__chat.addMsg(msg, "in");
+  if (isStandby()) wake();
+  speak(msg);
+});
+
 socket.on("wake_trigger", ({ device_id }) => {
   if (isStandby()) {
     wake();

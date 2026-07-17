@@ -501,6 +501,17 @@ always (**ARMED**), or never (**DISARMED**). Toggle it by voice or in the
 VISION settings panel. If you've enabled push notifications there, alerts
 reach you even when the app isn't open.
 
+**Habit learning:** once camera presence detection has a few days of
+history, J.A.R.V.I.S. picks up on when you typically leave and arrive home
+(split into weekday/weekend patterns) and can tell you on request:
+
+- "When do I usually leave?"
+- "What are my habits?"
+
+Turn on **NUDGE ME AROUND MY USUAL LEAVE TIME** in the VISION settings panel
+(off by default) for a proactive heads-up around your usual departure time,
+if you haven't left yet that day.
+
 ## MEETING RECORDER
 
 J.A.R.V.I.S. can transcribe your meetings live and generate structured notes
