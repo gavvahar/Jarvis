@@ -156,19 +156,23 @@ async def _execute_reminder_tool(user_id: str, args: dict) -> str:
     return f"Unknown action: {action}"
 
 
+async def _fetch_news_headlines(category: str, count: int) -> list:
+    url = _NEWS_RSS.get(category, _NEWS_RSS["general"])
+    async with httpx.AsyncClient() as client:
+        resp = await client.get(url, timeout=10, follow_redirects=True)
+        resp.raise_for_status()
+    root = ET.fromstring(resp.text)
+    headlines = [item.findtext("title", "").strip() for item in root.findall(".//item")[:count]]
+    return [h for h in headlines if h]
+
+
 async def _execute_news_tool(args: dict) -> str:
     category = (args.get("category") or "general").lower()
     count = min(max(int(args.get("count") or 5), 1), 10)
-    url = _NEWS_RSS.get(category, _NEWS_RSS["general"])
     try:
-        async with httpx.AsyncClient() as client:
-            resp = await client.get(url, timeout=10, follow_redirects=True)
-            resp.raise_for_status()
-        root = ET.fromstring(resp.text)
-        headlines = [item.findtext("title", "").strip() for item in root.findall(".//item")[:count]]
-        headlines = [h for h in headlines if h]
-        if not headlines:
-            return "No headlines available right now."
-        return f"Top {category} news:\n" + "\n".join(f"• {h}" for h in headlines)
+        headlines = await _fetch_news_headlines(category, count)
     except Exception as e:
         return f"Could not fetch news: {e}"
+    if not headlines:
+        return "No headlines available right now."
+    return f"Top {category} news:\n" + "\n".join(f"• {h}" for h in headlines)
