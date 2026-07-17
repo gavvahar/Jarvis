@@ -772,8 +772,7 @@ async def _db_record_presence_event(user_id: str, event_type: str, occurred_at: 
 async def _db_get_presence_events(user_id: str, event_type: str, since_days: int = 60, limit: int = 200) -> list:
     async with _pool().acquire() as conn:
         rows = await conn.fetch(
-            "SELECT occurred_at FROM presence_events WHERE user_id=$1 AND event_type=$2 AND occurred_at > NOW() - ($3 || ' days')::interval "
-            "ORDER BY occurred_at DESC LIMIT $4",
+            "SELECT occurred_at FROM presence_events WHERE user_id=$1 AND event_type=$2 AND occurred_at > NOW() - ($3 || ' days')::interval ORDER BY occurred_at DESC LIMIT $4",
             user_id,
             event_type,
             str(since_days),
