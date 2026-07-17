@@ -8,13 +8,18 @@ On conflict: abort, then open a GitHub issue listing the conflicting files
 
 import json, os, subprocess, sys, urllib.error, urllib.request
 from datetime import datetime, timezone
+from pathlib import Path
 
 SKIP_BRANCHES = {"main", "staging", "HEAD", "testing"}
 
-# Branches that should only receive a cascade from specific source branches.
-# "tests" is used to validate this script itself, so it should only track main.
+# Branches that should only receive a cascade from specific source branches,
+# loaded from cascade_restrictions.json so this data doesn't ride along inside
+# a script file that itself gets cascade-merged into every branch.
 RESTRICTED_TARGETS = {
-    "tests": {"main"},
+    branch: set(sources)
+    for branch, sources in json.loads(
+        (Path(__file__).parent / "cascade_restrictions.json").read_text()
+    ).items()
 }
 
 
