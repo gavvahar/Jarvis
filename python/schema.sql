@@ -40,6 +40,8 @@ ALTER TABLE user_configs ADD COLUMN IF NOT EXISTS briefing_morning_time TEXT NOT
 ALTER TABLE user_configs ADD COLUMN IF NOT EXISTS briefing_evening_time TEXT NOT NULL DEFAULT '18:00';
 ALTER TABLE user_configs ADD COLUMN IF NOT EXISTS briefing_last_morning_sent DATE;
 ALTER TABLE user_configs ADD COLUMN IF NOT EXISTS briefing_last_evening_sent DATE;
+ALTER TABLE user_configs ADD COLUMN IF NOT EXISTS habit_nudges_enabled BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE user_configs ADD COLUMN IF NOT EXISTS habit_nudge_last_sent DATE;
 
 CREATE TABLE IF NOT EXISTS shared_lists (
     id          BIGSERIAL PRIMARY KEY,
@@ -173,6 +175,15 @@ CREATE TABLE IF NOT EXISTS person_detections (
 );
 
 CREATE INDEX IF NOT EXISTS idx_person_detections_user ON person_detections (user_id, detected_at DESC);
+
+CREATE TABLE IF NOT EXISTS presence_events (
+    id          BIGSERIAL PRIMARY KEY,
+    user_id     TEXT NOT NULL REFERENCES user_configs(user_id) ON DELETE CASCADE,
+    event_type  TEXT NOT NULL,
+    occurred_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_presence_events_user ON presence_events (user_id, event_type, occurred_at DESC);
 
 CREATE TABLE IF NOT EXISTS security_events (
     id          BIGSERIAL PRIMARY KEY,
