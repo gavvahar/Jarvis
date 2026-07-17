@@ -108,6 +108,82 @@
   color: #ff9a7a;
 }
 
+#briefing-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  text-align: left;
+  margin-top: 10px;
+}
+#briefing-form input[type="time"] {
+  width: 100%;
+  padding: 11px 13px;
+  box-sizing: border-box;
+  background: rgba(2, 10, 18, 0.8);
+  border: 1px solid rgba(127, 233, 255, 0.28);
+  border-radius: 8px;
+  color: #eafcff;
+  font-family: "Share Tech Mono", monospace;
+  font-size: 13px;
+  outline: none;
+  letter-spacing: 0.04em;
+}
+#briefing-form input[type="time"]:focus {
+  border-color: var(--cyan-bright, #aef1ff);
+  box-shadow: 0 0 14px rgba(127, 233, 255, 0.3);
+}
+#briefing-enabled-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: "Share Tech Mono", monospace;
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  color: rgba(127, 233, 255, 0.85);
+  cursor: pointer;
+  margin-bottom: 4px;
+}
+#briefing-enabled-row input[type="checkbox"] {
+  width: 15px;
+  height: 15px;
+  accent-color: var(--cyan-bright, #7fe9ff);
+  cursor: pointer;
+}
+#briefing-form button {
+  flex: 1;
+  padding: 11px;
+  background: rgba(127, 233, 255, 0.12);
+  border: 1px solid rgba(127, 233, 255, 0.4);
+  border-radius: 8px;
+  color: #eafcff;
+  font-family: "Oxanium", sans-serif;
+  font-weight: 500;
+  letter-spacing: 0.12em;
+  font-size: 12px;
+  cursor: pointer;
+  transition:
+    background 0.2s,
+    box-shadow 0.2s;
+}
+#briefing-form button:hover {
+  background: rgba(127, 233, 255, 0.22);
+  box-shadow: 0 0 16px rgba(127, 233, 255, 0.3);
+}
+#briefing-msg {
+  min-height: 16px;
+  margin-top: 12px;
+  font-family: "Share Tech Mono", monospace;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  color: rgba(127, 233, 255, 0.7);
+}
+#briefing-msg.ok {
+  color: #7fffc4;
+}
+#briefing-msg.err {
+  color: #ff9a7a;
+}
+
 /* ---- phone portrait (≤480px) ---- */
 @media (max-width: 480px) {
   /* Prevent iOS zoom on input/select focus (requires font-size ≥ 16px) */
