@@ -95,8 +95,8 @@ Optional:
 | `VISION_POLL_INTERVAL`    | Seconds between camera presence checks (default: `30`)                                               |
 | `VISION_AWAY_TIMEOUT`     | Seconds without a detection before someone is marked away (default: `1800`)                          |
 | `VISION_FACE_THRESHOLD`   | Face-match distance threshold, lower = stricter (default: `0.4`)                                     |
-| `VISION_MOTION_THRESHOLD` | Mean-pixel-diff threshold for Sentry Mode motion detection, lower = more sensitive (default: `15.0`) |
-| `VAPID_PUBLIC_KEY`        | Web Push public key (enables push notifications for Sentry Mode alerts)                              |
+| `VISION_MOTION_THRESHOLD` | Mean-pixel-diff threshold for Vigil Mode motion detection, lower = more sensitive (default: `15.0`) |
+| `VAPID_PUBLIC_KEY`        | Web Push public key (enables push notifications for Vigil Mode alerts)                              |
 | `VAPID_PRIVATE_KEY`       | Web Push private key matching `VAPID_PUBLIC_KEY`                                                     |
 | `VAPID_SUBJECT`           | Contact URI for Web Push, e.g. `mailto:you@example.com` (default: `mailto:admin@example.com`)        |
 
@@ -471,13 +471,13 @@ Once set up:
 - "Any security events today?"
 - "Add a camera for the backyard."
 - "Turn on privacy mode for the office camera." _(pauses detection for that camera)_
-- "Arm Sentry Mode." / "Disarm Sentry Mode." / "Put Sentry Mode back on auto."
+- "Arm Vigil Mode." / "Disarm Vigil Mode." / "Put Vigil Mode back on auto."
 
 Cameras are polled every 30 seconds by default (`VISION_POLL_INTERVAL`); a
 household member is marked away after no detection for 30 minutes
 (`VISION_AWAY_TIMEOUT`). Unrecognized faces and motion (frame-difference
 detection, threshold `VISION_MOTION_THRESHOLD`) are logged as security events
-with a snapshot whenever Sentry Mode is heightened — which happens
+with a snapshot whenever Vigil Mode is heightened — which happens
 automatically while everyone's away or it's night (**AUTO**, the default),
 always (**ARMED**), or never (**DISARMED**). Toggle it by voice or in the
 VISION settings panel. If you've enabled push notifications there, alerts

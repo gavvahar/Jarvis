@@ -6,7 +6,7 @@ Webhook auth tests use the `api_client` fixture from conftest.py which
 stubs out the database so no running PostgreSQL is required.
 """
 
-import asyncio, datetime, app as jarvis, auth, db as db_mod, integrations.automation as automation_mod, integrations.finance as finance_mod, integrations.vision as vision_mod, integrations.tesla as tesla_mod, integrations.sentry as sentry_mod, integrations.push as push_mod
+import asyncio, datetime, app as jarvis, auth, db as db_mod, integrations.automation as automation_mod, integrations.finance as finance_mod, integrations.vision as vision_mod, integrations.tesla as tesla_mod, integrations.vigil as vigil_mod, integrations.push as push_mod
 from unittest.mock import AsyncMock, MagicMock, patch
 from fastapi import HTTPException
 from app import (
@@ -3722,23 +3722,23 @@ class TestDbCameras:
         assert result == b"jpegbytes"
 
 
-class TestDbSentryMode:
-    def test_get_sentry_mode_defaults_to_auto(self):
+class TestDbVigilMode:
+    def test_get_vigil_mode_defaults_to_auto(self):
         pool, conn = _mock_asyncpg_pool(fetchval=None)
         with patch("db._pool", return_value=pool):
-            result = asyncio.run(db_mod._db_get_sentry_mode())
+            result = asyncio.run(db_mod._db_get_vigil_mode())
         assert result == "auto"
 
-    def test_get_sentry_mode_returns_stored_value(self):
+    def test_get_vigil_mode_returns_stored_value(self):
         pool, conn = _mock_asyncpg_pool(fetchval="armed")
         with patch("db._pool", return_value=pool):
-            result = asyncio.run(db_mod._db_get_sentry_mode())
+            result = asyncio.run(db_mod._db_get_vigil_mode())
         assert result == "armed"
 
-    def test_set_sentry_mode_updates_row(self):
+    def test_set_vigil_mode_updates_row(self):
         pool, conn = _mock_asyncpg_pool()
         with patch("db._pool", return_value=pool):
-            asyncio.run(db_mod._db_set_sentry_mode("disarmed", "u1"))
+            asyncio.run(db_mod._db_set_vigil_mode("disarmed", "u1"))
         conn.execute.assert_awaited_once()
         assert conn.execute.call_args.args[1] == "disarmed"
         assert conn.execute.call_args.args[2] == "u1"
@@ -4082,13 +4082,18 @@ class TestPWARoutes:
 class TestApiStatus:
     def test_returns_status_fields(self, api_client):
         _seed_user_state(config={"provider": "anthropic", "model": "claude-haiku-4-5"})
-        with patch.object(jarvis, "_finance_configured", new=AsyncMock(return_value=False)):
+        with (
+            patch.object(jarvis, "_finance_configured", new=AsyncMock(return_value=False)),
+            patch.object(jarvis, "_user_has_face_enrollment", return_value=True),
+        ):
             resp = api_client.get("/api/status")
         assert resp.status_code == 200
         data = resp.json()
         assert data["provider"] == "anthropic"
         assert data["model"] == "claude-haiku-4-5"
         assert data["role"] == "user"
+        assert data["user_id"] == "local"
+        assert data["face_enrolled"] is True
 
 
 class TestApiSaveConfig:
@@ -4181,6 +4186,24 @@ class TestApiCamerasAndVision:
         with patch.object(jarvis, "_face_enroll_delete", new=AsyncMock(return_value={"ok": True})):
             resp = api_client.delete("/api/face/enrollment")
         assert resp.json() == {"ok": True}
+
+    def test_face_check_presence(self, api_client):
+        with patch.object(jarvis, "_check_presence", new=AsyncMock(return_value={"faces": []})) as mock_check:
+            resp = api_client.post("/api/face/check-presence", files={"image": ("frame.jpg", b"fake-bytes", "image/jpeg")})
+        assert resp.json() == {"faces": []}
+        mock_check.assert_awaited_once_with(b"fake-bytes")
+
+    def test_face_lock_event(self, api_client):
+        with patch.object(jarvis, "_record_device_lock", new=AsyncMock(return_value={"ok": True})) as mock_lock:
+            resp = api_client.post("/api/face/lock-event", files={"image": ("frame.jpg", b"fake-bytes", "image/jpeg")})
+        assert resp.json() == {"ok": True}
+        mock_lock.assert_awaited_once_with("local", b"fake-bytes")
+
+    def test_face_lock_event_without_image(self, api_client):
+        with patch.object(jarvis, "_record_device_lock", new=AsyncMock(return_value={"ok": True})) as mock_lock:
+            resp = api_client.post("/api/face/lock-event")
+        assert resp.json() == {"ok": True}
+        mock_lock.assert_awaited_once_with("local", None)
 
 
 class TestApiSaveHa:
@@ -5399,6 +5422,31 @@ class TestVisionAppHelpers:
         assert result == {"ok": True}
         mock_clear.assert_awaited_once()
 
+    def test_user_has_face_enrollment_true(self):
+        with patch.object(vision_mod, "_face_cache", {"u1": ([0.1], "Alice")}):
+            assert vision_mod._user_has_face_enrollment("u1") is True
+
+    def test_user_has_face_enrollment_false(self):
+        with patch.object(vision_mod, "_face_cache", {}):
+            assert vision_mod._user_has_face_enrollment("u1") is False
+
+    def test_check_presence_unavailable_returns_no_faces(self):
+        with patch.object(vision_mod, "_VISION_OK", False):
+            result = asyncio.run(vision_mod._check_presence(b"data"))
+        assert result == {"faces": []}
+
+    def test_check_presence_returns_identified_faces(self):
+        faces = [{"detected_user_id": "u1", "name": "Alice", "confidence": 0.9}]
+        with patch.object(vision_mod, "_identify_faces_in_image", return_value=faces):
+            result = asyncio.run(vision_mod._check_presence(b"data"))
+        assert result == {"faces": faces}
+
+    def test_record_device_lock(self):
+        with patch.object(vision_mod, "_db_record_security_event", new=AsyncMock()) as mock_record:
+            result = asyncio.run(vision_mod._record_device_lock("u1", b"jpeg"))
+        assert result == {"ok": True}
+        mock_record.assert_awaited_once_with("u1", None, "device_lock", "", b"jpeg")
+
 
 class TestVisionLoop:
     def _fake_sleep(self, stop_after):
@@ -5428,7 +5476,7 @@ class TestVisionLoop:
             patch.object(vision_mod, "_VISION_OK", True),
             patch.object(vision_mod, "_pool", return_value=pool),
             patch.object(vision_mod, "_db_get_all_face_embeddings", new=AsyncMock(return_value={})),
-            patch.object(vision_mod, "_db_get_sentry_mode", new=AsyncMock(return_value="auto")),
+            patch.object(vision_mod, "_db_get_vigil_mode", new=AsyncMock(return_value="auto")),
             patch.object(vision_mod, "_get_ha_camera_snapshot", new=AsyncMock(return_value=b"jpeg")),
             patch.object(vision_mod, "_identify_faces_in_image", return_value=[{"detected_user_id": "u2", "name": "Bob", "confidence": 0.9}]),
             patch.object(vision_mod, "_db_record_detection", new=AsyncMock()),
@@ -5458,7 +5506,7 @@ class TestVisionLoop:
             patch.object(vision_mod, "_VISION_OK", True),
             patch.object(vision_mod, "_pool", return_value=pool),
             patch.object(vision_mod, "_db_get_all_face_embeddings", new=AsyncMock(return_value={})),
-            patch.object(vision_mod, "_db_get_sentry_mode", new=AsyncMock(return_value="auto")),
+            patch.object(vision_mod, "_db_get_vigil_mode", new=AsyncMock(return_value="auto")),
             patch.object(vision_mod, "_capture_rtsp_frame", return_value=b"jpeg"),
             patch.object(vision_mod, "_identify_faces_in_image", return_value=[{"detected_user_id": None, "name": "unknown", "confidence": 0.0}]),
             patch.object(vision_mod, "_db_record_detection", new=AsyncMock()),
@@ -5491,7 +5539,7 @@ class TestVisionLoop:
             patch.object(vision_mod, "_VISION_OK", True),
             patch.object(vision_mod, "_pool", return_value=pool),
             patch.object(vision_mod, "_db_get_all_face_embeddings", new=AsyncMock(return_value={})),
-            patch.object(vision_mod, "_db_get_sentry_mode", new=AsyncMock(return_value="auto")),
+            patch.object(vision_mod, "_db_get_vigil_mode", new=AsyncMock(return_value="auto")),
             patch.object(vision_mod, "_get_ha_camera_snapshot", new=AsyncMock(side_effect=[None, b"jpeg"])),
             patch.object(vision_mod, "_identify_faces_in_image", return_value=[]),
             patch.object(vision_mod, "_db_get_who_is_home", new=AsyncMock(return_value=[])),
@@ -5515,7 +5563,7 @@ class TestVisionLoop:
             patch.object(vision_mod, "_VISION_OK", True),
             patch.object(vision_mod, "_pool", return_value=pool),
             patch.object(vision_mod, "_db_get_all_face_embeddings", new=AsyncMock(return_value={})),
-            patch.object(vision_mod, "_db_get_sentry_mode", new=AsyncMock(return_value="auto")),
+            patch.object(vision_mod, "_db_get_vigil_mode", new=AsyncMock(return_value="auto")),
             patch.object(vision_mod, "_db_update_presence", new=AsyncMock()) as mock_presence,
             patch.object(vision_mod, "_db_get_who_is_home", new=AsyncMock(return_value=[])),
         ):
@@ -5544,7 +5592,7 @@ class TestVisionLoop:
             patch.object(vision_mod, "_VISION_OK", True),
             patch.object(vision_mod, "_pool", return_value=pool),
             patch.object(vision_mod, "_db_get_all_face_embeddings", new=AsyncMock(return_value={})),
-            patch.object(vision_mod, "_db_get_sentry_mode", new=AsyncMock(return_value="armed")),
+            patch.object(vision_mod, "_db_get_vigil_mode", new=AsyncMock(return_value="armed")),
             patch.object(vision_mod, "_get_ha_camera_snapshot", new=AsyncMock(return_value=b"jpeg")),
             patch.object(vision_mod, "_identify_faces_in_image", return_value=[]),
             patch.object(vision_mod, "_frame_motion_score", return_value=99.0),
@@ -5579,7 +5627,7 @@ class TestVisionLoop:
             patch.object(vision_mod, "_VISION_OK", True),
             patch.object(vision_mod, "_pool", return_value=pool),
             patch.object(vision_mod, "_db_get_all_face_embeddings", new=AsyncMock(return_value={})),
-            patch.object(vision_mod, "_db_get_sentry_mode", new=AsyncMock(return_value="armed")),
+            patch.object(vision_mod, "_db_get_vigil_mode", new=AsyncMock(return_value="armed")),
             patch.object(vision_mod, "_get_ha_camera_snapshot", new=AsyncMock(return_value=b"jpeg")),
             patch.object(vision_mod, "_identify_faces_in_image", return_value=[]),
             patch.object(vision_mod, "_frame_motion_score", return_value=1.0),
@@ -5606,7 +5654,7 @@ class TestVisionLoop:
             patch.object(vision_mod, "_VISION_OK", True),
             patch.object(vision_mod, "_pool", return_value=pool),
             patch.object(vision_mod, "_db_get_all_face_embeddings", new=AsyncMock(return_value={})),
-            patch.object(vision_mod, "_db_get_sentry_mode", new=AsyncMock(return_value="disarmed")),
+            patch.object(vision_mod, "_db_get_vigil_mode", new=AsyncMock(return_value="disarmed")),
             patch.object(vision_mod, "_capture_rtsp_frame", return_value=b"jpeg"),
             patch.object(vision_mod, "_identify_faces_in_image", return_value=[{"detected_user_id": None, "name": "unknown", "confidence": 0.0}]),
             patch.object(vision_mod, "_db_record_detection", new=AsyncMock()),
@@ -5649,45 +5697,45 @@ class TestVisionLoop:
                 pass
 
 
-class TestSentryIntegration:
-    def test_get_sentry_tools_returns_both_tools(self):
-        names = {t["name"] for t in sentry_mod._get_sentry_tools("anthropic")}
-        assert names == {"set_sentry_mode", "get_sentry_mode"}
+class TestVigilIntegration:
+    def test_get_vigil_tools_returns_both_tools(self):
+        names = {t["name"] for t in vigil_mod._get_vigil_tools("anthropic")}
+        assert names == {"set_vigil_mode", "get_vigil_mode"}
 
-    def test_set_sentry_mode_rejects_invalid_mode(self):
+    def test_set_vigil_mode_rejects_invalid_mode(self):
         try:
-            asyncio.run(sentry_mod._set_sentry_mode("bogus", "u1"))
+            asyncio.run(vigil_mod._set_vigil_mode("bogus", "u1"))
             raise AssertionError("expected HTTPException")
         except HTTPException as e:
             assert e.status_code == 400
 
-    def test_set_sentry_mode_updates_and_broadcasts(self):
+    def test_set_vigil_mode_updates_and_broadcasts(self):
         mock_broadcast = AsyncMock()
-        sentry_mod.init(mock_broadcast)
-        with patch.object(sentry_mod, "_db_set_sentry_mode", new=AsyncMock()) as mock_set:
-            result = asyncio.run(sentry_mod._set_sentry_mode("ARMED", "u1"))
+        vigil_mod.init(mock_broadcast)
+        with patch.object(vigil_mod, "_db_set_vigil_mode", new=AsyncMock()) as mock_set:
+            result = asyncio.run(vigil_mod._set_vigil_mode("ARMED", "u1"))
         assert result == {"ok": True, "mode": "armed"}
         mock_set.assert_awaited_once_with("armed", "u1")
-        mock_broadcast.assert_awaited_once_with("sentry_mode_changed", {"mode": "armed", "updated_by": "u1"})
+        mock_broadcast.assert_awaited_once_with("vigil_mode_changed", {"mode": "armed", "updated_by": "u1"})
 
-    def test_execute_sentry_tool_set_mode_returns_speak_text(self):
-        sentry_mod.init(AsyncMock())
-        with patch.object(sentry_mod, "_db_set_sentry_mode", new=AsyncMock()):
-            result = asyncio.run(sentry_mod._execute_sentry_tool("set_sentry_mode", {"mode": "disarmed"}, "u1"))
+    def test_execute_vigil_tool_set_mode_returns_speak_text(self):
+        vigil_mod.init(AsyncMock())
+        with patch.object(vigil_mod, "_db_set_vigil_mode", new=AsyncMock()):
+            result = asyncio.run(vigil_mod._execute_vigil_tool("set_vigil_mode", {"mode": "disarmed"}, "u1"))
         assert "disarmed" in result.lower()
 
-    def test_execute_sentry_tool_set_mode_invalid(self):
-        result = asyncio.run(sentry_mod._execute_sentry_tool("set_sentry_mode", {"mode": "nope"}, "u1"))
+    def test_execute_vigil_tool_set_mode_invalid(self):
+        result = asyncio.run(vigil_mod._execute_vigil_tool("set_vigil_mode", {"mode": "nope"}, "u1"))
         assert "mode must be one of" in result
 
-    def test_execute_sentry_tool_get_mode(self):
-        with patch.object(sentry_mod, "_db_get_sentry_mode", new=AsyncMock(return_value="auto")):
-            result = asyncio.run(sentry_mod._execute_sentry_tool("get_sentry_mode", {}, "u1"))
+    def test_execute_vigil_tool_get_mode(self):
+        with patch.object(vigil_mod, "_db_get_vigil_mode", new=AsyncMock(return_value="auto")):
+            result = asyncio.run(vigil_mod._execute_vigil_tool("get_vigil_mode", {}, "u1"))
         assert "auto" in result
 
-    def test_execute_sentry_tool_unknown_name(self):
-        result = asyncio.run(sentry_mod._execute_sentry_tool("nonsense", {}, "u1"))
-        assert "Unknown sentry tool" in result
+    def test_execute_vigil_tool_unknown_name(self):
+        result = asyncio.run(vigil_mod._execute_vigil_tool("nonsense", {}, "u1"))
+        assert "Unknown vigil tool" in result
 
 
 class TestPushIntegration:
