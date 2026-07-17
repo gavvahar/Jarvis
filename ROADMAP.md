@@ -13,8 +13,8 @@
 | 5        | app.py Modularisation                          | Complete    |
 | 6        | Phase 4 — Smart Speaker & Local Hardware       | Complete    |
 | 7        | Phase 5 — Deeper Smart Home                    | Complete    |
-| 8        | Phase 6 — Proactive & Ambient Intelligence     | Planned     |
-| 9        | Phase 8 — Developer & Extensibility Platform   | In Progress |
+| 8        | Phase 6 — Proactive & Ambient Intelligence     | Next        |
+| 9        | Phase 8 — Developer & Extensibility Platform   | On Hold     |
 | 10       | Phase 9 — Financial Intelligence               | In Progress |
 | 11       | Phase 10 — Computer Vision & Spatial Awareness | Complete    |
 | 12       | Phase 11 — Accessibility & Hearing Assistance  | Planned     |
