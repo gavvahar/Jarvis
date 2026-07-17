@@ -67,19 +67,28 @@ jobs:
             BUMP="patch"
           fi
 
-          # Version counter tracks semver tags only, independent of the tag naming used previously (e.g. date tags)
-          PREV_SEMVER=$(git tag -l 'v[0-9]*.[0-9]*.[0-9]*' | sort -V | tail -1)
-          PREV_SEMVER="${PREV_SEMVER#v}"
-          PREV_SEMVER="${PREV_SEMVER:-0.0.0}"
-          IFS='.' read -r MAJOR MINOR PATCH <<< "$PREV_SEMVER"
+          # Version counter tracks semver tags only. Old date-based tags (e.g. v2026.07.12)
+          # also match the v<n>.<n>.<n> glob, so exclude anything with a year-sized (>=100)
+          # leading component to keep them from being picked up as a semver seed.
+          PREV_SEMVER=$(git tag -l 'v[0-9]*.[0-9]*.[0-9]*' \
+            | sed 's/^v//' \
+            | awk -F. '$1 < 100' \
+            | sort -V | tail -1)
 
-          case "$BUMP" in
-            major) MAJOR=$((MAJOR+1)); MINOR=0; PATCH=0 ;;
-            minor) MINOR=$((MINOR+1)); PATCH=0 ;;
-            patch) PATCH=$((PATCH+1)) ;;
-          esac
+          if [ -z "$PREV_SEMVER" ]; then
+            # First release under the reset scheme: start clean at v1.0.0 rather than
+            # bumping off of it, so the reset point itself is a real, unbumped release.
+            NEW_TAG="v1.0.0"
+          else
+            IFS='.' read -r MAJOR MINOR PATCH <<< "$PREV_SEMVER"
+            case "$BUMP" in
+              major) MAJOR=$((MAJOR+1)); MINOR=0; PATCH=0 ;;
+              minor) MINOR=$((MINOR+1)); PATCH=0 ;;
+              patch) PATCH=$((PATCH+1)) ;;
+            esac
+            NEW_TAG="v${MAJOR}.${MINOR}.${PATCH}"
+          fi
 
-          NEW_TAG="v${MAJOR}.${MINOR}.${PATCH}"
           if git rev-parse "$NEW_TAG" >/dev/null 2>&1; then
             echo "Tag $NEW_TAG already exists, skipping release"
             echo "skip=true" >> "$GITHUB_OUTPUT"
