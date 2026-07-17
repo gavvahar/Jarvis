@@ -179,14 +179,14 @@ CREATE TABLE IF NOT EXISTS security_events (
     detected_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE TABLE IF NOT EXISTS sentry_state (
+CREATE TABLE IF NOT EXISTS vigil_state (
     id          BIGINT PRIMARY KEY DEFAULT 1 CHECK (id = 1),
     mode        TEXT NOT NULL DEFAULT 'auto',
     updated_by  TEXT REFERENCES user_configs(user_id) ON DELETE SET NULL,
     updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-INSERT INTO sentry_state (id, mode) VALUES (1, 'auto') ON CONFLICT (id) DO NOTHING;
+INSERT INTO vigil_state (id, mode) VALUES (1, 'auto') ON CONFLICT (id) DO NOTHING;
 
 CREATE TABLE IF NOT EXISTS push_subscriptions (
     id          BIGSERIAL PRIMARY KEY,

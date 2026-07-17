@@ -120,12 +120,12 @@
   border-color: var(--cyan-bright, #aef1ff);
   box-shadow: 0 0 14px rgba(127, 233, 255, 0.3);
 }
-#vision-sentry-mode-control {
+#vision-vigil-mode-control {
   display: flex;
   gap: 6px;
   margin-top: 8px;
 }
-.vision-sentry-btn {
+.vision-vigil-btn {
   flex: 1;
   padding: 8px 10px;
   background: rgba(127, 233, 255, 0.08);
@@ -141,22 +141,22 @@
     box-shadow 0.2s,
     color 0.2s;
 }
-.vision-sentry-btn:hover {
+.vision-vigil-btn:hover {
   background: rgba(127, 233, 255, 0.18);
 }
-.vision-sentry-btn.active {
+.vision-vigil-btn.active {
   background: rgba(127, 233, 255, 0.28);
   border-color: var(--cyan-bright, #aef1ff);
   color: #eafcff;
   box-shadow: 0 0 10px rgba(127, 233, 255, 0.3);
 }
-.vision-sentry-btn.active[data-mode="armed"] {
+.vision-vigil-btn.active[data-mode="armed"] {
   background: rgba(255, 122, 122, 0.22);
   border-color: rgba(255, 122, 122, 0.6);
   color: #ff9a9a;
   box-shadow: 0 0 10px rgba(255, 122, 122, 0.3);
 }
-.vision-sentry-btn.active[data-mode="disarmed"] {
+.vision-vigil-btn.active[data-mode="disarmed"] {
   background: rgba(255, 187, 51, 0.18);
   border-color: rgba(255, 187, 51, 0.5);
   color: #ffbb33;
