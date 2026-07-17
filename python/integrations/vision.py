@@ -12,7 +12,7 @@ from db import (
     _db_get_all_face_embeddings,
     _db_get_recent_security_events,
     _db_get_security_event_snapshot,
-    _db_get_sentry_mode,
+    _db_get_vigil_mode,
     _db_get_who_is_home,
     _db_list_cameras,
     _db_ready,
@@ -59,6 +59,10 @@ def _vision_available() -> bool:
 
 def _get_presence_cache() -> list:
     return _presence_cache
+
+
+def _user_has_face_enrollment(user_id: str) -> bool:
+    return user_id in _face_cache
 
 
 def _get_presence_prompt_context() -> str:
@@ -285,7 +289,7 @@ async def _vision_loop():
             continue
         try:
             await _refresh_face_cache()
-            mode = await _db_get_sentry_mode()
+            mode = await _db_get_vigil_mode()
             now = datetime.datetime.now(datetime.timezone.utc)
             hour = now.hour
             async with _pool().acquire() as conn:
@@ -415,6 +419,18 @@ async def _get_security_event_snapshot(user_id: str, event_id: int) -> bytes:
     if not snapshot:
         raise HTTPException(404, "No snapshot for this event")
     return snapshot
+
+
+async def _check_presence(image_bytes: bytes) -> dict:
+    if not _VISION_OK:
+        return {"faces": []}
+    faces = await asyncio.to_thread(_identify_faces_in_image, image_bytes)
+    return {"faces": faces}
+
+
+async def _record_device_lock(user_id: str, image_bytes: bytes | None) -> dict:
+    await _db_record_security_event(user_id, None, "device_lock", "", image_bytes)
+    return {"ok": True}
 
 
 async def _face_enroll_sample(image_bytes: bytes) -> dict:

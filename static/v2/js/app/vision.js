@@ -14,7 +14,7 @@ const visionEnrollBtn = $("vision-enroll-btn");
 const visionEnrollClear = $("vision-enroll-clear-btn");
 const visionFaceFile = $("vision-face-file");
 const visionEnrollStatus = $("vision-enroll-status");
-const visionSentryButtons = document.querySelectorAll(".vision-sentry-btn");
+const visionVigilButtons = document.querySelectorAll(".vision-vigil-btn");
 const visionEnablePushBtn = $("vision-enable-push-btn");
 const visionPushStatus = $("vision-push-status");
 const visionSecurityEvents = $("vision-security-events");
@@ -76,35 +76,35 @@ async function loadPresence() {
   }
 }
 
-function setSentryModeUI(mode) {
-  visionSentryButtons.forEach((btn) => {
+function setVigilModeUI(mode) {
+  visionVigilButtons.forEach((btn) => {
     btn.classList.toggle("active", btn.dataset.mode === mode);
   });
 }
 
-async function loadSentryMode() {
-  if (!visionSentryButtons.length) return;
+async function loadVigilMode() {
+  if (!visionVigilButtons.length) return;
   try {
-    const r = await fetch("/api/sentry-mode");
+    const r = await fetch("/api/vigil-mode");
     const { mode } = await r.json();
-    setSentryModeUI(mode);
+    setVigilModeUI(mode);
   } catch {
     /* leave buttons in their last-known state */
   }
 }
 
-visionSentryButtons.forEach((btn) => {
+visionVigilButtons.forEach((btn) => {
   btn.addEventListener("click", async () => {
     const mode = btn.dataset.mode;
-    setSentryModeUI(mode);
+    setVigilModeUI(mode);
     try {
-      await fetch("/api/sentry-mode", {
+      await fetch("/api/vigil-mode", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ mode }),
       });
     } catch {
-      loadSentryMode();
+      loadVigilMode();
     }
   });
 });
@@ -112,6 +112,7 @@ visionSentryButtons.forEach((btn) => {
 const SECURITY_EVENT_LABELS = {
   unknown_person: "UNKNOWN PERSON",
   motion: "MOTION",
+  device_lock: "DEVICE LOCKED",
 };
 
 async function loadSecurityEvents() {
@@ -162,7 +163,7 @@ if (visionBtn) {
       visionSettingsEl.classList.remove("setup-hidden");
       loadPresence();
       loadCameras();
-      loadSentryMode();
+      loadVigilMode();
       loadSecurityEvents();
     }
   });
@@ -249,8 +250,8 @@ socket.on("presence_update", ({ name, is_home, room }) => {
   loadPresence();
 });
 
-socket.on("sentry_mode_changed", ({ mode }) => {
-  setSentryModeUI(mode);
+socket.on("vigil_mode_changed", ({ mode }) => {
+  setVigilModeUI(mode);
 });
 
 socket.on("security_alert", () => {

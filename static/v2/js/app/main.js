@@ -13,6 +13,7 @@ import "./meeting.js";
 import "./messages.js";
 import "./doorbell.js";
 import "./vision.js";
+import "./vigil_lock.js";
 import "./garage.js";
 import "./finance.js";
 import "./tesla.js";
