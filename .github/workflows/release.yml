@@ -6,12 +6,18 @@ on:
       - "Auto Merge Staging to Main"
     types:
       - completed
+  push:
+    branches:
+      - main
   workflow_dispatch:
 
 jobs:
   release:
     runs-on: [self-hosted, homelab]
-    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    # push is a backup path in case the workflow_run trigger doesn't fire; the
+    # "main is unchanged since $LATEST_TAG" / "tag already exists" checks below
+    # make it safe for both triggers to end up processing the same commit.
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'push' || github.event.workflow_run.conclusion == 'success'
     permissions:
       contents: write
       pull-requests: read
