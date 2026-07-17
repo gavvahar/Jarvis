@@ -8,7 +8,7 @@ from integrations.ha import _get_ha_tools, _ha_call_service, _ha_configured, _ha
 from integrations.music.apple_music import _AM_TOOL_NAMES, _apple_music_configured, _execute_apple_music_tool, _get_apple_music_tools
 from integrations.music.spotify import _SPOTIFY_TOOL_NAMES, _execute_spotify_tool, _get_spotify_tools, _spotify_configured
 from integrations.myq import _get_myq_tools, _myq_configured, _myq_get_status, _myq_set_door
-from integrations.sentry import _SENTRY_TOOL_NAMES, _execute_sentry_tool, _get_sentry_tools
+from integrations.vigil import _VIGIL_TOOL_NAMES, _execute_vigil_tool, _get_vigil_tools
 from integrations.pim.calendar import _calendar_configured, _execute_calendar_tool
 from integrations.pim.contacts import _contacts_configured, _execute_contact_lookup_tool
 from integrations.pim.timers import _execute_news_tool, _execute_reminder_tool, _execute_timer_tool, _get_pim_tools
@@ -60,8 +60,8 @@ async def _execute_ha_tool(config: dict, name, args, user_id: str = ""):
             return "\n".join(lines)
         if name in _VISION_TOOL_NAMES:
             return await _execute_vision_tool(name, args, user_id)
-        if name in _SENTRY_TOOL_NAMES:
-            return await _execute_sentry_tool(name, args, user_id)
+        if name in _VIGIL_TOOL_NAMES:
+            return await _execute_vigil_tool(name, args, user_id)
         if name in _SNAPCAST_TOOL_NAMES:
             return await _execute_snapcast_tool(name, args)
         if name == "get_garage_status":
@@ -341,7 +341,7 @@ async def _stream_reply(state: dict, on_text):
         + _get_pim_tools(config, provider)
         + _get_automation_tools(config, provider)
         + _get_vision_tools(provider)
-        + _get_sentry_tools(provider)
+        + _get_vigil_tools(provider)
         + _get_snapcast_tools(provider)
         + finance_tools
     )

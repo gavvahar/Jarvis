@@ -1,7 +1,7 @@
 /* ===========================================================
    PWA — registers the service worker that makes Jarvis
    installable to a phone's home screen, and handles Web Push
-   subscription (used today by Sentry Mode security alerts).
+   subscription (used today by Vigil Mode security alerts).
    =========================================================== */
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => {
