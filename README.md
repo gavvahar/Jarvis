@@ -263,6 +263,24 @@ J.A.R.V.I.S. pulls live headlines from the BBC RSS feeds — no API key required
 
 Categories: general, technology, science, health, business, sports.
 
+## DAILY BRIEFING
+
+A spoken morning and/or evening summary — current weather, today's remaining
+calendar events, today's reminders, and top news headlines — delivered
+automatically at times you choose. Off by default; enable it under **DAILY
+BRIEFING** in the calendar/contacts (**AGENDA**) settings panel, or by voice:
+
+- "Turn on my daily briefing."
+- "Set my morning briefing for 6:30."
+- "What's my briefing status?"
+- "Give me my briefing now." _(delivers it immediately, any time)_
+- "Turn off my daily briefing."
+
+When a scheduled briefing fires, J.A.R.V.I.S. wakes from standby and speaks it
+on every connected session for that user, and sends a push notification if
+you've enabled push (see **VISION & PRESENCE** below) — so it reaches you even
+if the app isn't open.
+
 ## HOME ASSISTANT
 
 Connect J.A.R.V.I.S. to your Home Assistant instance from the settings panel.
@@ -482,6 +500,17 @@ automatically while everyone's away or it's night (**AUTO**, the default),
 always (**ARMED**), or never (**DISARMED**). Toggle it by voice or in the
 VISION settings panel. If you've enabled push notifications there, alerts
 reach you even when the app isn't open.
+
+**Habit learning:** once camera presence detection has a few days of
+history, J.A.R.V.I.S. picks up on when you typically leave and arrive home
+(split into weekday/weekend patterns) and can tell you on request:
+
+- "When do I usually leave?"
+- "What are my habits?"
+
+Turn on **NUDGE ME AROUND MY USUAL LEAVE TIME** in the VISION settings panel
+(off by default) for a proactive heads-up around your usual departure time,
+if you haven't left yet that day.
 
 ## MEETING RECORDER
 
