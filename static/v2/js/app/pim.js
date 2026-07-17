@@ -19,6 +19,12 @@ const calendarStatusDot = $("calendar-status-dot");
 const calendarStatusText = $("calendar-status-text");
 const contactsStatusDot = $("contacts-status-dot");
 const contactsStatusText = $("contacts-status-text");
+const briefingForm = $("briefing-form");
+const briefingEnabledInput = $("briefing-enabled");
+const briefingMorningInput = $("briefing-morning-time");
+const briefingEveningInput = $("briefing-evening-time");
+const briefingSaveBtn = $("briefing-save");
+const briefingMsg = $("briefing-msg");
 
 let _calendarDavConfigured = false;
 let _contactsDavConfigured = false;
@@ -68,12 +74,32 @@ export function setContactsStatus(configured, url, username) {
   refreshAgendaButton();
 }
 
+async function loadBriefingPrefs() {
+  if (!briefingEnabledInput) return;
+  try {
+    const r = await fetch("/api/briefing");
+    const { enabled, morning_time, evening_time } = await r.json();
+    briefingEnabledInput.checked = !!enabled;
+    if (briefingMorningInput && morning_time)
+      briefingMorningInput.value = morning_time;
+    if (briefingEveningInput && evening_time)
+      briefingEveningInput.value = evening_time;
+  } catch {
+    /* leave defaults */
+  }
+}
+
 function showPimSettings() {
   if (pimSettingsEl) pimSettingsEl.classList.remove("setup-hidden");
   if (pimMsg) {
     pimMsg.textContent = "";
     pimMsg.className = "";
   }
+  if (briefingMsg) {
+    briefingMsg.textContent = "";
+    briefingMsg.className = "";
+  }
+  loadBriefingPrefs();
   setTimeout(() => calendarUrlInput && calendarUrlInput.focus(), 150);
 }
 
@@ -191,6 +217,39 @@ if (pimSettingsForm) {
       pimMsg.textContent = "Could not reach the server.";
     } finally {
       pimSaveBtn.disabled = false;
+    }
+  });
+}
+
+if (briefingForm) {
+  briefingForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    briefingSaveBtn.disabled = true;
+    briefingMsg.className = "";
+    briefingMsg.textContent = "Saving…";
+    try {
+      const res = await fetch("/api/briefing", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          enabled: briefingEnabledInput.checked,
+          morning_time: briefingMorningInput.value || "07:00",
+          evening_time: briefingEveningInput.value || "18:00",
+        }),
+      });
+      const data = await res.json();
+      if (data.ok) {
+        briefingMsg.className = "ok";
+        briefingMsg.textContent = "Daily briefing settings saved.";
+      } else {
+        briefingMsg.className = "err";
+        briefingMsg.textContent = data.error || "Could not save settings.";
+      }
+    } catch {
+      briefingMsg.className = "err";
+      briefingMsg.textContent = "Could not reach the server.";
+    } finally {
+      briefingSaveBtn.disabled = false;
     }
   });
 }
