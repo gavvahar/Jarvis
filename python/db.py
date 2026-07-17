@@ -607,16 +607,16 @@ async def _db_get_security_event_snapshot(user_id: str, event_id: int) -> bytes 
         return await conn.fetchval("SELECT snapshot FROM security_events WHERE id=$1 AND user_id=$2", event_id, user_id)
 
 
-async def _db_get_sentry_mode() -> str:
+async def _db_get_vigil_mode() -> str:
     async with _pool().acquire() as conn:
-        mode = await conn.fetchval("SELECT mode FROM sentry_state WHERE id=1")
+        mode = await conn.fetchval("SELECT mode FROM vigil_state WHERE id=1")
     return mode or "auto"
 
 
-async def _db_set_sentry_mode(mode: str, updated_by: str) -> None:
+async def _db_set_vigil_mode(mode: str, updated_by: str) -> None:
     async with _pool().acquire() as conn:
         await conn.execute(
-            "UPDATE sentry_state SET mode=$1, updated_by=$2, updated_at=NOW() WHERE id=1",
+            "UPDATE vigil_state SET mode=$1, updated_by=$2, updated_at=NOW() WHERE id=1",
             mode,
             updated_by,
         )

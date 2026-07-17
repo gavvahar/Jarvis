@@ -41,7 +41,7 @@ self.addEventListener("fetch", (event) => {
   );
 });
 
-// Push notifications (Sentry Mode security alerts today; other alert sources
+// Push notifications (Vigil Mode security alerts today; other alert sources
 // can adopt the same payload shape later).
 self.addEventListener("push", (event) => {
   let data = { title: "J.A.R.V.I.S.", body: "Alert.", url: "/" };
