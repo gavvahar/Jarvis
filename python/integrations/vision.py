@@ -17,6 +17,7 @@ from db import (
     _db_list_cameras,
     _db_ready,
     _db_record_detection,
+    _db_record_presence_event,
     _db_record_security_event,
     _db_save_face_embedding,
     _db_update_camera,
@@ -343,6 +344,7 @@ async def _vision_loop():
                         await _db_update_presence(det["detected_user_id"], True)
                         activity = _infer_activity(room, hour)
                         if not prev_home:
+                            await _db_record_presence_event(det["detected_user_id"], "arrived")
                             for sid in sids_fn(user_id):
                                 await sio.emit(
                                     "presence_update",
@@ -359,12 +361,13 @@ async def _vision_loop():
             async with _pool().acquire() as conn:
                 cutoff = datetime.timedelta(seconds=VISION_AWAY_TIMEOUT)
                 stale = await conn.fetch(
-                    "SELECT user_id FROM user_configs WHERE is_home=TRUE AND (last_seen_at IS NULL OR last_seen_at < NOW()-$1::interval)",
+                    "SELECT user_id, last_seen_at FROM user_configs WHERE is_home=TRUE AND (last_seen_at IS NULL OR last_seen_at < NOW()-$1::interval)",
                     cutoff,
                 )
             for row in stale:
                 uid = row["user_id"]
                 await _db_update_presence(uid, False)
+                await _db_record_presence_event(uid, "departed", row["last_seen_at"])
                 for sid in sids_fn(uid):
                     await sio.emit("presence_update", {"user_id": uid, "name": uid, "is_home": False, "room": "", "activity": ""}, to=sid)
 

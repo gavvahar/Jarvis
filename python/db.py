@@ -374,6 +374,48 @@ async def _db_fire_due_reminders() -> list:
     return fired
 
 
+# ─── DAILY BRIEFING ───────────────────────────────────────────────────────────
+async def _db_get_briefing_prefs(user_id: str) -> dict:
+    async with _pool().acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT briefing_enabled, briefing_morning_time, briefing_evening_time FROM user_configs WHERE user_id = $1",
+            user_id,
+        )
+    if row is None:
+        return {"enabled": False, "morning_time": "07:00", "evening_time": "18:00"}
+    return {"enabled": row["briefing_enabled"], "morning_time": row["briefing_morning_time"], "evening_time": row["briefing_evening_time"]}
+
+
+async def _db_set_briefing_prefs(user_id: str, enabled: bool, morning_time: str, evening_time: str) -> None:
+    async with _pool().acquire() as conn:
+        await conn.execute(
+            "UPDATE user_configs SET briefing_enabled=$2, briefing_morning_time=$3, briefing_evening_time=$4 WHERE user_id=$1",
+            user_id,
+            enabled,
+            morning_time,
+            evening_time,
+        )
+
+
+async def _db_list_users_due_for_briefing(slot: str, hhmm: str, today: datetime.date) -> list:
+    time_col = "briefing_morning_time" if slot == "morning" else "briefing_evening_time"
+    sent_col = "briefing_last_morning_sent" if slot == "morning" else "briefing_last_evening_sent"
+    # time_col/sent_col are chosen from the fixed "morning"/"evening" branch above, not user input
+    async with _pool().acquire() as conn:
+        rows = await conn.fetch(
+            f"SELECT user_id FROM user_configs WHERE briefing_enabled = TRUE AND {time_col} = $1 AND ({sent_col} IS NULL OR {sent_col} != $2)",
+            hhmm,
+            today,
+        )
+    return [r["user_id"] for r in rows]
+
+
+async def _db_mark_briefing_sent(user_id: str, slot: str, today: datetime.date) -> None:
+    sent_col = "briefing_last_morning_sent" if slot == "morning" else "briefing_last_evening_sent"
+    async with _pool().acquire() as conn:
+        await conn.execute(f"UPDATE user_configs SET {sent_col}=$2 WHERE user_id=$1", user_id, today)
+
+
 # ─── ROUTINES ─────────────────────────────────────────────────────────────────
 async def _db_create_routine(user_id: str, name: str, trigger_phrases: list, steps: list) -> int:
     async with _pool().acquire() as conn:
@@ -714,6 +756,59 @@ async def _db_update_presence(user_id: str, is_home: bool):
             user_id,
             is_home,
         )
+
+
+# ─── HABITS (PRESENCE EVENTS) ─────────────────────────────────────────────────
+async def _db_record_presence_event(user_id: str, event_type: str, occurred_at: datetime.datetime | None = None) -> None:
+    async with _pool().acquire() as conn:
+        await conn.execute(
+            "INSERT INTO presence_events (user_id, event_type, occurred_at) VALUES ($1, $2, COALESCE($3, NOW()))",
+            user_id,
+            event_type,
+            occurred_at,
+        )
+
+
+async def _db_get_presence_events(user_id: str, event_type: str, since_days: int = 60, limit: int = 200) -> list:
+    async with _pool().acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT occurred_at FROM presence_events WHERE user_id=$1 AND event_type=$2 AND occurred_at > NOW() - ($3 || ' days')::interval ORDER BY occurred_at DESC LIMIT $4",
+            user_id,
+            event_type,
+            str(since_days),
+            limit,
+        )
+    return [r["occurred_at"] for r in rows]
+
+
+async def _db_has_presence_event_today(user_id: str, event_type: str, today: datetime.date) -> bool:
+    async with _pool().acquire() as conn:
+        return bool(await conn.fetchval("SELECT EXISTS(SELECT 1 FROM presence_events WHERE user_id=$1 AND event_type=$2 AND occurred_at::date=$3)", user_id, event_type, today))
+
+
+async def _db_get_habit_nudge_prefs(user_id: str) -> dict:
+    async with _pool().acquire() as conn:
+        row = await conn.fetchrow("SELECT habit_nudges_enabled FROM user_configs WHERE user_id = $1", user_id)
+    return {"enabled": bool(row["habit_nudges_enabled"])} if row else {"enabled": False}
+
+
+async def _db_set_habit_nudges_enabled(user_id: str, enabled: bool) -> None:
+    async with _pool().acquire() as conn:
+        await conn.execute("UPDATE user_configs SET habit_nudges_enabled=$2 WHERE user_id=$1", user_id, enabled)
+
+
+async def _db_list_users_for_habit_nudge(today: datetime.date) -> list:
+    async with _pool().acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT user_id FROM user_configs WHERE habit_nudges_enabled = TRUE AND (habit_nudge_last_sent IS NULL OR habit_nudge_last_sent != $1)",
+            today,
+        )
+    return [r["user_id"] for r in rows]
+
+
+async def _db_mark_habit_nudge_sent(user_id: str, today: datetime.date) -> None:
+    async with _pool().acquire() as conn:
+        await conn.execute("UPDATE user_configs SET habit_nudge_last_sent=$2 WHERE user_id=$1", user_id, today)
 
 
 # ─── FINANCE / PLAID ──────────────────────────────────────────────────────────
