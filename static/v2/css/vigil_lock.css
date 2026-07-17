@@ -1,0 +1,102 @@
+/* ── Vigil Lock — device-camera lock overlay ──────────────────────────────── */
+#vigil-lock {
+  position: fixed;
+  inset: 0;
+  z-index: 100000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(2, 6, 10, 0.97);
+  backdrop-filter: blur(6px);
+  cursor: default;
+  transition: opacity 0.4s ease;
+}
+#vigil-lock.setup-hidden {
+  display: none;
+}
+.vigil-lock-scan {
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(
+    to bottom,
+    rgba(255, 122, 122, 0.05) 0px,
+    rgba(255, 122, 122, 0.05) 1px,
+    transparent 1px,
+    transparent 3px
+  );
+  animation: vigil-lock-flicker 2.4s ease-in-out infinite;
+  pointer-events: none;
+}
+@keyframes vigil-lock-flicker {
+  0%,
+  100% {
+    opacity: 0.5;
+  }
+  50% {
+    opacity: 0.85;
+  }
+}
+.vigil-lock-core {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  text-align: center;
+  font-family: "Share Tech Mono", monospace;
+  padding: 40px;
+}
+.vigil-lock-icon {
+  font-size: 34px;
+  color: #ff7a7a;
+  text-shadow: 0 0 20px rgba(255, 122, 122, 0.7);
+  animation: vigil-lock-pulse 1.6s ease-in-out infinite;
+}
+@keyframes vigil-lock-pulse {
+  0%,
+  100% {
+    opacity: 0.55;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.15);
+  }
+}
+.vigil-lock-word {
+  font-size: 26px;
+  letter-spacing: 0.22em;
+  color: #ff9a9a;
+  text-shadow: 0 0 16px rgba(255, 122, 122, 0.5);
+}
+.vigil-lock-sub {
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  color: rgba(255, 154, 154, 0.7);
+}
+.vigil-lock-status {
+  margin-top: 10px;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  color: rgba(127, 233, 255, 0.7);
+  min-height: 14px;
+}
+#vigil-lock-login-btn {
+  margin-top: 18px;
+  padding: 10px 22px;
+  background: rgba(127, 233, 255, 0.1);
+  border: 1px solid rgba(127, 233, 255, 0.4);
+  border-radius: 5px;
+  color: rgba(127, 233, 255, 0.85);
+  font-family: "Share Tech Mono", monospace;
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  cursor: pointer;
+  transition:
+    background 0.2s,
+    box-shadow 0.2s;
+}
+#vigil-lock-login-btn:hover {
+  background: rgba(127, 233, 255, 0.2);
+  box-shadow: 0 0 10px rgba(127, 233, 255, 0.3);
+}
