@@ -77,5 +77,29 @@
       </div>
     </form>
     <div id="pim-msg"></div>
+
+    <div class="setup-sub" style="margin-top: 22px">DAILY BRIEFING</div>
+    <p class="pim-note">
+      A spoken morning and evening summary of weather, today's calendar,
+      today's reminders, and top news headlines.
+    </p>
+    <form id="briefing-form" autocomplete="off">
+      <label id="briefing-enabled-row" for="briefing-enabled">
+        <input type="checkbox" id="briefing-enabled" />
+        ENABLE DAILY BRIEFING
+      </label>
+      <label class="setup-label" for="briefing-morning-time"
+        >MORNING TIME</label
+      >
+      <input id="briefing-morning-time" type="time" value="07:00" />
+      <label class="setup-label" for="briefing-evening-time"
+        >EVENING TIME</label
+      >
+      <input id="briefing-evening-time" type="time" value="18:00" />
+      <div style="display: flex; gap: 8px; margin-top: 14px">
+        <button type="submit" id="briefing-save">SAVE</button>
+      </div>
+    </form>
+    <div id="briefing-msg"></div>
   </div>
 </div>

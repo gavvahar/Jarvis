@@ -13,7 +13,7 @@
 | 5        | app.py Modularisation                          | Complete    |
 | 6        | Phase 4 — Smart Speaker & Local Hardware       | Complete    |
 | 7        | Phase 5 — Deeper Smart Home                    | Complete    |
-| 8        | Phase 6 — Proactive & Ambient Intelligence     | Next        |
+| 8        | Phase 6 — Proactive & Ambient Intelligence     | In Progress |
 | 9        | Phase 8 — Developer & Extensibility Platform   | On Hold     |
 | 10       | Phase 9 — Financial Intelligence               | In Progress |
 | 11       | Phase 10 — Computer Vision & Spatial Awareness | Complete    |
@@ -102,7 +102,7 @@ Extend beyond Home Assistant to cover all major smart home ecosystems.
 
 Move from reactive (answer questions) to proactive (anticipate needs).
 
-- [ ] **Daily briefing** — scheduled morning/evening summaries (weather, calendar, reminders, news)
+- [x] **Daily briefing** — scheduled morning/evening summaries (weather, calendar, reminders, news). Opt-in per user (`briefing_enabled`, off by default) with configurable `briefing_morning_time`/`briefing_evening_time` (24h `HH:MM`, server-local time — same convention `_vision_loop`'s night detection and calendar event display already use) via a **DAILY BRIEFING** section in the PIM settings panel or voice (`manage_briefing`: `enable`/`disable`/`set_time`/`status`/`now`). `python/integrations/briefing.py`'s `_briefing_loop()` polls every 60s, composes weather (`_location_context`, already populated by the existing weather loop) + today's remaining calendar events (reuses `_calendar_events_between`) + today's reminders (`_db_list_reminders`) + top 3 general headlines (`_fetch_news_headlines`, factored out of the existing `get_news_headlines` tool), and delivers via the same `speak`-field socket pattern as `timer_fired`/`reminder_fired` (new `briefing_ready` event) plus a push notification through the existing `_send_push` fan-out.
 - [ ] **Context awareness** — time of day, location, recent activity shape responses and suggestions
 - [ ] **Habit learning** — detect patterns ("you usually leave at 8:30") and surface them
 - [ ] **Email triage** — classify and summarize unread email; flag urgent items

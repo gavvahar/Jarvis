@@ -374,6 +374,48 @@ async def _db_fire_due_reminders() -> list:
     return fired
 
 
+# ─── DAILY BRIEFING ───────────────────────────────────────────────────────────
+async def _db_get_briefing_prefs(user_id: str) -> dict:
+    async with _pool().acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT briefing_enabled, briefing_morning_time, briefing_evening_time FROM user_configs WHERE user_id = $1",
+            user_id,
+        )
+    if row is None:
+        return {"enabled": False, "morning_time": "07:00", "evening_time": "18:00"}
+    return {"enabled": row["briefing_enabled"], "morning_time": row["briefing_morning_time"], "evening_time": row["briefing_evening_time"]}
+
+
+async def _db_set_briefing_prefs(user_id: str, enabled: bool, morning_time: str, evening_time: str) -> None:
+    async with _pool().acquire() as conn:
+        await conn.execute(
+            "UPDATE user_configs SET briefing_enabled=$2, briefing_morning_time=$3, briefing_evening_time=$4 WHERE user_id=$1",
+            user_id,
+            enabled,
+            morning_time,
+            evening_time,
+        )
+
+
+async def _db_list_users_due_for_briefing(slot: str, hhmm: str, today: datetime.date) -> list:
+    time_col = "briefing_morning_time" if slot == "morning" else "briefing_evening_time"
+    sent_col = "briefing_last_morning_sent" if slot == "morning" else "briefing_last_evening_sent"
+    # time_col/sent_col are chosen from the fixed "morning"/"evening" branch above, not user input
+    async with _pool().acquire() as conn:
+        rows = await conn.fetch(
+            f"SELECT user_id FROM user_configs WHERE briefing_enabled = TRUE AND {time_col} = $1 AND ({sent_col} IS NULL OR {sent_col} != $2)",
+            hhmm,
+            today,
+        )
+    return [r["user_id"] for r in rows]
+
+
+async def _db_mark_briefing_sent(user_id: str, slot: str, today: datetime.date) -> None:
+    sent_col = "briefing_last_morning_sent" if slot == "morning" else "briefing_last_evening_sent"
+    async with _pool().acquire() as conn:
+        await conn.execute(f"UPDATE user_configs SET {sent_col}=$2 WHERE user_id=$1", user_id, today)
+
+
 # ─── ROUTINES ─────────────────────────────────────────────────────────────────
 async def _db_create_routine(user_id: str, name: str, trigger_phrases: list, steps: list) -> int:
     async with _pool().acquire() as conn:
