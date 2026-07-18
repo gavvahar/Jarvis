@@ -1080,3 +1080,52 @@ async def _db_update_travel_trip(trip_id: int, status: str, gate: str, terminal:
 async def _db_deactivate_travel_trip(trip_id: int) -> None:
     async with _pool().acquire() as conn:
         await conn.execute("UPDATE travel_trips SET active = FALSE WHERE id = $1", trip_id)
+
+
+# ─── EMAIL TRIAGE ──────────────────────────────────────────────────────────────
+async def _db_get_email_triage_prefs(user_id: str) -> dict:
+    async with _pool().acquire() as conn:
+        row = await conn.fetchrow("SELECT email_triage_enabled FROM user_configs WHERE user_id = $1", user_id)
+    return {"enabled": bool(row["email_triage_enabled"])} if row else {"enabled": False}
+
+
+async def _db_set_email_triage_enabled(user_id: str, enabled: bool) -> None:
+    async with _pool().acquire() as conn:
+        await conn.execute("UPDATE user_configs SET email_triage_enabled=$2 WHERE user_id=$1", user_id, enabled)
+
+
+async def _db_list_users_for_email_triage() -> list:
+    async with _pool().acquire() as conn:
+        rows = await conn.fetch("SELECT user_id FROM user_configs WHERE email_triage_enabled = TRUE")
+    return [r["user_id"] for r in rows]
+
+
+async def _db_uids_already_classified(user_id: str, uids: list[str]) -> set[str]:
+    if not uids:
+        return set()
+    async with _pool().acquire() as conn:
+        rows = await conn.fetch("SELECT uid FROM email_triage WHERE user_id = $1 AND uid = ANY($2::text[])", user_id, uids)
+    return {r["uid"] for r in rows}
+
+
+async def _db_insert_email_triage(user_id: str, uid: str, sender: str, subject: str, summary: str, important: bool) -> None:
+    async with _pool().acquire() as conn:
+        await conn.execute(
+            "INSERT INTO email_triage (user_id, uid, sender, subject, summary, important) VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT (user_id, uid) DO NOTHING",
+            user_id,
+            uid,
+            sender,
+            subject,
+            summary,
+            important,
+        )
+
+
+async def _db_list_email_triage(user_id: str, limit: int = 20) -> list:
+    async with _pool().acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT id, sender, subject, summary, important, classified_at FROM email_triage WHERE user_id = $1 ORDER BY classified_at DESC LIMIT $2",
+            user_id,
+            limit,
+        )
+    return [dict(r) for r in rows]

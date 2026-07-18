@@ -122,7 +122,8 @@
   color: #ff9a7a;
 }
 
-#briefing-form {
+#briefing-form,
+#email-triage-form {
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -146,7 +147,8 @@
   border-color: var(--cyan-bright, #aef1ff);
   box-shadow: 0 0 14px rgba(127, 233, 255, 0.3);
 }
-#briefing-enabled-row {
+#briefing-enabled-row,
+#email-triage-enabled-row {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -157,13 +159,15 @@
   cursor: pointer;
   margin-bottom: 4px;
 }
-#briefing-enabled-row input[type="checkbox"] {
+#briefing-enabled-row input[type="checkbox"],
+#email-triage-enabled-row input[type="checkbox"] {
   width: 15px;
   height: 15px;
   accent-color: var(--cyan-bright, #7fe9ff);
   cursor: pointer;
 }
-#briefing-form button {
+#briefing-form button,
+#email-triage-form button {
   flex: 1;
   padding: 11px;
   background: rgba(127, 233, 255, 0.12);
@@ -179,11 +183,13 @@
     background 0.2s,
     box-shadow 0.2s;
 }
-#briefing-form button:hover {
+#briefing-form button:hover,
+#email-triage-form button:hover {
   background: rgba(127, 233, 255, 0.22);
   box-shadow: 0 0 16px rgba(127, 233, 255, 0.3);
 }
-#briefing-msg {
+#briefing-msg,
+#email-triage-msg {
   min-height: 16px;
   margin-top: 12px;
   font-family: "Share Tech Mono", monospace;
@@ -191,10 +197,12 @@
   letter-spacing: 0.04em;
   color: rgba(127, 233, 255, 0.7);
 }
-#briefing-msg.ok {
+#briefing-msg.ok,
+#email-triage-msg.ok {
   color: #7fffc4;
 }
-#briefing-msg.err {
+#briefing-msg.err,
+#email-triage-msg.err {
   color: #ff9a7a;
 }
 
@@ -239,6 +247,40 @@
   border-color: rgba(255, 122, 122, 0.5);
   color: #ff9a9a;
 }
+
+#email-triage-list {
+  margin-top: 10px;
+  font-family: "Share Tech Mono", monospace;
+  font-size: 11px;
+  color: rgba(210, 244, 255, 0.78);
+}
+.email-triage-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 0;
+  border-top: 1px solid rgba(127, 233, 255, 0.12);
+  color: rgba(127, 233, 255, 0.9);
+}
+.email-triage-row:first-child {
+  border-top: none;
+}
+.email-triage-row span:first-child {
+  flex: 1;
+  word-break: break-word;
+}
+.email-triage-badge {
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  background: rgba(255, 154, 122, 0.15);
+  border: 1px solid rgba(255, 154, 122, 0.4);
+  color: #ff9a7a;
+  flex-shrink: 0;
+}
+
 #travel-add-form {
   display: flex;
   flex-direction: column;

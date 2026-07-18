@@ -120,6 +120,23 @@
     </form>
     <div id="email-msg"></div>
 
+    <div class="setup-sub" style="margin-top: 22px">EMAIL TRIAGE</div>
+    <p class="pim-note">
+      Classifies unread email in the background and flags anything that needs
+      timely attention. Requires EMAIL to be connected above.
+    </p>
+    <form id="email-triage-form" autocomplete="off">
+      <label id="email-triage-enabled-row" for="email-triage-enabled">
+        <input type="checkbox" id="email-triage-enabled" />
+        ENABLE EMAIL TRIAGE
+      </label>
+      <div style="display: flex; gap: 8px; margin-top: 14px">
+        <button type="submit" id="email-triage-save">SAVE</button>
+      </div>
+    </form>
+    <div id="email-triage-msg"></div>
+    <div id="email-triage-list"><em>Loading…</em></div>
+
     <div class="setup-sub" style="margin-top: 22px">DAILY BRIEFING</div>
     <p class="pim-note">
       A spoken morning and evening summary of weather, today's calendar, today's
