@@ -47,6 +47,7 @@ from integrations.vision import (
 from integrations.vigil import _get_vigil_mode, _set_vigil_mode
 from integrations.briefing import _get_briefing_prefs, _set_briefing_prefs
 from integrations.habits import _get_habit_prefs, _set_habit_prefs
+from integrations.travel import _add_travel_trip_api, _remove_travel_trip_api, _travel_prefs
 from integrations.music.spotify import (
     _spotify_configured,
     _spotify_req,
@@ -747,6 +748,21 @@ async def api_get_habits(request: Request):
 @fast_app.post("/api/habits")
 async def api_set_habits(request: Request):
     return await _set_habit_prefs(_require_user(request), await request.json())
+
+
+@fast_app.get("/api/travel")
+async def api_get_travel(request: Request):
+    return await _travel_prefs(_require_user(request))
+
+
+@fast_app.post("/api/travel")
+async def api_add_travel(request: Request):
+    return await _add_travel_trip_api(_require_user(request), await request.json())
+
+
+@fast_app.delete("/api/travel/{trip_id}")
+async def api_remove_travel(trip_id: int, request: Request):
+    return await _remove_travel_trip_api(_require_user(request), trip_id)
 
 
 @fast_app.post("/api/save_myq")
