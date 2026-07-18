@@ -184,6 +184,106 @@
   color: #ff9a7a;
 }
 
+#travel-trip-list {
+  margin-top: 10px;
+  font-family: "Share Tech Mono", monospace;
+  font-size: 11px;
+  color: rgba(210, 244, 255, 0.78);
+}
+.travel-trip-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 0;
+  border-top: 1px solid rgba(127, 233, 255, 0.12);
+  color: rgba(127, 233, 255, 0.9);
+}
+.travel-trip-row:first-child {
+  border-top: none;
+}
+.travel-trip-badge {
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  background: rgba(255, 154, 122, 0.15);
+  border: 1px solid rgba(255, 154, 122, 0.4);
+  color: #ff9a7a;
+}
+.travel-trip-del {
+  padding: 3px 8px;
+  background: transparent;
+  border: 1px solid rgba(127, 233, 255, 0.35);
+  border-radius: 5px;
+  color: rgba(127, 233, 255, 0.75);
+  cursor: pointer;
+  font-size: 10px;
+}
+.travel-trip-del:hover {
+  background: rgba(255, 122, 122, 0.15);
+  border-color: rgba(255, 122, 122, 0.5);
+  color: #ff9a9a;
+}
+#travel-add-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  text-align: left;
+  margin-top: 10px;
+}
+#travel-add-form input {
+  width: 100%;
+  padding: 11px 13px;
+  box-sizing: border-box;
+  background: rgba(2, 10, 18, 0.8);
+  border: 1px solid rgba(127, 233, 255, 0.28);
+  border-radius: 8px;
+  color: #eafcff;
+  font-family: "Share Tech Mono", monospace;
+  font-size: 13px;
+  outline: none;
+  letter-spacing: 0.04em;
+}
+#travel-add-form input:focus {
+  border-color: var(--cyan-bright, #aef1ff);
+  box-shadow: 0 0 14px rgba(127, 233, 255, 0.3);
+}
+#travel-add-form button {
+  flex: 1;
+  padding: 11px;
+  background: rgba(127, 233, 255, 0.12);
+  border: 1px solid rgba(127, 233, 255, 0.4);
+  border-radius: 8px;
+  color: #eafcff;
+  font-family: "Oxanium", sans-serif;
+  font-weight: 500;
+  letter-spacing: 0.12em;
+  font-size: 12px;
+  cursor: pointer;
+  transition:
+    background 0.2s,
+    box-shadow 0.2s;
+}
+#travel-add-form button:hover {
+  background: rgba(127, 233, 255, 0.22);
+  box-shadow: 0 0 16px rgba(127, 233, 255, 0.3);
+}
+#travel-msg {
+  min-height: 16px;
+  margin-top: 12px;
+  font-family: "Share Tech Mono", monospace;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  color: rgba(127, 233, 255, 0.7);
+}
+#travel-msg.ok {
+  color: #7fffc4;
+}
+#travel-msg.err {
+  color: #ff9a7a;
+}
+
 /* ---- phone portrait (≤480px) ---- */
 @media (max-width: 480px) {
   /* Prevent iOS zoom on input/select focus (requires font-size ≥ 16px) */
