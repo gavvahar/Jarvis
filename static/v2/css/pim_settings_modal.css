@@ -11,14 +11,16 @@
   line-height: 1.6;
   color: rgba(210, 244, 255, 0.78);
 }
-#pim-settings-form {
+#pim-settings-form,
+#email-settings-form {
   display: flex;
   flex-direction: column;
   gap: 8px;
   text-align: left;
   margin-top: 20px;
 }
-#pim-settings-form input {
+#pim-settings-form input,
+#email-settings-form input {
   width: 100%;
   padding: 11px 13px;
   box-sizing: border-box;
@@ -34,12 +36,14 @@
     border-color 0.2s,
     box-shadow 0.2s;
 }
-#pim-settings-form input:focus {
+#pim-settings-form input:focus,
+#email-settings-form input:focus {
   border-color: var(--cyan-bright, #aef1ff);
   box-shadow: 0 0 14px rgba(127, 233, 255, 0.3);
 }
 #calendar-status-row,
-#contacts-status-row {
+#contacts-status-row,
+#email-status-row {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -50,7 +54,8 @@
   color: rgba(127, 233, 255, 0.55);
 }
 #calendar-status-dot,
-#contacts-status-dot {
+#contacts-status-dot,
+#email-status-dot {
   width: 7px;
   height: 7px;
   border-radius: 50%;
@@ -58,15 +63,18 @@
   flex-shrink: 0;
 }
 #calendar-status-dot.connected,
-#contacts-status-dot.connected {
+#contacts-status-dot.connected,
+#email-status-dot.connected {
   background: #7fffc4;
   box-shadow: 0 0 6px #7fffc4;
 }
 #calendar-status-dot.disconnected,
-#contacts-status-dot.disconnected {
+#contacts-status-dot.disconnected,
+#email-status-dot.disconnected {
   background: #ff9a7a;
 }
-#pim-settings-form button {
+#pim-settings-form button,
+#email-settings-form button {
   flex: 1;
   padding: 11px;
   background: rgba(127, 233, 255, 0.12);
@@ -82,18 +90,22 @@
     background 0.2s,
     box-shadow 0.2s;
 }
-#pim-settings-form button:hover {
+#pim-settings-form button:hover,
+#email-settings-form button:hover {
   background: rgba(127, 233, 255, 0.22);
   box-shadow: 0 0 16px rgba(127, 233, 255, 0.3);
 }
-#pim-settings-form button:disabled {
+#pim-settings-form button:disabled,
+#email-settings-form button:disabled {
   opacity: 0.5;
   cursor: default;
 }
-#pim-cancel {
+#pim-cancel,
+#email-cancel {
   border-color: rgba(127, 233, 255, 0.2) !important;
 }
-#pim-msg {
+#pim-msg,
+#email-msg {
   min-height: 16px;
   margin-top: 12px;
   font-family: "Share Tech Mono", monospace;
@@ -101,10 +113,12 @@
   letter-spacing: 0.04em;
   color: rgba(127, 233, 255, 0.7);
 }
-#pim-msg.ok {
+#pim-msg.ok,
+#email-msg.ok {
   color: #7fffc4;
 }
-#pim-msg.err {
+#pim-msg.err,
+#email-msg.err {
   color: #ff9a7a;
 }
 
@@ -291,7 +305,8 @@
   #setup-form input[type="text"],
   #setup-form input[type="password"],
   #ha-settings-form input,
-  #pim-settings-form input {
+  #pim-settings-form input,
+  #email-settings-form input {
     font-size: 16px;
   }
 
