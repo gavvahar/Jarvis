@@ -1018,7 +1018,9 @@ class TestClassifyEmail:
 
     def test_parses_openai_json_response(self):
         fake_client = MagicMock()
-        fake_client.chat.completions.create = AsyncMock(return_value=SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content='{"summary": "Weekly digest", "important": false}'))]))
+        fake_client.chat.completions.create = AsyncMock(
+            return_value=SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content='{"summary": "Weekly digest", "important": false}'))])
+        )
         with patch("integrations.email_triage.build_llm_client", return_value=fake_client):
             result = asyncio.run(_classify_email({"provider": "openai", "api_key": "x", "model": "gpt-4o-mini"}, self._msg))
         assert result == {"summary": "Weekly digest", "important": False}
