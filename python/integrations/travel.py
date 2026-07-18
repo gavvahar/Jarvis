@@ -197,8 +197,16 @@ async def _check_trip(trip: dict) -> None:
     if changed:
         speak = f"Update on {trip['airline']}{trip['flight_number']}: {_format_status_line(live)}."
         if _sio is not None and _sids_fn is not None:
+            payload = {
+                "trip_id": trip["id"],
+                "speak": speak,
+                "status": live["status"],
+                "gate": live["gate"],
+                "terminal": live["terminal"],
+                "airport": live["airport"],
+            }
             for sid in _sids_fn(trip["user_id"]):
-                await _sio.emit("travel_alert", {"trip_id": trip["id"], "speak": speak, **live, "departure_time": None}, to=sid)
+                await _sio.emit("travel_alert", payload, to=sid)
         await _send_push(trip["user_id"], f"{trip['airline']}{trip['flight_number']} update", speak)
     if live["status"].lower() in _FINAL_STATUSES:
         await _db_deactivate_travel_trip(trip["id"])
