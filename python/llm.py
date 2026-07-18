@@ -14,6 +14,7 @@ from integrations.habits import _HABITS_TOOL_NAMES, _execute_habits_tool, _get_h
 from integrations.travel import _TRAVEL_TOOL_NAMES, _execute_travel_tool, _get_travel_tools
 from integrations.pim.calendar import _calendar_configured, _execute_calendar_tool
 from integrations.pim.contacts import _contacts_configured, _execute_contact_lookup_tool
+from integrations.pim.mail import _execute_email_tool
 from integrations.pim.timers import _execute_news_tool, _execute_reminder_tool, _execute_timer_tool, _get_pim_tools
 from integrations.automation import _execute_device_alert_tool, _execute_routine_tool, _execute_zigbee_tool, _get_automation_tools
 from integrations.shared_lists import _execute_shared_list_tool, _get_shared_list_tools
@@ -399,6 +400,8 @@ async def _stream_reply(state: dict, on_text):
                         result = await _execute_briefing_tool(uid, dict(block.input), config)
                     elif block.name == "lookup_contact":
                         result = await _execute_contact_lookup_tool(config, dict(block.input))
+                    elif block.name == "list_unread_email":
+                        result = await _execute_email_tool(config, dict(block.input))
                     elif block.name == "manage_routine":
                         result = await _execute_routine_tool(uid, dict(block.input), config)
                     elif block.name == "manage_device_alert":
@@ -471,6 +474,8 @@ async def _stream_reply(state: dict, on_text):
                     result = await _execute_briefing_tool(uid, args, config)
                 elif acc["name"] == "lookup_contact":
                     result = await _execute_contact_lookup_tool(config, args)
+                elif acc["name"] == "list_unread_email":
+                    result = await _execute_email_tool(config, args)
                 elif acc["name"] == "manage_routine":
                     result = await _execute_routine_tool(uid, args, config)
                 elif acc["name"] == "manage_device_alert":
