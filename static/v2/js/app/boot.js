@@ -16,8 +16,10 @@ import { setHaStatus, haTokenInput } from "./ha.js";
 import {
   setCalendarStatus,
   setContactsStatus,
+  setEmailStatus,
   calendarPasswordInput,
   contactsPasswordInput,
+  emailPasswordInput,
 } from "./pim.js";
 import { setGarageStatus, myqPasswordInput } from "./garage.js";
 import { setTeslaStatus, teslaFleetAuthBtn } from "./tesla.js";
@@ -65,6 +67,13 @@ fetch("/api/status")
       calendarPasswordInput.dataset.hasExisting = "1";
     if (d.contacts_configured && contactsPasswordInput)
       contactsPasswordInput.dataset.hasExisting = "1";
+    setEmailStatus(
+      !!d.email_configured,
+      d.email_host || "",
+      d.email_username || "",
+    );
+    if (d.email_configured && emailPasswordInput)
+      emailPasswordInput.dataset.hasExisting = "1";
     setGarageStatus(!!d.myq_configured);
     if (d.myq_configured && myqPasswordInput)
       myqPasswordInput.dataset.hasExisting = "1";
