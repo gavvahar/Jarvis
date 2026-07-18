@@ -6,7 +6,7 @@ Webhook auth tests use the `api_client` fixture from conftest.py which
 stubs out the database so no running PostgreSQL is required.
 """
 
-import asyncio, datetime, app as jarvis, auth, db as db_mod, integrations.automation as automation_mod, integrations.finance as finance_mod, integrations.vision as vision_mod, integrations.tesla as tesla_mod, integrations.vigil as vigil_mod, integrations.push as push_mod, integrations.briefing as briefing_mod, integrations.habits as habits_mod
+import asyncio, datetime, app as jarvis, auth, db as db_mod, integrations.automation as automation_mod, integrations.finance as finance_mod, integrations.vision as vision_mod, integrations.tesla as tesla_mod, integrations.vigil as vigil_mod, integrations.push as push_mod, integrations.briefing as briefing_mod, integrations.habits as habits_mod, integrations.email_triage as email_triage_mod
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 from fastapi import HTTPException
@@ -1070,6 +1070,66 @@ class TestGetEmailTriageTools:
         tools = _get_email_triage_tools(config, "anthropic")
         assert len(tools) == 1
         assert tools[0]["name"] == "get_email_summary"
+
+
+class TestAlertUrgentEmail:
+    def test_emits_socket_and_push(self):
+        sio = MagicMock()
+        sio.emit = AsyncMock()
+        email_triage_mod.init(sio, lambda uid: ["sid1"])
+        with patch.object(email_triage_mod, "_send_push", new=AsyncMock()) as mock_push:
+            asyncio.run(
+                email_triage_mod._alert_urgent_email(
+                    "u1",
+                    {"from": "Bank", "subject": "Alert"},
+                    {"summary": "Suspicious login", "important": True},
+                )
+            )
+        sio.emit.assert_awaited_once()
+        assert sio.emit.call_args.args[0] == "email_alert"
+        assert sio.emit.call_args.args[1]["summary"] == "Suspicious login"
+        mock_push.assert_awaited_once()
+
+
+class TestTriageNewMessages:
+    def test_skips_already_classified(self):
+        messages = [{"uid": "1", "from": "a", "subject": "s"}]
+        with (
+            patch.object(email_triage_mod, "_imap_fetch_unread", new=AsyncMock(return_value=messages)),
+            patch.object(email_triage_mod, "_db_uids_already_classified", new=AsyncMock(return_value={"1"})),
+            patch.object(email_triage_mod, "_classify_email", new=AsyncMock()) as mock_classify,
+        ):
+            asyncio.run(email_triage_mod._triage_new_messages("u1", {}))
+        mock_classify.assert_not_awaited()
+
+    def test_classifies_new_message_and_alerts_when_important(self):
+        messages = [{"uid": "1", "from": "Bank", "subject": "Alert"}]
+        with (
+            patch.object(email_triage_mod, "_imap_fetch_unread", new=AsyncMock(return_value=messages)),
+            patch.object(email_triage_mod, "_db_uids_already_classified", new=AsyncMock(return_value=set())),
+            patch.object(email_triage_mod, "_classify_email", new=AsyncMock(return_value={"summary": "Suspicious login", "important": True})),
+            patch.object(email_triage_mod, "_db_insert_email_triage", new=AsyncMock()) as mock_insert,
+            patch.object(email_triage_mod, "_alert_urgent_email", new=AsyncMock()) as mock_alert,
+        ):
+            asyncio.run(email_triage_mod._triage_new_messages("u1", {}))
+        mock_insert.assert_awaited_once_with("u1", "1", "Bank", "Alert", "Suspicious login", True)
+        mock_alert.assert_awaited_once()
+
+    def test_no_alert_when_not_important(self):
+        messages = [{"uid": "1", "from": "Newsletter", "subject": "Digest"}]
+        with (
+            patch.object(email_triage_mod, "_imap_fetch_unread", new=AsyncMock(return_value=messages)),
+            patch.object(email_triage_mod, "_db_uids_already_classified", new=AsyncMock(return_value=set())),
+            patch.object(email_triage_mod, "_classify_email", new=AsyncMock(return_value={"summary": "Weekly digest", "important": False})),
+            patch.object(email_triage_mod, "_db_insert_email_triage", new=AsyncMock()),
+            patch.object(email_triage_mod, "_alert_urgent_email", new=AsyncMock()) as mock_alert,
+        ):
+            asyncio.run(email_triage_mod._triage_new_messages("u1", {}))
+        mock_alert.assert_not_awaited()
+
+    def test_fetch_failure_is_swallowed(self):
+        with patch.object(email_triage_mod, "_imap_fetch_unread", new=AsyncMock(side_effect=ValueError("boom"))):
+            asyncio.run(email_triage_mod._triage_new_messages("u1", {}))
 
 
 class TestScoreContactMatch:
