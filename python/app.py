@@ -10,7 +10,7 @@ Three providers:
   • openai_compatible — any OpenAI-compatible endpoint (Ollama, OpenRouter, …)
 """
 
-import json, os, re, asyncio, secrets, tempfile, urllib.parse, httpx, datetime, hashlib, base64, pathlib, socketio, auth as _auth, integrations.tesla as _tesla_mod, integrations.vision as _vision_mod, integrations.finance as _finance_mod, integrations.automation as _automation_mod, integrations.multiroom.presence as _presence_mod, integrations.multiroom.snapcast as _snapcast_mod, integrations.vigil as _vigil_mod, integrations.briefing as _briefing_mod, integrations.habits as _habits_mod, integrations.travel as _travel_mod
+import json, os, re, asyncio, secrets, tempfile, urllib.parse, httpx, datetime, hashlib, base64, pathlib, socketio, auth as _auth, integrations.tesla as _tesla_mod, integrations.vision as _vision_mod, integrations.finance as _finance_mod, integrations.automation as _automation_mod, integrations.multiroom.presence as _presence_mod, integrations.multiroom.snapcast as _snapcast_mod, integrations.vigil as _vigil_mod, integrations.briefing as _briefing_mod, integrations.habits as _habits_mod, integrations.travel as _travel_mod, integrations.email_triage as _email_triage_mod
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Request, File, UploadFile, Response
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, FileResponse
@@ -48,6 +48,7 @@ from integrations.vigil import _get_vigil_mode, _set_vigil_mode
 from integrations.briefing import _get_briefing_prefs, _set_briefing_prefs
 from integrations.habits import _get_habit_prefs, _set_habit_prefs
 from integrations.travel import _add_travel_trip_api, _remove_travel_trip_api, _travel_prefs
+from integrations.email_triage import _get_email_triage_prefs, _set_email_triage_prefs
 from integrations.music.spotify import (
     _spotify_configured,
     _spotify_req,
@@ -70,6 +71,7 @@ from integrations.music.apple_music import (
 from integrations.pim.dav import _resolve_dav_collection
 from integrations.pim.calendar import _calendar_configured
 from integrations.pim.contacts import _contacts_configured
+from integrations.pim.mail import _email_configured, _test_email_connection
 from llm import (
     _build_client,
     _generate_meeting_notes,
@@ -113,6 +115,7 @@ from db import (
     _db_set_kid_safe,
     _db_set_display_name,
     _db_save_pim_config,
+    _db_save_email_config,
     _db_get_household_members,
     _db_get_or_create_webhook_token,
     _db_regenerate_webhook_token,
@@ -281,6 +284,7 @@ _vigil_mod.init(_broadcast_all)
 _briefing_mod.init(sio, _sids_for_user, _location_context)
 _habits_mod.init(sio, _sids_for_user)
 _travel_mod.init(sio, _sids_for_user)
+_email_triage_mod.init(sio, _sids_for_user)
 
 
 @asynccontextmanager
@@ -304,8 +308,9 @@ async def lifespan(application: FastAPI):
     t8 = asyncio.create_task(_briefing_mod._briefing_loop())
     t9 = asyncio.create_task(_habits_mod._habit_nudge_loop())
     t10 = asyncio.create_task(_travel_mod._travel_alert_loop())
+    t11 = asyncio.create_task(_email_triage_mod._email_triage_loop())
     yield
-    for t in (t1, t2, t3, t4, t5, t6, t7, t8, t9, t10):
+    for t in (t1, t2, t3, t4, t5, t6, t7, t8, t9, t10, t11):
         t.cancel()
     await _db_close()
 
@@ -434,6 +439,9 @@ async def api_status(request: Request):
         "contacts_configured": _contacts_configured(config),
         "contacts_url": config.get("contacts_url", ""),
         "contacts_username": config.get("contacts_username", ""),
+        "email_configured": _email_configured(config),
+        "email_host": config.get("email_host", ""),
+        "email_username": config.get("email_username", ""),
         "myq_configured": _myq_configured(config),
         "tesla_configured": _tesla_configured(config),
         "tesla_method": config.get("tesla_method", ""),
@@ -730,6 +738,52 @@ async def api_save_pim(request: Request):
     }
 
 
+@fast_app.post("/api/save_email")
+async def api_save_email(request: Request):
+    user_id = _require_user(request)
+    data = await request.json()
+    state = await _get_user_state(user_id)
+    config = state["config"]
+
+    email_host = (data.get("email_host") or "").strip()
+    email_username = (data.get("email_username") or "").strip()
+    email_password = (data.get("email_password") or "").strip()
+
+    email_to_save = {"host": config.get("email_host", ""), "username": config.get("email_username", ""), "password": config.get("email_password", "")}
+    unread_count = None
+
+    if bool(data.get("clear_email")):
+        email_to_save = {"host": "", "username": "", "password": ""}
+    elif email_host or email_username:
+        if not email_host or not email_username:
+            return {"ok": False, "error": "Email needs both a server and username."}
+        eff_pw = email_password or config.get("email_password", "")
+        if not eff_pw:
+            return {"ok": False, "error": "Email password is required."}
+        try:
+            unread_count = await _test_email_connection(email_host, email_username, eff_pw)
+        except ValueError as e:
+            return {"ok": False, "error": f"Email: {e}"}
+        email_to_save = {"host": email_host, "username": email_username, "password": eff_pw}
+
+    async with _get_user_lock(user_id):
+        config.update(
+            {
+                "email_host": email_to_save["host"],
+                "email_username": email_to_save["username"],
+                "email_password": email_to_save["password"],
+            }
+        )
+        await _db_save_email_config(user_id, config["email_host"], config["email_username"], config["email_password"])
+    return {
+        "ok": True,
+        "email_configured": _email_configured(config),
+        "email_host": config.get("email_host", ""),
+        "email_username": config.get("email_username", ""),
+        "unread_count": unread_count,
+    }
+
+
 @fast_app.get("/api/briefing")
 async def api_get_briefing_prefs(request: Request):
     return await _get_briefing_prefs(_require_user(request))
@@ -763,6 +817,16 @@ async def api_add_travel(request: Request):
 @fast_app.delete("/api/travel/{trip_id}")
 async def api_remove_travel(trip_id: int, request: Request):
     return await _remove_travel_trip_api(_require_user(request), trip_id)
+
+
+@fast_app.get("/api/email-triage")
+async def api_get_email_triage(request: Request):
+    return await _get_email_triage_prefs(_require_user(request))
+
+
+@fast_app.post("/api/email-triage")
+async def api_set_email_triage(request: Request):
+    return await _set_email_triage_prefs(_require_user(request), await request.json())
 
 
 @fast_app.post("/api/save_myq")
