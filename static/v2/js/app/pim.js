@@ -19,6 +19,15 @@ const calendarStatusDot = $("calendar-status-dot");
 const calendarStatusText = $("calendar-status-text");
 const contactsStatusDot = $("contacts-status-dot");
 const contactsStatusText = $("contacts-status-text");
+const emailSettingsForm = $("email-settings-form");
+const emailHostInput = $("email-host");
+const emailUsernameInput = $("email-username");
+export const emailPasswordInput = $("email-password");
+const emailSaveBtn = $("email-save");
+const emailCancelBtn = $("email-cancel");
+const emailMsg = $("email-msg");
+const emailStatusDot = $("email-status-dot");
+const emailStatusText = $("email-status-text");
 const briefingForm = $("briefing-form");
 const briefingEnabledInput = $("briefing-enabled");
 const briefingMorningInput = $("briefing-morning-time");
@@ -79,6 +88,17 @@ export function setContactsStatus(configured, url, username) {
   if (contactsUsernameInput && typeof username === "string")
     contactsUsernameInput.value = username;
   refreshAgendaButton();
+}
+
+export function setEmailStatus(configured, host, username) {
+  setLamp(emailStatusDot, configured);
+  if (emailStatusText)
+    emailStatusText.textContent = configured
+      ? "EMAIL CONNECTED"
+      : "EMAIL NOT CONNECTED";
+  if (emailHostInput && typeof host === "string") emailHostInput.value = host;
+  if (emailUsernameInput && typeof username === "string")
+    emailUsernameInput.value = username;
 }
 
 async function loadBriefingPrefs() {
@@ -145,6 +165,10 @@ function showPimSettings() {
     travelMsg.textContent = "";
     travelMsg.className = "";
   }
+  if (emailMsg) {
+    emailMsg.textContent = "";
+    emailMsg.className = "";
+  }
   loadBriefingPrefs();
   loadTravelTrips();
   setTimeout(() => calendarUrlInput && calendarUrlInput.focus(), 150);
@@ -154,10 +178,12 @@ function hidePimSettings() {
   if (pimSettingsEl) pimSettingsEl.classList.add("setup-hidden");
   if (calendarPasswordInput) calendarPasswordInput.value = "";
   if (contactsPasswordInput) contactsPasswordInput.value = "";
+  if (emailPasswordInput) emailPasswordInput.value = "";
 }
 
 if (agendaBtn) agendaBtn.addEventListener("click", showPimSettings);
 if (pimCancelBtn) pimCancelBtn.addEventListener("click", hidePimSettings);
+if (emailCancelBtn) emailCancelBtn.addEventListener("click", hidePimSettings);
 pimSettingsEl &&
   pimSettingsEl.addEventListener("click", (e) => {
     if (e.target === pimSettingsEl) hidePimSettings();
@@ -297,6 +323,69 @@ if (briefingForm) {
       briefingMsg.textContent = "Could not reach the server.";
     } finally {
       briefingSaveBtn.disabled = false;
+    }
+  });
+}
+
+if (emailSettingsForm) {
+  emailSettingsForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const email_host = (emailHostInput.value || "").trim();
+    const email_username = (emailUsernameInput.value || "").trim();
+    const email_password = (emailPasswordInput.value || "").trim();
+    const clear_email =
+      !email_host && !email_username && !!emailPasswordInput.dataset.hasExisting;
+
+    if ((email_host && !email_username) || (!email_host && email_username)) {
+      emailMsg.className = "err";
+      emailMsg.textContent = "Email needs both a server and username.";
+      return;
+    }
+    if (email_host && !email_password && !emailPasswordInput.dataset.hasExisting) {
+      emailMsg.className = "err";
+      emailMsg.textContent = "Please provide the email password.";
+      return;
+    }
+
+    emailSaveBtn.disabled = true;
+    emailMsg.className = "";
+    emailMsg.textContent = "Verifying email…";
+    try {
+      const res = await fetch("/api/save_email", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email_host,
+          email_username,
+          email_password,
+          clear_email,
+        }),
+      });
+      const data = await res.json();
+      if (data.ok) {
+        emailMsg.className = "ok";
+        emailMsg.textContent =
+          data.unread_count != null
+            ? `Connected — ${data.unread_count} unread message${data.unread_count === 1 ? "" : "s"}.`
+            : "Email settings updated.";
+        setEmailStatus(
+          !!data.email_configured,
+          data.email_host || "",
+          data.email_username || "",
+        );
+        emailPasswordInput.dataset.hasExisting = data.email_configured
+          ? "1"
+          : "";
+        setTimeout(hidePimSettings, 1200);
+      } else {
+        emailMsg.className = "err";
+        emailMsg.textContent = data.error || "Could not save settings.";
+      }
+    } catch {
+      emailMsg.className = "err";
+      emailMsg.textContent = "Could not reach the server.";
+    } finally {
+      emailSaveBtn.disabled = false;
     }
   });
 }

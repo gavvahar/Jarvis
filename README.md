@@ -255,6 +255,19 @@ Examples:
 - "What's Mom's number?"
 - "Look up John's email."
 
+## EMAIL
+
+Open the **AGENDA** button in the top bar (same modal as Calendar & Contacts)
+and add an **EMAIL** section entry: an IMAP server, username, and password.
+This works with Gmail, iCloud, Fastmail, and most other providers — use an
+app-specific password where required (for Gmail: enable IMAP in Gmail
+settings and create an app password). This is read-only: J.A.R.V.I.S. never
+deletes, marks read, or sends anything.
+
+Right now this only lists what's unread — ask "do I have any unread email?"
+Classification, summarization, and urgent-item alerts are a planned follow-up
+(see `ROADMAP.md`'s Phase 6 email build order).
+
 ## NEWS
 
 J.A.R.V.I.S. pulls live headlines from the BBC RSS feeds — no API key required:
