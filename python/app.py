@@ -10,7 +10,7 @@ Three providers:
   • openai_compatible — any OpenAI-compatible endpoint (Ollama, OpenRouter, …)
 """
 
-import json, os, re, asyncio, secrets, tempfile, urllib.parse, httpx, datetime, hashlib, base64, pathlib, socketio, auth as _auth, integrations.tesla as _tesla_mod, integrations.vision as _vision_mod, integrations.finance as _finance_mod, integrations.automation as _automation_mod, integrations.multiroom.presence as _presence_mod, integrations.multiroom.snapcast as _snapcast_mod, integrations.vigil as _vigil_mod, integrations.briefing as _briefing_mod, integrations.habits as _habits_mod
+import json, os, re, asyncio, secrets, tempfile, urllib.parse, httpx, datetime, hashlib, base64, pathlib, socketio, auth as _auth, integrations.tesla as _tesla_mod, integrations.vision as _vision_mod, integrations.finance as _finance_mod, integrations.automation as _automation_mod, integrations.multiroom.presence as _presence_mod, integrations.multiroom.snapcast as _snapcast_mod, integrations.vigil as _vigil_mod, integrations.briefing as _briefing_mod, integrations.habits as _habits_mod, integrations.travel as _travel_mod
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Request, File, UploadFile, Response
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, FileResponse
@@ -279,6 +279,7 @@ _automation_mod.init(sio, _sids_for_user, _user_states)
 _vigil_mod.init(_broadcast_all)
 _briefing_mod.init(sio, _sids_for_user, _location_context)
 _habits_mod.init(sio, _sids_for_user)
+_travel_mod.init(sio, _sids_for_user)
 
 
 @asynccontextmanager
@@ -301,8 +302,9 @@ async def lifespan(application: FastAPI):
     t7 = asyncio.create_task(_finance_mod._finance_loop())
     t8 = asyncio.create_task(_briefing_mod._briefing_loop())
     t9 = asyncio.create_task(_habits_mod._habit_nudge_loop())
+    t10 = asyncio.create_task(_travel_mod._travel_alert_loop())
     yield
-    for t in (t1, t2, t3, t4, t5, t6, t7, t8, t9):
+    for t in (t1, t2, t3, t4, t5, t6, t7, t8, t9, t10):
         t.cancel()
     await _db_close()
 

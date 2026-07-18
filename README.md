@@ -99,6 +99,8 @@ Optional:
 | `VAPID_PUBLIC_KEY`        | Web Push public key (enables push notifications for Vigil Mode alerts)                              |
 | `VAPID_PRIVATE_KEY`       | Web Push private key matching `VAPID_PUBLIC_KEY`                                                    |
 | `VAPID_SUBJECT`           | Contact URI for Web Push, e.g. `mailto:you@example.com` (default: `mailto:admin@example.com`)       |
+| `AERODATABOX_KEY`         | RapidAPI key for the AeroDataBox API (enables the TRAVEL ALERTS panel)                              |
+| `TRAVEL_POLL_INTERVAL`    | Seconds between flight status checks (default: `900`, 15m)                                          |
 
 Generate a VAPID key pair once with `vapid --gen` (installed alongside
 `pywebpush`), then copy `applicationServerKey`/`privateKey` into
