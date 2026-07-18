@@ -101,5 +101,40 @@
       </div>
     </form>
     <div id="briefing-msg"></div>
+
+    <div class="setup-sub" style="margin-top: 22px">TRAVEL ALERTS</div>
+    <p class="pim-note">
+      Track a flight by airline code and number to get proactive alerts on gate
+      changes, delays, and cancellations.
+    </p>
+    <div id="travel-trip-list"><em>Loading…</em></div>
+    <form id="travel-add-form" autocomplete="off">
+      <label class="setup-label" for="travel-airline">AIRLINE CODE</label>
+      <input
+        id="travel-airline"
+        type="text"
+        placeholder="UA"
+        maxlength="3"
+        style="text-transform: uppercase"
+        autocomplete="off"
+        spellcheck="false"
+      />
+      <label class="setup-label" for="travel-flight-number"
+        >FLIGHT NUMBER</label
+      >
+      <input
+        id="travel-flight-number"
+        type="text"
+        placeholder="523"
+        autocomplete="off"
+        spellcheck="false"
+      />
+      <label class="setup-label" for="travel-flight-date">DATE</label>
+      <input id="travel-flight-date" type="date" />
+      <div style="display: flex; gap: 8px; margin-top: 14px">
+        <button type="submit" id="travel-add-btn">TRACK FLIGHT</button>
+      </div>
+    </form>
+    <div id="travel-msg"></div>
   </div>
 </div>

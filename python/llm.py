@@ -351,6 +351,7 @@ async def _stream_reply(state: dict, on_text):
         + _get_vision_tools(provider)
         + _get_vigil_tools(provider)
         + _get_habits_tools(provider)
+        + _get_travel_tools(provider)
         + _get_snapcast_tools(provider)
         + finance_tools
     )
