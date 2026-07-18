@@ -67,6 +67,8 @@ async def _execute_ha_tool(config: dict, name, args, user_id: str = ""):
             return await _execute_vigil_tool(name, args, user_id)
         if name in _HABITS_TOOL_NAMES:
             return await _execute_habits_tool(user_id, args)
+        if name in _TRAVEL_TOOL_NAMES:
+            return await _execute_travel_tool(user_id, args)
         if name in _SNAPCAST_TOOL_NAMES:
             return await _execute_snapcast_tool(name, args)
         if name == "get_garage_status":
