@@ -300,3 +300,44 @@ if (briefingForm) {
     }
   });
 }
+
+if (travelAddForm) {
+  travelAddForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const airline = (travelAirlineInput.value || "").trim().toUpperCase();
+    const flight_number = (travelFlightNumberInput.value || "").trim();
+    const flight_date = travelFlightDateInput.value || "";
+    if (!airline || !flight_number) {
+      travelMsg.className = "err";
+      travelMsg.textContent = "Enter an airline code and flight number.";
+      return;
+    }
+    travelAddBtn.disabled = true;
+    travelMsg.className = "";
+    travelMsg.textContent = "Tracking flight…";
+    try {
+      const res = await fetch("/api/travel", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ airline, flight_number, flight_date }),
+      });
+      const data = await res.json();
+      if (data.ok) {
+        travelMsg.className = "ok";
+        travelMsg.textContent = "Flight is now being tracked.";
+        travelAirlineInput.value = "";
+        travelFlightNumberInput.value = "";
+        travelFlightDateInput.value = "";
+        loadTravelTrips();
+      } else {
+        travelMsg.className = "err";
+        travelMsg.textContent = data.detail || "Could not track that flight.";
+      }
+    } catch {
+      travelMsg.className = "err";
+      travelMsg.textContent = "Could not reach the server.";
+    } finally {
+      travelAddBtn.disabled = false;
+    }
+  });
+}
