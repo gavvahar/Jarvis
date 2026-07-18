@@ -108,7 +108,7 @@ Move from reactive (answer questions) to proactive (anticipate needs).
 - [ ] **Email triage** — classify and summarize unread email; flag urgent items
 - [ ] **Meeting prep** — pull agenda, attendees, and prior notes before calendar events
 - [ ] **Package tracking** — parse shipping emails, announce deliveries
-- [ ] **Travel alerts** — flight status, gate changes, delays via email parsing
+- [x] **Travel alerts** — flight status, gate changes, and cancellations for flights tracked by airline code + flight number (manual/voice entry, not email parsing — the roadmap's original "via email parsing" plan would have depended on the still-unbuilt "Email triage" item above, so this scopes to the flight-status half only). `python/integrations/travel.py`'s `manage_travel_alert` voice tool (and a **TRAVEL ALERTS** section in the PIM settings panel) lets a user track a flight (`travel_trips` table); `_travel_alert_loop()` polls the [AeroDataBox](https://rapidapi.com/aedbx-aedbx/api/aerodatabox) API (`AERODATABOX_KEY`) every `TRAVEL_POLL_INTERVAL` (default 15m, only for trips departing within a day to stay inside AeroDataBox's free-tier budget) and delivers a `travel_alert` socket event + push notification through the existing `_send_push` fan-out whenever status, gate, or terminal changes; the trip auto-stops tracking once a flight lands, is cancelled, or diverts.
 
 ---
 
