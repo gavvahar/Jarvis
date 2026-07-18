@@ -11,6 +11,7 @@ from integrations.myq import _get_myq_tools, _myq_configured, _myq_get_status, _
 from integrations.vigil import _VIGIL_TOOL_NAMES, _execute_vigil_tool, _get_vigil_tools
 from integrations.briefing import _execute_briefing_tool, _get_briefing_tools
 from integrations.habits import _HABITS_TOOL_NAMES, _execute_habits_tool, _get_habits_tools
+from integrations.travel import _TRAVEL_TOOL_NAMES, _execute_travel_tool, _get_travel_tools
 from integrations.pim.calendar import _calendar_configured, _execute_calendar_tool
 from integrations.pim.contacts import _contacts_configured, _execute_contact_lookup_tool
 from integrations.pim.timers import _execute_news_tool, _execute_reminder_tool, _execute_timer_tool, _get_pim_tools
