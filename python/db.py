@@ -49,7 +49,7 @@ async def _db_ensure_user(user_id: str, email: str, role: str):
 async def _db_load_config(user_id: str) -> dict:
     async with _pool().acquire() as conn:
         row = await conn.fetchrow(
-            "SELECT role, provider, api_key, model, base_url, ha_url, ha_token, myq_email, myq_password, tesla_method, tesla_refresh_token, tesla_fleet_refresh_token, spotify_refresh_token, spotify_access_token, spotify_token_expiry, apple_music_user_token, apple_music_storefront, calendar_url, calendar_username, calendar_password, contacts_url, contacts_username, contacts_password, display_name, voice_embedding, is_kid_safe FROM user_configs WHERE user_id = $1",
+            "SELECT role, provider, api_key, model, base_url, ha_url, ha_token, myq_email, myq_password, tesla_method, tesla_refresh_token, tesla_fleet_refresh_token, spotify_refresh_token, spotify_access_token, spotify_token_expiry, apple_music_user_token, apple_music_storefront, calendar_url, calendar_username, calendar_password, contacts_url, contacts_username, contacts_password, email_host, email_username, email_password, display_name, voice_embedding, is_kid_safe FROM user_configs WHERE user_id = $1",
             user_id,
         )
     if row is None:
@@ -77,6 +77,9 @@ async def _db_load_config(user_id: str) -> dict:
             "contacts_url": "",
             "contacts_username": "",
             "contacts_password": "",
+            "email_host": "",
+            "email_username": "",
+            "email_password": "",
             "display_name": "",
             "voice_embedding": None,
             "is_kid_safe": False,
@@ -149,6 +152,21 @@ async def _db_save_pim_config(
             contacts_url,
             contacts_username,
             contacts_password,
+        )
+
+
+async def _db_save_email_config(user_id: str, email_host: str, email_username: str, email_password: str) -> None:
+    async with _pool().acquire() as conn:
+        await conn.execute(
+            "INSERT INTO user_configs (user_id, email, role) VALUES ($1, '', 'user') ON CONFLICT (user_id) DO NOTHING",
+            user_id,
+        )
+        await conn.execute(
+            "UPDATE user_configs SET email_host=$2, email_username=$3, email_password=$4, updated_at=NOW() WHERE user_id=$1",
+            user_id,
+            email_host,
+            email_username,
+            email_password,
         )
 
 
@@ -1062,3 +1080,52 @@ async def _db_update_travel_trip(trip_id: int, status: str, gate: str, terminal:
 async def _db_deactivate_travel_trip(trip_id: int) -> None:
     async with _pool().acquire() as conn:
         await conn.execute("UPDATE travel_trips SET active = FALSE WHERE id = $1", trip_id)
+
+
+# ─── EMAIL TRIAGE ──────────────────────────────────────────────────────────────
+async def _db_get_email_triage_prefs(user_id: str) -> dict:
+    async with _pool().acquire() as conn:
+        row = await conn.fetchrow("SELECT email_triage_enabled FROM user_configs WHERE user_id = $1", user_id)
+    return {"enabled": bool(row["email_triage_enabled"])} if row else {"enabled": False}
+
+
+async def _db_set_email_triage_enabled(user_id: str, enabled: bool) -> None:
+    async with _pool().acquire() as conn:
+        await conn.execute("UPDATE user_configs SET email_triage_enabled=$2 WHERE user_id=$1", user_id, enabled)
+
+
+async def _db_list_users_for_email_triage() -> list:
+    async with _pool().acquire() as conn:
+        rows = await conn.fetch("SELECT user_id FROM user_configs WHERE email_triage_enabled = TRUE")
+    return [r["user_id"] for r in rows]
+
+
+async def _db_uids_already_classified(user_id: str, uids: list[str]) -> set[str]:
+    if not uids:
+        return set()
+    async with _pool().acquire() as conn:
+        rows = await conn.fetch("SELECT uid FROM email_triage WHERE user_id = $1 AND uid = ANY($2::text[])", user_id, uids)
+    return {r["uid"] for r in rows}
+
+
+async def _db_insert_email_triage(user_id: str, uid: str, sender: str, subject: str, summary: str, important: bool) -> None:
+    async with _pool().acquire() as conn:
+        await conn.execute(
+            "INSERT INTO email_triage (user_id, uid, sender, subject, summary, important) VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT (user_id, uid) DO NOTHING",
+            user_id,
+            uid,
+            sender,
+            subject,
+            summary,
+            important,
+        )
+
+
+async def _db_list_email_triage(user_id: str, limit: int = 20) -> list:
+    async with _pool().acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT id, sender, subject, summary, important, classified_at FROM email_triage WHERE user_id = $1 ORDER BY classified_at DESC LIMIT $2",
+            user_id,
+            limit,
+        )
+    return [dict(r) for r in rows]
