@@ -12,12 +12,22 @@ from db import (
     _db_uids_already_classified,
 )
 from integrations.pim.mail import _email_configured, _imap_fetch_unread
+from integrations.push import _send_push
 from llm_client import build_llm_client
 from tool_schemas import anthropic_tools_to_openai
+
+_sio = None
+_sids_fn = None
 
 _POLL_INTERVAL_SECONDS = 300
 _FETCH_LIMIT = 20
 _LIST_LIMIT = 20
+
+
+def init(sio, sids_fn) -> None:
+    global _sio, _sids_fn
+    _sio = sio
+    _sids_fn = sids_fn
 
 _CLASSIFY_INSTRUCTIONS = (
     "Classify this email. Respond with strict JSON only, no other text: "
@@ -118,6 +128,21 @@ async def _set_email_triage_prefs(user_id: str, data: dict) -> dict:
 # ─── Background polling ─────────────────────────────────────────────────────
 
 
+async def _alert_urgent_email(user_id: str, message: dict, result: dict) -> None:
+    sender = message.get("from") or "someone"
+    speak = f"Urgent email from {sender}: {result['summary']}"
+    if _sio is not None and _sids_fn is not None:
+        payload = {
+            "from": sender,
+            "subject": message.get("subject", ""),
+            "summary": result["summary"],
+            "speak": speak,
+        }
+        for sid in _sids_fn(user_id):
+            await _sio.emit("email_alert", payload, to=sid)
+    await _send_push(user_id, "Urgent email", result["summary"][:180])
+
+
 async def _triage_new_messages(user_id: str, config: dict) -> None:
     try:
         messages = await _imap_fetch_unread(config, _FETCH_LIMIT)
@@ -132,6 +157,8 @@ async def _triage_new_messages(user_id: str, config: dict) -> None:
             continue
         result = await _classify_email(config, message)
         await _db_insert_email_triage(user_id, message["uid"], message.get("from", ""), message.get("subject", ""), result["summary"], result["important"])
+        if result["important"]:
+            await _alert_urgent_email(user_id, message, result)
 
 
 async def _email_triage_loop() -> None:

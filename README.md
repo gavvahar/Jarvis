@@ -270,8 +270,11 @@ Once connected, turn on **ENABLE EMAIL TRIAGE** in the same EMAIL TRIAGE
 section to have J.A.R.V.I.S. classify unread mail in the background (every 5
 minutes) — a one-line summary plus an important/not-important flag, shown in
 the settings panel and available by voice ("summarize my email", "any urgent
-email?"). Proactive urgent-email alerts (push/speak without asking) are a
-planned follow-up — see `ROADMAP.md`'s Phase 6 email build order.
+email?"). Anything flagged important is announced right away (spoken + push
+notification), the same way timer and reminder alerts are.
+
+Package tracking (parsing shipping emails for delivery updates) is a planned
+follow-up — see `ROADMAP.md`'s Phase 6 email build order.
 
 ## NEWS
 

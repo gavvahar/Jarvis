@@ -284,6 +284,7 @@ _vigil_mod.init(_broadcast_all)
 _briefing_mod.init(sio, _sids_for_user, _location_context)
 _habits_mod.init(sio, _sids_for_user)
 _travel_mod.init(sio, _sids_for_user)
+_email_triage_mod.init(sio, _sids_for_user)
 
 
 @asynccontextmanager
