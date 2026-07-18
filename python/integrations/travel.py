@@ -227,3 +227,36 @@ async def _travel_alert_loop() -> None:
                 await _check_trip(trip)
         except Exception as e:
             print(f"[TRAVEL] {e}", flush=True)
+
+
+# ── Settings-panel REST API ────────────────────────────────────────────────────
+
+
+async def _travel_prefs(user_id: str) -> dict:
+    trips = await _db_list_travel_trips(user_id)
+    return {"configured": _travel_configured(), "trips": trips}
+
+
+async def _add_travel_trip_api(user_id: str, data: dict) -> dict:
+    if not _travel_configured():
+        raise HTTPException(400, "Travel alerts aren't configured — set AERODATABOX_KEY first.")
+    airline = (data.get("airline") or "").strip().upper()
+    flight_number = (data.get("flight_number") or "").strip().upper()
+    if not airline or not flight_number:
+        raise HTTPException(400, "Specify an airline code and flight number.")
+    date_str = (data.get("flight_date") or "").strip()
+    if date_str and not _DATE_RE.match(date_str):
+        raise HTTPException(400, "flight_date must be YYYY-MM-DD.")
+    flight_date = datetime.date.fromisoformat(date_str) if date_str else datetime.datetime.now().astimezone().date()
+    trip_id = await _db_add_travel_trip(user_id, airline, flight_number, flight_date)
+    live = await _fetch_flight_status(airline, flight_number, flight_date)
+    if live:
+        await _db_update_travel_trip(trip_id, live["status"], live["gate"], live["terminal"], live["departure_time"])
+    return {"ok": True, "trip_id": trip_id}
+
+
+async def _remove_travel_trip_api(user_id: str, trip_id: int) -> dict:
+    ok = await _db_delete_travel_trip(user_id, trip_id)
+    if not ok:
+        raise HTTPException(404, "Trip not found.")
+    return {"ok": True}
