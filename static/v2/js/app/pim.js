@@ -28,6 +28,11 @@ const emailCancelBtn = $("email-cancel");
 const emailMsg = $("email-msg");
 const emailStatusDot = $("email-status-dot");
 const emailStatusText = $("email-status-text");
+const emailTriageForm = $("email-triage-form");
+const emailTriageEnabledInput = $("email-triage-enabled");
+const emailTriageSaveBtn = $("email-triage-save");
+const emailTriageMsg = $("email-triage-msg");
+const emailTriageList = $("email-triage-list");
 const briefingForm = $("briefing-form");
 const briefingEnabledInput = $("briefing-enabled");
 const briefingMorningInput = $("briefing-morning-time");
@@ -151,6 +156,33 @@ async function loadTravelTrips() {
   }
 }
 
+async function loadEmailTriagePrefs() {
+  if (!emailTriageEnabledInput) return;
+  try {
+    const r = await fetch("/api/email-triage");
+    const { enabled, messages } = await r.json();
+    emailTriageEnabledInput.checked = !!enabled;
+    if (!emailTriageList) return;
+    if (!messages || !messages.length) {
+      emailTriageList.innerHTML = "<em>No triaged email yet.</em>";
+      return;
+    }
+    emailTriageList.innerHTML = messages
+      .map((m) => {
+        const sender = (m.sender || "").replace(/</g, "&lt;");
+        const summary = (m.summary || "").replace(/</g, "&lt;");
+        return `<div class="email-triage-row">
+        <span>${sender} — ${summary}</span>
+        ${m.important ? '<span class="email-triage-badge">URGENT</span>' : ""}
+      </div>`;
+      })
+      .join("");
+  } catch {
+    if (emailTriageList)
+      emailTriageList.innerHTML = "<em>Could not load triaged email.</em>";
+  }
+}
+
 function showPimSettings() {
   if (pimSettingsEl) pimSettingsEl.classList.remove("setup-hidden");
   if (pimMsg) {
@@ -169,8 +201,13 @@ function showPimSettings() {
     emailMsg.textContent = "";
     emailMsg.className = "";
   }
+  if (emailTriageMsg) {
+    emailTriageMsg.textContent = "";
+    emailTriageMsg.className = "";
+  }
   loadBriefingPrefs();
   loadTravelTrips();
+  loadEmailTriagePrefs();
   setTimeout(() => calendarUrlInput && calendarUrlInput.focus(), 150);
 }
 
@@ -392,6 +429,35 @@ if (emailSettingsForm) {
       emailMsg.textContent = "Could not reach the server.";
     } finally {
       emailSaveBtn.disabled = false;
+    }
+  });
+}
+
+if (emailTriageForm) {
+  emailTriageForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    emailTriageSaveBtn.disabled = true;
+    emailTriageMsg.className = "";
+    emailTriageMsg.textContent = "Saving…";
+    try {
+      const res = await fetch("/api/email-triage", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled: emailTriageEnabledInput.checked }),
+      });
+      const data = await res.json();
+      if (data.ok) {
+        emailTriageMsg.className = "ok";
+        emailTriageMsg.textContent = "Email triage settings saved.";
+      } else {
+        emailTriageMsg.className = "err";
+        emailTriageMsg.textContent = data.error || "Could not save settings.";
+      }
+    } catch {
+      emailTriageMsg.className = "err";
+      emailTriageMsg.textContent = "Could not reach the server.";
+    } finally {
+      emailTriageSaveBtn.disabled = false;
     }
   });
 }

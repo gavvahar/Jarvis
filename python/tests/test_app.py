@@ -7,6 +7,7 @@ stubs out the database so no running PostgreSQL is required.
 """
 
 import asyncio, datetime, app as jarvis, auth, db as db_mod, integrations.automation as automation_mod, integrations.finance as finance_mod, integrations.vision as vision_mod, integrations.tesla as tesla_mod, integrations.vigil as vigil_mod, integrations.push as push_mod, integrations.briefing as briefing_mod, integrations.habits as habits_mod
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 from fastapi import HTTPException
 from app import (
@@ -43,6 +44,7 @@ from integrations.myq import _get_myq_tools, _myq_set_door
 from integrations.pim.calendar import _execute_calendar_tool, _parse_ical_events
 from integrations.pim.contacts import _execute_contact_lookup_tool, _parse_vcards
 from integrations.pim.mail import _decode_header_value, _email_configured, _execute_email_tool
+from integrations.email_triage import _classify_email, _execute_email_triage_tool, _get_email_triage_tools
 from integrations.pim.dav import (
     _dav_display_name,
     _dav_href,
@@ -997,6 +999,77 @@ class TestExecuteEmailTool:
         with patch("integrations.pim.mail._imap_fetch_unread", new=AsyncMock(side_effect=ValueError("login failed"))):
             result = asyncio.run(_execute_email_tool(self._cfg, {}))
         assert "Could not read email" in result
+
+
+class TestClassifyEmail:
+    _msg = {"from": "billing@example.com", "subject": "Invoice #42"}
+
+    def test_no_client_falls_back_to_subject(self):
+        with patch("integrations.email_triage.build_llm_client", return_value=None):
+            result = asyncio.run(_classify_email({"provider": "anthropic", "api_key": ""}, self._msg))
+        assert result == {"summary": "Invoice #42", "important": False}
+
+    def test_parses_anthropic_json_response(self):
+        fake_client = MagicMock()
+        fake_client.messages.create = AsyncMock(return_value=SimpleNamespace(content=[SimpleNamespace(text='{"summary": "Bill due Friday", "important": true}')]))
+        with patch("integrations.email_triage.build_llm_client", return_value=fake_client):
+            result = asyncio.run(_classify_email({"provider": "anthropic", "api_key": "x", "model": "claude-haiku-4-5"}, self._msg))
+        assert result == {"summary": "Bill due Friday", "important": True}
+
+    def test_parses_openai_json_response(self):
+        fake_client = MagicMock()
+        fake_client.chat.completions.create = AsyncMock(return_value=SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content='{"summary": "Weekly digest", "important": false}'))]))
+        with patch("integrations.email_triage.build_llm_client", return_value=fake_client):
+            result = asyncio.run(_classify_email({"provider": "openai", "api_key": "x", "model": "gpt-4o-mini"}, self._msg))
+        assert result == {"summary": "Weekly digest", "important": False}
+
+    def test_strips_markdown_code_fence(self):
+        fake_client = MagicMock()
+        fake_client.messages.create = AsyncMock(return_value=SimpleNamespace(content=[SimpleNamespace(text='```json\n{"summary": "ok", "important": false}\n```')]))
+        with patch("integrations.email_triage.build_llm_client", return_value=fake_client):
+            result = asyncio.run(_classify_email({"provider": "anthropic", "api_key": "x"}, self._msg))
+        assert result == {"summary": "ok", "important": False}
+
+    def test_malformed_json_falls_back(self):
+        fake_client = MagicMock()
+        fake_client.messages.create = AsyncMock(return_value=SimpleNamespace(content=[SimpleNamespace(text="not json")]))
+        with patch("integrations.email_triage.build_llm_client", return_value=fake_client):
+            result = asyncio.run(_classify_email({"provider": "anthropic", "api_key": "x"}, self._msg))
+        assert result == {"summary": "Invoice #42", "important": False}
+
+
+class TestExecuteEmailTriageTool:
+    def test_no_messages(self):
+        with patch("integrations.email_triage._db_list_email_triage", new=AsyncMock(return_value=[])):
+            result = asyncio.run(_execute_email_triage_tool("u1", {}))
+        assert "No triaged email" in result
+
+    def test_formats_messages_with_urgent_marker(self):
+        rows = [
+            {"sender": "Mom", "subject": "Hi", "summary": "Says hi", "important": False},
+            {"sender": "Bank", "subject": "Alert", "summary": "Suspicious login", "important": True},
+        ]
+        with patch("integrations.email_triage._db_list_email_triage", new=AsyncMock(return_value=rows)):
+            result = asyncio.run(_execute_email_triage_tool("u1", {}))
+        assert "Mom — Says hi" in result
+        assert "⚠ Bank — Suspicious login" in result
+
+    def test_important_only_filter(self):
+        rows = [{"sender": "Mom", "subject": "Hi", "summary": "Says hi", "important": False}]
+        with patch("integrations.email_triage._db_list_email_triage", new=AsyncMock(return_value=rows)):
+            result = asyncio.run(_execute_email_triage_tool("u1", {"important_only": True}))
+        assert "No urgent email" in result
+
+
+class TestGetEmailTriageTools:
+    def test_not_configured_returns_empty(self):
+        assert _get_email_triage_tools({}, "anthropic") == []
+
+    def test_configured_returns_tool(self):
+        config = {"email_host": "imap.example.com", "email_username": "me", "email_password": "secret"}
+        tools = _get_email_triage_tools(config, "anthropic")
+        assert len(tools) == 1
+        assert tools[0]["name"] == "get_email_summary"
 
 
 class TestScoreContactMatch:

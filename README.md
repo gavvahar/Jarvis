@@ -264,9 +264,14 @@ app-specific password where required (for Gmail: enable IMAP in Gmail
 settings and create an app password). This is read-only: J.A.R.V.I.S. never
 deletes, marks read, or sends anything.
 
-Right now this only lists what's unread — ask "do I have any unread email?"
-Classification, summarization, and urgent-item alerts are a planned follow-up
-(see `ROADMAP.md`'s Phase 6 email build order).
+Ask "do I have any unread email?" for a raw list.
+
+Once connected, turn on **ENABLE EMAIL TRIAGE** in the same EMAIL TRIAGE
+section to have J.A.R.V.I.S. classify unread mail in the background (every 5
+minutes) — a one-line summary plus an important/not-important flag, shown in
+the settings panel and available by voice ("summarize my email", "any urgent
+email?"). Proactive urgent-email alerts (push/speak without asking) are a
+planned follow-up — see `ROADMAP.md`'s Phase 6 email build order.
 
 ## NEWS
 

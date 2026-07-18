@@ -12,6 +12,7 @@ from integrations.vigil import _VIGIL_TOOL_NAMES, _execute_vigil_tool, _get_vigi
 from integrations.briefing import _execute_briefing_tool, _get_briefing_tools
 from integrations.habits import _HABITS_TOOL_NAMES, _execute_habits_tool, _get_habits_tools
 from integrations.travel import _TRAVEL_TOOL_NAMES, _execute_travel_tool, _get_travel_tools
+from integrations.email_triage import _EMAIL_TRIAGE_TOOL_NAMES, _execute_email_triage_tool, _get_email_triage_tools
 from integrations.pim.calendar import _calendar_configured, _execute_calendar_tool
 from integrations.pim.contacts import _contacts_configured, _execute_contact_lookup_tool
 from integrations.pim.mail import _execute_email_tool
@@ -70,6 +71,8 @@ async def _execute_ha_tool(config: dict, name, args, user_id: str = ""):
             return await _execute_habits_tool(user_id, args)
         if name in _TRAVEL_TOOL_NAMES:
             return await _execute_travel_tool(user_id, args)
+        if name in _EMAIL_TRIAGE_TOOL_NAMES:
+            return await _execute_email_triage_tool(user_id, args)
         if name in _SNAPCAST_TOOL_NAMES:
             return await _execute_snapcast_tool(name, args)
         if name == "get_garage_status":
@@ -353,6 +356,7 @@ async def _stream_reply(state: dict, on_text):
         + _get_vigil_tools(provider)
         + _get_habits_tools(provider)
         + _get_travel_tools(provider)
+        + _get_email_triage_tools(config, provider)
         + _get_snapcast_tools(provider)
         + finance_tools
     )
