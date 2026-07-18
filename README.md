@@ -99,6 +99,8 @@ Optional:
 | `VAPID_PUBLIC_KEY`        | Web Push public key (enables push notifications for Vigil Mode alerts)                              |
 | `VAPID_PRIVATE_KEY`       | Web Push private key matching `VAPID_PUBLIC_KEY`                                                    |
 | `VAPID_SUBJECT`           | Contact URI for Web Push, e.g. `mailto:you@example.com` (default: `mailto:admin@example.com`)       |
+| `AERODATABOX_KEY`         | RapidAPI key for the AeroDataBox API (enables the TRAVEL ALERTS panel)                              |
+| `TRAVEL_POLL_INTERVAL`    | Seconds between flight status checks (default: `900`, 15m)                                          |
 
 Generate a VAPID key pair once with `vapid --gen` (installed alongside
 `pywebpush`), then copy `applicationServerKey`/`privateKey` into
@@ -436,6 +438,25 @@ Once linked:
 Balances and transactions sync automatically in the background (every 4 hours
 by default — see `FINANCE_POLL_INTERVAL`). This is read-only: J.A.R.V.I.S.
 cannot move money or make payments.
+
+## TRAVEL ALERTS
+
+Track a flight from the **TRAVEL ALERTS** section of the PIM settings panel,
+or by voice ("track flight UA 523 tomorrow"). The admin needs
+`AERODATABOX_KEY` set in `.env` — get a free key from
+[AeroDataBox on RapidAPI](https://rapidapi.com/aedbx-aedbx/api/aerodatabox).
+
+Once tracked:
+
+- "What's the status of my flight?"
+- "Any updates on UA 523?"
+- "Stop tracking that flight."
+
+J.A.R.V.I.S. checks for gate, terminal, and status changes in the background
+(every 15 minutes by default — see `TRAVEL_POLL_INTERVAL`, only for flights
+departing within a day to stay inside AeroDataBox's free-tier request
+budget) and speaks/pushes an update whenever something changes. Tracking
+stops automatically once a flight lands, is cancelled, or diverts.
 
 ## PHONE MESSAGES
 

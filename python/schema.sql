@@ -272,3 +272,21 @@ CREATE INDEX IF NOT EXISTS idx_plaid_transactions_user ON plaid_transactions (us
 CREATE INDEX IF NOT EXISTS idx_plaid_transactions_account ON plaid_transactions (account_id);
 
 CREATE INDEX IF NOT EXISTS idx_security_events_user ON security_events (user_id, detected_at DESC);
+
+CREATE TABLE IF NOT EXISTS travel_trips (
+    id               BIGSERIAL PRIMARY KEY,
+    user_id          TEXT NOT NULL REFERENCES user_configs(user_id) ON DELETE CASCADE,
+    airline          TEXT NOT NULL,
+    flight_number    TEXT NOT NULL,
+    flight_date      DATE NOT NULL,
+    status           TEXT NOT NULL DEFAULT 'Scheduled',
+    gate             TEXT NOT NULL DEFAULT '',
+    terminal         TEXT NOT NULL DEFAULT '',
+    departure_time   TIMESTAMPTZ,
+    last_checked_at  TIMESTAMPTZ,
+    active           BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_travel_trips_user ON travel_trips (user_id);
+CREATE INDEX IF NOT EXISTS idx_travel_trips_active ON travel_trips (active, flight_date);
