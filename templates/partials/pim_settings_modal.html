@@ -78,6 +78,48 @@
     </form>
     <div id="pim-msg"></div>
 
+    <div class="setup-sub" style="margin-top: 22px">EMAIL</div>
+    <p class="pim-note">
+      Connect an IMAP account (Gmail, iCloud, Fastmail, etc. — use an
+      app-specific password where your provider requires one) so J.A.R.V.I.S.
+      can read your unread inbox. Read-only; nothing is deleted or sent.
+    </p>
+    <form id="email-settings-form" autocomplete="off">
+      <label class="setup-label" for="email-host">IMAP SERVER</label>
+      <input
+        id="email-host"
+        type="text"
+        placeholder="imap.gmail.com"
+        autocomplete="off"
+        spellcheck="false"
+      />
+      <label class="setup-label" for="email-username">USERNAME</label>
+      <input
+        id="email-username"
+        type="text"
+        placeholder="you@example.com"
+        autocomplete="off"
+        spellcheck="false"
+      />
+      <label class="setup-label" for="email-password">PASSWORD</label>
+      <input
+        id="email-password"
+        type="password"
+        placeholder="Leave blank to keep existing password"
+        autocomplete="off"
+        spellcheck="false"
+      />
+      <div id="email-status-row">
+        <span id="email-status-dot"></span>
+        <span id="email-status-text">—</span>
+      </div>
+      <div style="display: flex; gap: 8px; margin-top: 14px">
+        <button type="submit" id="email-save">SAVE</button>
+        <button type="button" id="email-cancel">CANCEL</button>
+      </div>
+    </form>
+    <div id="email-msg"></div>
+
     <div class="setup-sub" style="margin-top: 22px">DAILY BRIEFING</div>
     <p class="pim-note">
       A spoken morning and evening summary of weather, today's calendar, today's

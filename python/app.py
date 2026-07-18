@@ -70,6 +70,7 @@ from integrations.music.apple_music import (
 from integrations.pim.dav import _resolve_dav_collection
 from integrations.pim.calendar import _calendar_configured
 from integrations.pim.contacts import _contacts_configured
+from integrations.pim.mail import _email_configured, _test_email_connection
 from llm import (
     _build_client,
     _generate_meeting_notes,
@@ -113,6 +114,7 @@ from db import (
     _db_set_kid_safe,
     _db_set_display_name,
     _db_save_pim_config,
+    _db_save_email_config,
     _db_get_household_members,
     _db_get_or_create_webhook_token,
     _db_regenerate_webhook_token,
@@ -434,6 +436,9 @@ async def api_status(request: Request):
         "contacts_configured": _contacts_configured(config),
         "contacts_url": config.get("contacts_url", ""),
         "contacts_username": config.get("contacts_username", ""),
+        "email_configured": _email_configured(config),
+        "email_host": config.get("email_host", ""),
+        "email_username": config.get("email_username", ""),
         "myq_configured": _myq_configured(config),
         "tesla_configured": _tesla_configured(config),
         "tesla_method": config.get("tesla_method", ""),
@@ -727,6 +732,52 @@ async def api_save_pim(request: Request):
         "contacts_configured": _contacts_configured(config),
         "contacts_url": config.get("contacts_url", ""),
         "contacts_username": config.get("contacts_username", ""),
+    }
+
+
+@fast_app.post("/api/save_email")
+async def api_save_email(request: Request):
+    user_id = _require_user(request)
+    data = await request.json()
+    state = await _get_user_state(user_id)
+    config = state["config"]
+
+    email_host = (data.get("email_host") or "").strip()
+    email_username = (data.get("email_username") or "").strip()
+    email_password = (data.get("email_password") or "").strip()
+
+    email_to_save = {"host": config.get("email_host", ""), "username": config.get("email_username", ""), "password": config.get("email_password", "")}
+    unread_count = None
+
+    if bool(data.get("clear_email")):
+        email_to_save = {"host": "", "username": "", "password": ""}
+    elif email_host or email_username:
+        if not email_host or not email_username:
+            return {"ok": False, "error": "Email needs both a server and username."}
+        eff_pw = email_password or config.get("email_password", "")
+        if not eff_pw:
+            return {"ok": False, "error": "Email password is required."}
+        try:
+            unread_count = await _test_email_connection(email_host, email_username, eff_pw)
+        except ValueError as e:
+            return {"ok": False, "error": f"Email: {e}"}
+        email_to_save = {"host": email_host, "username": email_username, "password": eff_pw}
+
+    async with _get_user_lock(user_id):
+        config.update(
+            {
+                "email_host": email_to_save["host"],
+                "email_username": email_to_save["username"],
+                "email_password": email_to_save["password"],
+            }
+        )
+        await _db_save_email_config(user_id, config["email_host"], config["email_username"], config["email_password"])
+    return {
+        "ok": True,
+        "email_configured": _email_configured(config),
+        "email_host": config.get("email_host", ""),
+        "email_username": config.get("email_username", ""),
+        "unread_count": unread_count,
     }
 
 
