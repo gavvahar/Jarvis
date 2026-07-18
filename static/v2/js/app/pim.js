@@ -19,6 +19,20 @@ const calendarStatusDot = $("calendar-status-dot");
 const calendarStatusText = $("calendar-status-text");
 const contactsStatusDot = $("contacts-status-dot");
 const contactsStatusText = $("contacts-status-text");
+const emailSettingsForm = $("email-settings-form");
+const emailHostInput = $("email-host");
+const emailUsernameInput = $("email-username");
+export const emailPasswordInput = $("email-password");
+const emailSaveBtn = $("email-save");
+const emailCancelBtn = $("email-cancel");
+const emailMsg = $("email-msg");
+const emailStatusDot = $("email-status-dot");
+const emailStatusText = $("email-status-text");
+const emailTriageForm = $("email-triage-form");
+const emailTriageEnabledInput = $("email-triage-enabled");
+const emailTriageSaveBtn = $("email-triage-save");
+const emailTriageMsg = $("email-triage-msg");
+const emailTriageList = $("email-triage-list");
 const briefingForm = $("briefing-form");
 const briefingEnabledInput = $("briefing-enabled");
 const briefingMorningInput = $("briefing-morning-time");
@@ -81,6 +95,17 @@ export function setContactsStatus(configured, url, username) {
   refreshAgendaButton();
 }
 
+export function setEmailStatus(configured, host, username) {
+  setLamp(emailStatusDot, configured);
+  if (emailStatusText)
+    emailStatusText.textContent = configured
+      ? "EMAIL CONNECTED"
+      : "EMAIL NOT CONNECTED";
+  if (emailHostInput && typeof host === "string") emailHostInput.value = host;
+  if (emailUsernameInput && typeof username === "string")
+    emailUsernameInput.value = username;
+}
+
 async function loadBriefingPrefs() {
   if (!briefingEnabledInput) return;
   try {
@@ -131,6 +156,33 @@ async function loadTravelTrips() {
   }
 }
 
+async function loadEmailTriagePrefs() {
+  if (!emailTriageEnabledInput) return;
+  try {
+    const r = await fetch("/api/email-triage");
+    const { enabled, messages } = await r.json();
+    emailTriageEnabledInput.checked = !!enabled;
+    if (!emailTriageList) return;
+    if (!messages || !messages.length) {
+      emailTriageList.innerHTML = "<em>No triaged email yet.</em>";
+      return;
+    }
+    emailTriageList.innerHTML = messages
+      .map((m) => {
+        const sender = (m.sender || "").replace(/</g, "&lt;");
+        const summary = (m.summary || "").replace(/</g, "&lt;");
+        return `<div class="email-triage-row">
+        <span>${sender} — ${summary}</span>
+        ${m.important ? '<span class="email-triage-badge">URGENT</span>' : ""}
+      </div>`;
+      })
+      .join("");
+  } catch {
+    if (emailTriageList)
+      emailTriageList.innerHTML = "<em>Could not load triaged email.</em>";
+  }
+}
+
 function showPimSettings() {
   if (pimSettingsEl) pimSettingsEl.classList.remove("setup-hidden");
   if (pimMsg) {
@@ -145,8 +197,17 @@ function showPimSettings() {
     travelMsg.textContent = "";
     travelMsg.className = "";
   }
+  if (emailMsg) {
+    emailMsg.textContent = "";
+    emailMsg.className = "";
+  }
+  if (emailTriageMsg) {
+    emailTriageMsg.textContent = "";
+    emailTriageMsg.className = "";
+  }
   loadBriefingPrefs();
   loadTravelTrips();
+  loadEmailTriagePrefs();
   setTimeout(() => calendarUrlInput && calendarUrlInput.focus(), 150);
 }
 
@@ -154,10 +215,12 @@ function hidePimSettings() {
   if (pimSettingsEl) pimSettingsEl.classList.add("setup-hidden");
   if (calendarPasswordInput) calendarPasswordInput.value = "";
   if (contactsPasswordInput) contactsPasswordInput.value = "";
+  if (emailPasswordInput) emailPasswordInput.value = "";
 }
 
 if (agendaBtn) agendaBtn.addEventListener("click", showPimSettings);
 if (pimCancelBtn) pimCancelBtn.addEventListener("click", hidePimSettings);
+if (emailCancelBtn) emailCancelBtn.addEventListener("click", hidePimSettings);
 pimSettingsEl &&
   pimSettingsEl.addEventListener("click", (e) => {
     if (e.target === pimSettingsEl) hidePimSettings();
@@ -297,6 +360,104 @@ if (briefingForm) {
       briefingMsg.textContent = "Could not reach the server.";
     } finally {
       briefingSaveBtn.disabled = false;
+    }
+  });
+}
+
+if (emailSettingsForm) {
+  emailSettingsForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const email_host = (emailHostInput.value || "").trim();
+    const email_username = (emailUsernameInput.value || "").trim();
+    const email_password = (emailPasswordInput.value || "").trim();
+    const clear_email =
+      !email_host &&
+      !email_username &&
+      !!emailPasswordInput.dataset.hasExisting;
+
+    if ((email_host && !email_username) || (!email_host && email_username)) {
+      emailMsg.className = "err";
+      emailMsg.textContent = "Email needs both a server and username.";
+      return;
+    }
+    if (
+      email_host &&
+      !email_password &&
+      !emailPasswordInput.dataset.hasExisting
+    ) {
+      emailMsg.className = "err";
+      emailMsg.textContent = "Please provide the email password.";
+      return;
+    }
+
+    emailSaveBtn.disabled = true;
+    emailMsg.className = "";
+    emailMsg.textContent = "Verifying email…";
+    try {
+      const res = await fetch("/api/save_email", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email_host,
+          email_username,
+          email_password,
+          clear_email,
+        }),
+      });
+      const data = await res.json();
+      if (data.ok) {
+        emailMsg.className = "ok";
+        emailMsg.textContent =
+          data.unread_count != null
+            ? `Connected — ${data.unread_count} unread message${data.unread_count === 1 ? "" : "s"}.`
+            : "Email settings updated.";
+        setEmailStatus(
+          !!data.email_configured,
+          data.email_host || "",
+          data.email_username || "",
+        );
+        emailPasswordInput.dataset.hasExisting = data.email_configured
+          ? "1"
+          : "";
+        setTimeout(hidePimSettings, 1200);
+      } else {
+        emailMsg.className = "err";
+        emailMsg.textContent = data.error || "Could not save settings.";
+      }
+    } catch {
+      emailMsg.className = "err";
+      emailMsg.textContent = "Could not reach the server.";
+    } finally {
+      emailSaveBtn.disabled = false;
+    }
+  });
+}
+
+if (emailTriageForm) {
+  emailTriageForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    emailTriageSaveBtn.disabled = true;
+    emailTriageMsg.className = "";
+    emailTriageMsg.textContent = "Saving…";
+    try {
+      const res = await fetch("/api/email-triage", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled: emailTriageEnabledInput.checked }),
+      });
+      const data = await res.json();
+      if (data.ok) {
+        emailTriageMsg.className = "ok";
+        emailTriageMsg.textContent = "Email triage settings saved.";
+      } else {
+        emailTriageMsg.className = "err";
+        emailTriageMsg.textContent = data.error || "Could not save settings.";
+      }
+    } catch {
+      emailTriageMsg.className = "err";
+      emailTriageMsg.textContent = "Could not reach the server.";
+    } finally {
+      emailTriageSaveBtn.disabled = false;
     }
   });
 }
