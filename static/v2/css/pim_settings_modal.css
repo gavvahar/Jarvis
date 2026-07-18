@@ -11,14 +11,16 @@
   line-height: 1.6;
   color: rgba(210, 244, 255, 0.78);
 }
-#pim-settings-form {
+#pim-settings-form,
+#email-settings-form {
   display: flex;
   flex-direction: column;
   gap: 8px;
   text-align: left;
   margin-top: 20px;
 }
-#pim-settings-form input {
+#pim-settings-form input,
+#email-settings-form input {
   width: 100%;
   padding: 11px 13px;
   box-sizing: border-box;
@@ -34,12 +36,14 @@
     border-color 0.2s,
     box-shadow 0.2s;
 }
-#pim-settings-form input:focus {
+#pim-settings-form input:focus,
+#email-settings-form input:focus {
   border-color: var(--cyan-bright, #aef1ff);
   box-shadow: 0 0 14px rgba(127, 233, 255, 0.3);
 }
 #calendar-status-row,
-#contacts-status-row {
+#contacts-status-row,
+#email-status-row {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -50,7 +54,8 @@
   color: rgba(127, 233, 255, 0.55);
 }
 #calendar-status-dot,
-#contacts-status-dot {
+#contacts-status-dot,
+#email-status-dot {
   width: 7px;
   height: 7px;
   border-radius: 50%;
@@ -58,15 +63,18 @@
   flex-shrink: 0;
 }
 #calendar-status-dot.connected,
-#contacts-status-dot.connected {
+#contacts-status-dot.connected,
+#email-status-dot.connected {
   background: #7fffc4;
   box-shadow: 0 0 6px #7fffc4;
 }
 #calendar-status-dot.disconnected,
-#contacts-status-dot.disconnected {
+#contacts-status-dot.disconnected,
+#email-status-dot.disconnected {
   background: #ff9a7a;
 }
-#pim-settings-form button {
+#pim-settings-form button,
+#email-settings-form button {
   flex: 1;
   padding: 11px;
   background: rgba(127, 233, 255, 0.12);
@@ -82,18 +90,22 @@
     background 0.2s,
     box-shadow 0.2s;
 }
-#pim-settings-form button:hover {
+#pim-settings-form button:hover,
+#email-settings-form button:hover {
   background: rgba(127, 233, 255, 0.22);
   box-shadow: 0 0 16px rgba(127, 233, 255, 0.3);
 }
-#pim-settings-form button:disabled {
+#pim-settings-form button:disabled,
+#email-settings-form button:disabled {
   opacity: 0.5;
   cursor: default;
 }
-#pim-cancel {
+#pim-cancel,
+#email-cancel {
   border-color: rgba(127, 233, 255, 0.2) !important;
 }
-#pim-msg {
+#pim-msg,
+#email-msg {
   min-height: 16px;
   margin-top: 12px;
   font-family: "Share Tech Mono", monospace;
@@ -101,14 +113,17 @@
   letter-spacing: 0.04em;
   color: rgba(127, 233, 255, 0.7);
 }
-#pim-msg.ok {
+#pim-msg.ok,
+#email-msg.ok {
   color: #7fffc4;
 }
-#pim-msg.err {
+#pim-msg.err,
+#email-msg.err {
   color: #ff9a7a;
 }
 
-#briefing-form {
+#briefing-form,
+#email-triage-form {
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -132,7 +147,8 @@
   border-color: var(--cyan-bright, #aef1ff);
   box-shadow: 0 0 14px rgba(127, 233, 255, 0.3);
 }
-#briefing-enabled-row {
+#briefing-enabled-row,
+#email-triage-enabled-row {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -143,13 +159,15 @@
   cursor: pointer;
   margin-bottom: 4px;
 }
-#briefing-enabled-row input[type="checkbox"] {
+#briefing-enabled-row input[type="checkbox"],
+#email-triage-enabled-row input[type="checkbox"] {
   width: 15px;
   height: 15px;
   accent-color: var(--cyan-bright, #7fe9ff);
   cursor: pointer;
 }
-#briefing-form button {
+#briefing-form button,
+#email-triage-form button {
   flex: 1;
   padding: 11px;
   background: rgba(127, 233, 255, 0.12);
@@ -165,11 +183,13 @@
     background 0.2s,
     box-shadow 0.2s;
 }
-#briefing-form button:hover {
+#briefing-form button:hover,
+#email-triage-form button:hover {
   background: rgba(127, 233, 255, 0.22);
   box-shadow: 0 0 16px rgba(127, 233, 255, 0.3);
 }
-#briefing-msg {
+#briefing-msg,
+#email-triage-msg {
   min-height: 16px;
   margin-top: 12px;
   font-family: "Share Tech Mono", monospace;
@@ -177,10 +197,146 @@
   letter-spacing: 0.04em;
   color: rgba(127, 233, 255, 0.7);
 }
-#briefing-msg.ok {
+#briefing-msg.ok,
+#email-triage-msg.ok {
   color: #7fffc4;
 }
-#briefing-msg.err {
+#briefing-msg.err,
+#email-triage-msg.err {
+  color: #ff9a7a;
+}
+
+#travel-trip-list {
+  margin-top: 10px;
+  font-family: "Share Tech Mono", monospace;
+  font-size: 11px;
+  color: rgba(210, 244, 255, 0.78);
+}
+.travel-trip-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 0;
+  border-top: 1px solid rgba(127, 233, 255, 0.12);
+  color: rgba(127, 233, 255, 0.9);
+}
+.travel-trip-row:first-child {
+  border-top: none;
+}
+.travel-trip-badge {
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  background: rgba(255, 154, 122, 0.15);
+  border: 1px solid rgba(255, 154, 122, 0.4);
+  color: #ff9a7a;
+}
+.travel-trip-del {
+  padding: 3px 8px;
+  background: transparent;
+  border: 1px solid rgba(127, 233, 255, 0.35);
+  border-radius: 5px;
+  color: rgba(127, 233, 255, 0.75);
+  cursor: pointer;
+  font-size: 10px;
+}
+.travel-trip-del:hover {
+  background: rgba(255, 122, 122, 0.15);
+  border-color: rgba(255, 122, 122, 0.5);
+  color: #ff9a9a;
+}
+
+#email-triage-list {
+  margin-top: 10px;
+  font-family: "Share Tech Mono", monospace;
+  font-size: 11px;
+  color: rgba(210, 244, 255, 0.78);
+}
+.email-triage-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 0;
+  border-top: 1px solid rgba(127, 233, 255, 0.12);
+  color: rgba(127, 233, 255, 0.9);
+}
+.email-triage-row:first-child {
+  border-top: none;
+}
+.email-triage-row span:first-child {
+  flex: 1;
+  word-break: break-word;
+}
+.email-triage-badge {
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  background: rgba(255, 154, 122, 0.15);
+  border: 1px solid rgba(255, 154, 122, 0.4);
+  color: #ff9a7a;
+  flex-shrink: 0;
+}
+
+#travel-add-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  text-align: left;
+  margin-top: 10px;
+}
+#travel-add-form input {
+  width: 100%;
+  padding: 11px 13px;
+  box-sizing: border-box;
+  background: rgba(2, 10, 18, 0.8);
+  border: 1px solid rgba(127, 233, 255, 0.28);
+  border-radius: 8px;
+  color: #eafcff;
+  font-family: "Share Tech Mono", monospace;
+  font-size: 13px;
+  outline: none;
+  letter-spacing: 0.04em;
+}
+#travel-add-form input:focus {
+  border-color: var(--cyan-bright, #aef1ff);
+  box-shadow: 0 0 14px rgba(127, 233, 255, 0.3);
+}
+#travel-add-form button {
+  flex: 1;
+  padding: 11px;
+  background: rgba(127, 233, 255, 0.12);
+  border: 1px solid rgba(127, 233, 255, 0.4);
+  border-radius: 8px;
+  color: #eafcff;
+  font-family: "Oxanium", sans-serif;
+  font-weight: 500;
+  letter-spacing: 0.12em;
+  font-size: 12px;
+  cursor: pointer;
+  transition:
+    background 0.2s,
+    box-shadow 0.2s;
+}
+#travel-add-form button:hover {
+  background: rgba(127, 233, 255, 0.22);
+  box-shadow: 0 0 16px rgba(127, 233, 255, 0.3);
+}
+#travel-msg {
+  min-height: 16px;
+  margin-top: 12px;
+  font-family: "Share Tech Mono", monospace;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  color: rgba(127, 233, 255, 0.7);
+}
+#travel-msg.ok {
+  color: #7fffc4;
+}
+#travel-msg.err {
   color: #ff9a7a;
 }
 
@@ -191,7 +347,8 @@
   #setup-form input[type="text"],
   #setup-form input[type="password"],
   #ha-settings-form input,
-  #pim-settings-form input {
+  #pim-settings-form input,
+  #email-settings-form input {
     font-size: 16px;
   }
 

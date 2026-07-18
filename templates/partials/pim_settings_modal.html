@@ -78,6 +78,65 @@
     </form>
     <div id="pim-msg"></div>
 
+    <div class="setup-sub" style="margin-top: 22px">EMAIL</div>
+    <p class="pim-note">
+      Connect an IMAP account (Gmail, iCloud, Fastmail, etc. — use an
+      app-specific password where your provider requires one) so J.A.R.V.I.S.
+      can read your unread inbox. Read-only; nothing is deleted or sent.
+    </p>
+    <form id="email-settings-form" autocomplete="off">
+      <label class="setup-label" for="email-host">IMAP SERVER</label>
+      <input
+        id="email-host"
+        type="text"
+        placeholder="imap.gmail.com"
+        autocomplete="off"
+        spellcheck="false"
+      />
+      <label class="setup-label" for="email-username">USERNAME</label>
+      <input
+        id="email-username"
+        type="text"
+        placeholder="you@example.com"
+        autocomplete="off"
+        spellcheck="false"
+      />
+      <label class="setup-label" for="email-password">PASSWORD</label>
+      <input
+        id="email-password"
+        type="password"
+        placeholder="Leave blank to keep existing password"
+        autocomplete="off"
+        spellcheck="false"
+      />
+      <div id="email-status-row">
+        <span id="email-status-dot"></span>
+        <span id="email-status-text">—</span>
+      </div>
+      <div style="display: flex; gap: 8px; margin-top: 14px">
+        <button type="submit" id="email-save">SAVE</button>
+        <button type="button" id="email-cancel">CANCEL</button>
+      </div>
+    </form>
+    <div id="email-msg"></div>
+
+    <div class="setup-sub" style="margin-top: 22px">EMAIL TRIAGE</div>
+    <p class="pim-note">
+      Classifies unread email in the background and flags anything that needs
+      timely attention. Requires EMAIL to be connected above.
+    </p>
+    <form id="email-triage-form" autocomplete="off">
+      <label id="email-triage-enabled-row" for="email-triage-enabled">
+        <input type="checkbox" id="email-triage-enabled" />
+        ENABLE EMAIL TRIAGE
+      </label>
+      <div style="display: flex; gap: 8px; margin-top: 14px">
+        <button type="submit" id="email-triage-save">SAVE</button>
+      </div>
+    </form>
+    <div id="email-triage-msg"></div>
+    <div id="email-triage-list"><em>Loading…</em></div>
+
     <div class="setup-sub" style="margin-top: 22px">DAILY BRIEFING</div>
     <p class="pim-note">
       A spoken morning and evening summary of weather, today's calendar, today's
@@ -101,5 +160,40 @@
       </div>
     </form>
     <div id="briefing-msg"></div>
+
+    <div class="setup-sub" style="margin-top: 22px">TRAVEL ALERTS</div>
+    <p class="pim-note">
+      Track a flight by airline code and number to get proactive alerts on gate
+      changes, delays, and cancellations.
+    </p>
+    <div id="travel-trip-list"><em>Loading…</em></div>
+    <form id="travel-add-form" autocomplete="off">
+      <label class="setup-label" for="travel-airline">AIRLINE CODE</label>
+      <input
+        id="travel-airline"
+        type="text"
+        placeholder="UA"
+        maxlength="3"
+        style="text-transform: uppercase"
+        autocomplete="off"
+        spellcheck="false"
+      />
+      <label class="setup-label" for="travel-flight-number"
+        >FLIGHT NUMBER</label
+      >
+      <input
+        id="travel-flight-number"
+        type="text"
+        placeholder="523"
+        autocomplete="off"
+        spellcheck="false"
+      />
+      <label class="setup-label" for="travel-flight-date">DATE</label>
+      <input id="travel-flight-date" type="date" />
+      <div style="display: flex; gap: 8px; margin-top: 14px">
+        <button type="submit" id="travel-add-btn">TRACK FLIGHT</button>
+      </div>
+    </form>
+    <div id="travel-msg"></div>
   </div>
 </div>
