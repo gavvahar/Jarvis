@@ -42,6 +42,10 @@ ALTER TABLE user_configs ADD COLUMN IF NOT EXISTS briefing_last_morning_sent DAT
 ALTER TABLE user_configs ADD COLUMN IF NOT EXISTS briefing_last_evening_sent DATE;
 ALTER TABLE user_configs ADD COLUMN IF NOT EXISTS habit_nudges_enabled BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE user_configs ADD COLUMN IF NOT EXISTS habit_nudge_last_sent DATE;
+ALTER TABLE user_configs ADD COLUMN IF NOT EXISTS email_host TEXT NOT NULL DEFAULT '';
+ALTER TABLE user_configs ADD COLUMN IF NOT EXISTS email_username TEXT NOT NULL DEFAULT '';
+ALTER TABLE user_configs ADD COLUMN IF NOT EXISTS email_password TEXT NOT NULL DEFAULT '';
+ALTER TABLE user_configs ADD COLUMN IF NOT EXISTS email_triage_enabled BOOLEAN NOT NULL DEFAULT FALSE;
 
 CREATE TABLE IF NOT EXISTS shared_lists (
     id          BIGSERIAL PRIMARY KEY,
@@ -272,3 +276,35 @@ CREATE INDEX IF NOT EXISTS idx_plaid_transactions_user ON plaid_transactions (us
 CREATE INDEX IF NOT EXISTS idx_plaid_transactions_account ON plaid_transactions (account_id);
 
 CREATE INDEX IF NOT EXISTS idx_security_events_user ON security_events (user_id, detected_at DESC);
+
+CREATE TABLE IF NOT EXISTS travel_trips (
+    id               BIGSERIAL PRIMARY KEY,
+    user_id          TEXT NOT NULL REFERENCES user_configs(user_id) ON DELETE CASCADE,
+    airline          TEXT NOT NULL,
+    flight_number    TEXT NOT NULL,
+    flight_date      DATE NOT NULL,
+    status           TEXT NOT NULL DEFAULT 'Scheduled',
+    gate             TEXT NOT NULL DEFAULT '',
+    terminal         TEXT NOT NULL DEFAULT '',
+    departure_time   TIMESTAMPTZ,
+    last_checked_at  TIMESTAMPTZ,
+    active           BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_travel_trips_user ON travel_trips (user_id);
+CREATE INDEX IF NOT EXISTS idx_travel_trips_active ON travel_trips (active, flight_date);
+
+CREATE TABLE IF NOT EXISTS email_triage (
+    id             BIGSERIAL PRIMARY KEY,
+    user_id        TEXT NOT NULL REFERENCES user_configs(user_id) ON DELETE CASCADE,
+    uid            TEXT NOT NULL,
+    sender         TEXT NOT NULL DEFAULT '',
+    subject        TEXT NOT NULL DEFAULT '',
+    summary        TEXT NOT NULL DEFAULT '',
+    important      BOOLEAN NOT NULL DEFAULT FALSE,
+    classified_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_email_triage_user_uid ON email_triage (user_id, uid);
+CREATE INDEX IF NOT EXISTS idx_email_triage_user_classified ON email_triage (user_id, classified_at DESC);

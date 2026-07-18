@@ -4,6 +4,7 @@ import datetime, xml.etree.ElementTree as ET, httpx
 from db import _db_cancel_reminder, _db_cancel_timer, _db_list_reminders, _db_list_timers, _db_set_reminder, _db_set_timer
 from integrations.pim.calendar import _CALENDAR_TOOL_ANTHROPIC, _CALENDAR_TOOL_OPENAI, _calendar_configured
 from integrations.pim.contacts import _CONTACT_LOOKUP_TOOL_ANTHROPIC, _CONTACT_LOOKUP_TOOL_OPENAI, _contacts_configured
+from integrations.pim.mail import _EMAIL_TOOL_ANTHROPIC, _EMAIL_TOOL_OPENAI, _email_configured
 from tool_schemas import anthropic_tools_to_openai
 
 # ─── TIMER / REMINDER / NEWS TOOLS ───────────────────────────────────────────
@@ -82,6 +83,8 @@ def _get_pim_tools(config: dict, provider: str) -> list:
         tools.append(_CALENDAR_TOOL_ANTHROPIC if provider == "anthropic" else _CALENDAR_TOOL_OPENAI)
     if _contacts_configured(config):
         tools.append(_CONTACT_LOOKUP_TOOL_ANTHROPIC if provider == "anthropic" else _CONTACT_LOOKUP_TOOL_OPENAI)
+    if _email_configured(config):
+        tools.append(_EMAIL_TOOL_ANTHROPIC if provider == "anthropic" else _EMAIL_TOOL_OPENAI)
     return tools
 
 
