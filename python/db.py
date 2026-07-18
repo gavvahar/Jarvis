@@ -49,7 +49,7 @@ async def _db_ensure_user(user_id: str, email: str, role: str):
 async def _db_load_config(user_id: str) -> dict:
     async with _pool().acquire() as conn:
         row = await conn.fetchrow(
-            "SELECT role, provider, api_key, model, base_url, ha_url, ha_token, myq_email, myq_password, tesla_method, tesla_refresh_token, tesla_fleet_refresh_token, spotify_refresh_token, spotify_access_token, spotify_token_expiry, apple_music_user_token, apple_music_storefront, calendar_url, calendar_username, calendar_password, contacts_url, contacts_username, contacts_password, display_name, voice_embedding, is_kid_safe FROM user_configs WHERE user_id = $1",
+            "SELECT role, provider, api_key, model, base_url, ha_url, ha_token, myq_email, myq_password, tesla_method, tesla_refresh_token, tesla_fleet_refresh_token, spotify_refresh_token, spotify_access_token, spotify_token_expiry, apple_music_user_token, apple_music_storefront, calendar_url, calendar_username, calendar_password, contacts_url, contacts_username, contacts_password, email_host, email_username, email_password, display_name, voice_embedding, is_kid_safe FROM user_configs WHERE user_id = $1",
             user_id,
         )
     if row is None:
@@ -77,6 +77,9 @@ async def _db_load_config(user_id: str) -> dict:
             "contacts_url": "",
             "contacts_username": "",
             "contacts_password": "",
+            "email_host": "",
+            "email_username": "",
+            "email_password": "",
             "display_name": "",
             "voice_embedding": None,
             "is_kid_safe": False,
@@ -149,6 +152,21 @@ async def _db_save_pim_config(
             contacts_url,
             contacts_username,
             contacts_password,
+        )
+
+
+async def _db_save_email_config(user_id: str, email_host: str, email_username: str, email_password: str) -> None:
+    async with _pool().acquire() as conn:
+        await conn.execute(
+            "INSERT INTO user_configs (user_id, email, role) VALUES ($1, '', 'user') ON CONFLICT (user_id) DO NOTHING",
+            user_id,
+        )
+        await conn.execute(
+            "UPDATE user_configs SET email_host=$2, email_username=$3, email_password=$4, updated_at=NOW() WHERE user_id=$1",
+            user_id,
+            email_host,
+            email_username,
+            email_password,
         )
 
 

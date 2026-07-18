@@ -42,6 +42,9 @@ ALTER TABLE user_configs ADD COLUMN IF NOT EXISTS briefing_last_morning_sent DAT
 ALTER TABLE user_configs ADD COLUMN IF NOT EXISTS briefing_last_evening_sent DATE;
 ALTER TABLE user_configs ADD COLUMN IF NOT EXISTS habit_nudges_enabled BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE user_configs ADD COLUMN IF NOT EXISTS habit_nudge_last_sent DATE;
+ALTER TABLE user_configs ADD COLUMN IF NOT EXISTS email_host TEXT NOT NULL DEFAULT '';
+ALTER TABLE user_configs ADD COLUMN IF NOT EXISTS email_username TEXT NOT NULL DEFAULT '';
+ALTER TABLE user_configs ADD COLUMN IF NOT EXISTS email_password TEXT NOT NULL DEFAULT '';
 
 CREATE TABLE IF NOT EXISTS shared_lists (
     id          BIGSERIAL PRIMARY KEY,
