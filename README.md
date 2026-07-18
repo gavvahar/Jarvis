@@ -439,6 +439,25 @@ Balances and transactions sync automatically in the background (every 4 hours
 by default — see `FINANCE_POLL_INTERVAL`). This is read-only: J.A.R.V.I.S.
 cannot move money or make payments.
 
+## TRAVEL ALERTS
+
+Track a flight from the **TRAVEL ALERTS** section of the PIM settings panel,
+or by voice ("track flight UA 523 tomorrow"). The admin needs
+`AERODATABOX_KEY` set in `.env` — get a free key from
+[AeroDataBox on RapidAPI](https://rapidapi.com/aedbx-aedbx/api/aerodatabox).
+
+Once tracked:
+
+- "What's the status of my flight?"
+- "Any updates on UA 523?"
+- "Stop tracking that flight."
+
+J.A.R.V.I.S. checks for gate, terminal, and status changes in the background
+(every 15 minutes by default — see `TRAVEL_POLL_INTERVAL`, only for flights
+departing within a day to stay inside AeroDataBox's free-tier request
+budget) and speaks/pushes an update whenever something changes. Tracking
+stops automatically once a flight lands, is cancelled, or diverts.
+
 ## PHONE MESSAGES
 
 J.A.R.V.I.S. can receive your text messages and alert you to the important ones.
