@@ -29,6 +29,7 @@ def init(sio, sids_fn) -> None:
     _sio = sio
     _sids_fn = sids_fn
 
+
 _CLASSIFY_INSTRUCTIONS = (
     "Classify this email. Respond with strict JSON only, no other text: "
     '{"summary": "<one short sentence, under 20 words>", "important": true or false}. '
