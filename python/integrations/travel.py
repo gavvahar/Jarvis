@@ -1,6 +1,5 @@
-import asyncio, datetime, re
+import asyncio, datetime, re, httpx
 
-import httpx
 from fastapi import HTTPException
 
 from config import AERODATABOX_KEY, TRAVEL_POLL_INTERVAL
