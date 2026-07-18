@@ -1003,3 +1003,62 @@ async def _db_set_transaction_category_override(user_id: str, transaction_pk: in
             category,
         )
     return r.split()[-1] != "0"
+
+
+# ─── TRAVEL ALERTS ────────────────────────────────────────────────────────────
+async def _db_add_travel_trip(user_id: str, airline: str, flight_number: str, flight_date: datetime.date) -> int:
+    async with _pool().acquire() as conn:
+        return await conn.fetchval(
+            "INSERT INTO travel_trips (user_id, airline, flight_number, flight_date) VALUES ($1,$2,$3,$4) RETURNING id",
+            user_id,
+            airline,
+            flight_number,
+            flight_date,
+        )
+
+
+async def _db_list_travel_trips(user_id: str) -> list:
+    async with _pool().acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT id, airline, flight_number, flight_date, status, gate, terminal, departure_time, active "
+            "FROM travel_trips WHERE user_id = $1 ORDER BY flight_date DESC, id DESC",
+            user_id,
+        )
+    return [dict(r) for r in rows]
+
+
+async def _db_delete_travel_trip(user_id: str, trip_id: int) -> bool:
+    return await db_exec_affected(_pool(), "DELETE FROM travel_trips WHERE id = $1 AND user_id = $2", trip_id, user_id)
+
+
+async def _db_get_travel_trip(user_id: str, trip_id: int) -> dict | None:
+    async with _pool().acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT id, airline, flight_number, flight_date, status, gate, terminal, departure_time, active FROM travel_trips WHERE id = $1 AND user_id = $2",
+            trip_id,
+            user_id,
+        )
+    return dict(row) if row else None
+
+
+async def _db_get_active_travel_trips() -> list:
+    async with _pool().acquire() as conn:
+        rows = await conn.fetch("SELECT id, user_id, airline, flight_number, flight_date, status, gate, terminal, departure_time FROM travel_trips WHERE active = TRUE")
+    return [dict(r) for r in rows]
+
+
+async def _db_update_travel_trip(trip_id: int, status: str, gate: str, terminal: str, departure_time: datetime.datetime | None) -> None:
+    async with _pool().acquire() as conn:
+        await conn.execute(
+            "UPDATE travel_trips SET status=$2, gate=$3, terminal=$4, departure_time=$5, last_checked_at=NOW() WHERE id=$1",
+            trip_id,
+            status,
+            gate,
+            terminal,
+            departure_time,
+        )
+
+
+async def _db_deactivate_travel_trip(trip_id: int) -> None:
+    async with _pool().acquire() as conn:
+        await conn.execute("UPDATE travel_trips SET active = FALSE WHERE id = $1", trip_id)

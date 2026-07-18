@@ -63,6 +63,13 @@ socket.on("habit_nudge", ({ speak: speakText }) => {
   speak(msg);
 });
 
+socket.on("travel_alert", ({ speak: speakText }) => {
+  const msg = speakText || "Flight status update.";
+  if (window.__chat) window.__chat.addMsg(msg, "in");
+  if (isStandby()) wake();
+  speak(msg);
+});
+
 socket.on("wake_trigger", ({ device_id }) => {
   if (isStandby()) {
     wake();
