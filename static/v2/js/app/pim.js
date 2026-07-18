@@ -334,14 +334,20 @@ if (emailSettingsForm) {
     const email_username = (emailUsernameInput.value || "").trim();
     const email_password = (emailPasswordInput.value || "").trim();
     const clear_email =
-      !email_host && !email_username && !!emailPasswordInput.dataset.hasExisting;
+      !email_host &&
+      !email_username &&
+      !!emailPasswordInput.dataset.hasExisting;
 
     if ((email_host && !email_username) || (!email_host && email_username)) {
       emailMsg.className = "err";
       emailMsg.textContent = "Email needs both a server and username.";
       return;
     }
-    if (email_host && !email_password && !emailPasswordInput.dataset.hasExisting) {
+    if (
+      email_host &&
+      !email_password &&
+      !emailPasswordInput.dataset.hasExisting
+    ) {
       emailMsg.className = "err";
       emailMsg.textContent = "Please provide the email password.";
       return;
