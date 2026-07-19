@@ -10,7 +10,7 @@ on:
 
 jobs:
   open-pr:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, homelab]
     permissions:
       pull-requests: write
       contents: read
