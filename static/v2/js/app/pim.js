@@ -33,6 +33,11 @@ const emailTriageEnabledInput = $("email-triage-enabled");
 const emailTriageSaveBtn = $("email-triage-save");
 const emailTriageMsg = $("email-triage-msg");
 const emailTriageList = $("email-triage-list");
+const packageTrackingForm = $("package-tracking-form");
+const packageTrackingEnabledInput = $("package-tracking-enabled");
+const packageTrackingSaveBtn = $("package-tracking-save");
+const packageTrackingMsg = $("package-tracking-msg");
+const packageTrackingList = $("package-tracking-list");
 const briefingForm = $("briefing-form");
 const briefingEnabledInput = $("briefing-enabled");
 const briefingMorningInput = $("briefing-morning-time");
@@ -183,6 +188,42 @@ async function loadEmailTriagePrefs() {
   }
 }
 
+const PACKAGE_STATUS_LABELS = {
+  delivered: "DELIVERED",
+  out_for_delivery: "OUT FOR DELIVERY",
+  shipped: "SHIPPED",
+  update: "UPDATE",
+};
+
+async function loadPackageTrackingPrefs() {
+  if (!packageTrackingEnabledInput) return;
+  try {
+    const r = await fetch("/api/package-tracking");
+    const { enabled, events } = await r.json();
+    packageTrackingEnabledInput.checked = !!enabled;
+    if (!packageTrackingList) return;
+    if (!events || !events.length) {
+      packageTrackingList.innerHTML = "<em>No package updates yet.</em>";
+      return;
+    }
+    packageTrackingList.innerHTML = events
+      .map((ev) => {
+        const carrier = (ev.carrier || "").replace(/</g, "&lt;");
+        const tracking = (ev.tracking_number || "").replace(/</g, "&lt;");
+        const label = PACKAGE_STATUS_LABELS[ev.status] || ev.status;
+        return `<div class="package-tracking-row">
+        <span>${carrier}${tracking ? " · " + tracking : ""}</span>
+        <span class="package-tracking-badge">${label}</span>
+      </div>`;
+      })
+      .join("");
+  } catch {
+    if (packageTrackingList)
+      packageTrackingList.innerHTML =
+        "<em>Could not load package updates.</em>";
+  }
+}
+
 function showPimSettings() {
   if (pimSettingsEl) pimSettingsEl.classList.remove("setup-hidden");
   if (pimMsg) {
@@ -205,9 +246,14 @@ function showPimSettings() {
     emailTriageMsg.textContent = "";
     emailTriageMsg.className = "";
   }
+  if (packageTrackingMsg) {
+    packageTrackingMsg.textContent = "";
+    packageTrackingMsg.className = "";
+  }
   loadBriefingPrefs();
   loadTravelTrips();
   loadEmailTriagePrefs();
+  loadPackageTrackingPrefs();
   setTimeout(() => calendarUrlInput && calendarUrlInput.focus(), 150);
 }
 
@@ -458,6 +504,36 @@ if (emailTriageForm) {
       emailTriageMsg.textContent = "Could not reach the server.";
     } finally {
       emailTriageSaveBtn.disabled = false;
+    }
+  });
+}
+
+if (packageTrackingForm) {
+  packageTrackingForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    packageTrackingSaveBtn.disabled = true;
+    packageTrackingMsg.className = "";
+    packageTrackingMsg.textContent = "Saving…";
+    try {
+      const res = await fetch("/api/package-tracking", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled: packageTrackingEnabledInput.checked }),
+      });
+      const data = await res.json();
+      if (data.ok) {
+        packageTrackingMsg.className = "ok";
+        packageTrackingMsg.textContent = "Package tracking settings saved.";
+      } else {
+        packageTrackingMsg.className = "err";
+        packageTrackingMsg.textContent =
+          data.error || "Could not save settings.";
+      }
+    } catch {
+      packageTrackingMsg.className = "err";
+      packageTrackingMsg.textContent = "Could not reach the server.";
+    } finally {
+      packageTrackingSaveBtn.disabled = false;
     }
   });
 }

@@ -46,6 +46,7 @@ ALTER TABLE user_configs ADD COLUMN IF NOT EXISTS email_host TEXT NOT NULL DEFAU
 ALTER TABLE user_configs ADD COLUMN IF NOT EXISTS email_username TEXT NOT NULL DEFAULT '';
 ALTER TABLE user_configs ADD COLUMN IF NOT EXISTS email_password TEXT NOT NULL DEFAULT '';
 ALTER TABLE user_configs ADD COLUMN IF NOT EXISTS email_triage_enabled BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE user_configs ADD COLUMN IF NOT EXISTS package_tracking_enabled BOOLEAN NOT NULL DEFAULT FALSE;
 
 CREATE TABLE IF NOT EXISTS shared_lists (
     id          BIGSERIAL PRIMARY KEY,
@@ -308,3 +309,16 @@ CREATE TABLE IF NOT EXISTS email_triage (
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_email_triage_user_uid ON email_triage (user_id, uid);
 CREATE INDEX IF NOT EXISTS idx_email_triage_user_classified ON email_triage (user_id, classified_at DESC);
+
+CREATE TABLE IF NOT EXISTS package_events (
+    id               BIGSERIAL PRIMARY KEY,
+    user_id          TEXT NOT NULL REFERENCES user_configs(user_id) ON DELETE CASCADE,
+    uid              TEXT NOT NULL,
+    carrier          TEXT NOT NULL,
+    status           TEXT NOT NULL DEFAULT 'update',
+    tracking_number  TEXT NOT NULL DEFAULT '',
+    detected_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_package_events_user_uid ON package_events (user_id, uid);
+CREATE INDEX IF NOT EXISTS idx_package_events_user_detected ON package_events (user_id, detected_at DESC);
