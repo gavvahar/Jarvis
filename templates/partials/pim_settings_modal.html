@@ -137,6 +137,23 @@
     <div id="email-triage-msg"></div>
     <div id="email-triage-list"><em>Loading…</em></div>
 
+    <div class="setup-sub" style="margin-top: 22px">PACKAGE TRACKING</div>
+    <p class="pim-note">
+      Watches unread email from UPS, FedEx, USPS, and Amazon for shipping
+      updates and announces deliveries. Requires EMAIL to be connected above.
+    </p>
+    <form id="package-tracking-form" autocomplete="off">
+      <label id="package-tracking-enabled-row" for="package-tracking-enabled">
+        <input type="checkbox" id="package-tracking-enabled" />
+        ENABLE PACKAGE TRACKING
+      </label>
+      <div style="display: flex; gap: 8px; margin-top: 14px">
+        <button type="submit" id="package-tracking-save">SAVE</button>
+      </div>
+    </form>
+    <div id="package-tracking-msg"></div>
+    <div id="package-tracking-list"><em>Loading…</em></div>
+
     <div class="setup-sub" style="margin-top: 22px">DAILY BRIEFING</div>
     <p class="pim-note">
       A spoken morning and evening summary of weather, today's calendar, today's
