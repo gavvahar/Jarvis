@@ -1129,3 +1129,51 @@ async def _db_list_email_triage(user_id: str, limit: int = 20) -> list:
             limit,
         )
     return [dict(r) for r in rows]
+
+
+# ─── PACKAGE TRACKING ──────────────────────────────────────────────────────────
+async def _db_get_package_tracking_prefs(user_id: str) -> dict:
+    async with _pool().acquire() as conn:
+        row = await conn.fetchrow("SELECT package_tracking_enabled FROM user_configs WHERE user_id = $1", user_id)
+    return {"enabled": bool(row["package_tracking_enabled"])} if row else {"enabled": False}
+
+
+async def _db_set_package_tracking_enabled(user_id: str, enabled: bool) -> None:
+    async with _pool().acquire() as conn:
+        await conn.execute("UPDATE user_configs SET package_tracking_enabled=$2 WHERE user_id=$1", user_id, enabled)
+
+
+async def _db_list_users_for_package_tracking() -> list:
+    async with _pool().acquire() as conn:
+        rows = await conn.fetch("SELECT user_id FROM user_configs WHERE package_tracking_enabled = TRUE")
+    return [r["user_id"] for r in rows]
+
+
+async def _db_uids_already_tracked(user_id: str, uids: list[str]) -> set[str]:
+    if not uids:
+        return set()
+    async with _pool().acquire() as conn:
+        rows = await conn.fetch("SELECT uid FROM package_events WHERE user_id = $1 AND uid = ANY($2::text[])", user_id, uids)
+    return {r["uid"] for r in rows}
+
+
+async def _db_insert_package_event(user_id: str, uid: str, carrier: str, status: str, tracking_number: str) -> None:
+    async with _pool().acquire() as conn:
+        await conn.execute(
+            "INSERT INTO package_events (user_id, uid, carrier, status, tracking_number) VALUES ($1,$2,$3,$4,$5) ON CONFLICT (user_id, uid) DO NOTHING",
+            user_id,
+            uid,
+            carrier,
+            status,
+            tracking_number,
+        )
+
+
+async def _db_list_package_events(user_id: str, limit: int = 20) -> list:
+    async with _pool().acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT id, carrier, status, tracking_number, detected_at FROM package_events WHERE user_id = $1 ORDER BY detected_at DESC LIMIT $2",
+            user_id,
+            limit,
+        )
+    return [dict(r) for r in rows]
