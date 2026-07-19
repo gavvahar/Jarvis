@@ -219,7 +219,8 @@ async function loadPackageTrackingPrefs() {
       .join("");
   } catch {
     if (packageTrackingList)
-      packageTrackingList.innerHTML = "<em>Could not load package updates.</em>";
+      packageTrackingList.innerHTML =
+        "<em>Could not load package updates.</em>";
   }
 }
 
@@ -525,7 +526,8 @@ if (packageTrackingForm) {
         packageTrackingMsg.textContent = "Package tracking settings saved.";
       } else {
         packageTrackingMsg.className = "err";
-        packageTrackingMsg.textContent = data.error || "Could not save settings.";
+        packageTrackingMsg.textContent =
+          data.error || "Could not save settings.";
       }
     } catch {
       packageTrackingMsg.className = "err";
