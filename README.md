@@ -273,8 +273,13 @@ the settings panel and available by voice ("summarize my email", "any urgent
 email?"). Anything flagged important is announced right away (spoken + push
 notification), the same way timer and reminder alerts are.
 
-Package tracking (parsing shipping emails for delivery updates) is a planned
-follow-up — see `ROADMAP.md`'s Phase 6 email build order.
+Turn on **ENABLE PACKAGE TRACKING** in the same modal to have J.A.R.V.I.S.
+watch unread mail from UPS, FedEx, USPS, and Amazon for shipping updates —
+"shipped," "out for delivery," or "delivered" — shown in the settings panel
+and available by voice ("any package updates?"). Deliveries and out-for-
+delivery notices are announced right away; a tracking number is included
+when one can be found in the email. This is heuristic (regex over the email
+text, not a carrier tracking API), so an occasional miss is expected.
 
 ## NEWS
 

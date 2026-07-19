@@ -1,4 +1,4 @@
-import asyncio, email, email.header, imaplib
+import asyncio, email, email.header, imaplib, re
 
 from tool_schemas import anthropic_tools_to_openai
 
@@ -51,7 +51,7 @@ def _test_email_connection_sync(host: str, username: str, password: str) -> int:
         status, _ = conn.select("INBOX", readonly=True)
         if status != "OK":
             raise ValueError("Could not open the inbox.")
-        status, data = conn.search(None, "UNSEEN")
+        status, data = conn.uid("search", None, "UNSEEN")
         if status != "OK":
             raise ValueError("Could not search the inbox.")
         return len(data[0].split()) if data and data[0] else 0
@@ -69,14 +69,17 @@ def _imap_fetch_unread_sync(host: str, username: str, password: str, limit: int)
         status, _ = conn.select("INBOX", readonly=True)
         if status != "OK":
             raise ValueError("Could not open the inbox.")
-        status, data = conn.search(None, "UNSEEN")
+        # Use IMAP UIDs (conn.uid(...)), not sequence numbers (conn.search/fetch) — sequence
+        # numbers shift whenever another message is expunged, so they can't be used as a
+        # stable dedup key across polls the way callers (email triage, package tracking) need.
+        status, data = conn.uid("search", None, "UNSEEN")
         if status != "OK":
             raise ValueError("Could not search the inbox.")
         uids = data[0].split() if data and data[0] else []
         uids = uids[-limit:] if limit else uids
         messages = []
         for uid in reversed(uids):
-            status, msg_data = conn.fetch(uid, "(BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE)])")
+            status, msg_data = conn.uid("fetch", uid, "(BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE)])")
             if status != "OK" or not msg_data or not isinstance(msg_data[0], tuple):
                 continue
             msg = email.message_from_bytes(msg_data[0][1])
@@ -97,6 +100,53 @@ async def _imap_fetch_unread(config: dict, limit: int = 10) -> list[dict]:
     if not _email_configured(config):
         raise ValueError("Email is not configured.")
     return await asyncio.to_thread(_imap_fetch_unread_sync, config["email_host"], config["email_username"], config["email_password"], limit)
+
+
+def _extract_plain_text(msg: email.message.Message) -> str:
+    if msg.is_multipart():
+        parts = list(msg.walk())
+        for part in parts:
+            if part.get_content_type() == "text/plain" and not part.get_filename():
+                try:
+                    return part.get_payload(decode=True).decode(part.get_content_charset() or "utf-8", errors="replace")
+                except Exception:
+                    continue
+        for part in parts:
+            if part.get_content_type() == "text/html" and not part.get_filename():
+                try:
+                    html = part.get_payload(decode=True).decode(part.get_content_charset() or "utf-8", errors="replace")
+                    return re.sub(r"<[^>]+>", " ", html)
+                except Exception:
+                    continue
+        return ""
+    try:
+        payload = msg.get_payload(decode=True)
+        if payload is None:
+            return str(msg.get_payload() or "")
+        text = payload.decode(msg.get_content_charset() or "utf-8", errors="replace")
+        return re.sub(r"<[^>]+>", " ", text) if msg.get_content_type() == "text/html" else text
+    except Exception:
+        return ""
+
+
+def _imap_fetch_body_sync(host: str, username: str, password: str, uid: str) -> str:
+    conn = _imap_connect(host, username, password)
+    try:
+        status, _ = conn.select("INBOX", readonly=True)
+        if status != "OK":
+            raise ValueError("Could not open the inbox.")
+        status, msg_data = conn.uid("fetch", uid, "(BODY.PEEK[])")
+        if status != "OK" or not msg_data or not isinstance(msg_data[0], tuple):
+            return ""
+        return _extract_plain_text(email.message_from_bytes(msg_data[0][1]))
+    finally:
+        _imap_disconnect(conn)
+
+
+async def _imap_fetch_body(config: dict, uid: str) -> str:
+    if not _email_configured(config):
+        raise ValueError("Email is not configured.")
+    return await asyncio.to_thread(_imap_fetch_body_sync, config["email_host"], config["email_username"], config["email_password"], uid)
 
 
 # ─── Tool schema ────────────────────────────────────────────────────────────
