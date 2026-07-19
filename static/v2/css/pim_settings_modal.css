@@ -123,7 +123,8 @@
 }
 
 #briefing-form,
-#email-triage-form {
+#email-triage-form,
+#package-tracking-form {
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -148,7 +149,8 @@
   box-shadow: 0 0 14px rgba(127, 233, 255, 0.3);
 }
 #briefing-enabled-row,
-#email-triage-enabled-row {
+#email-triage-enabled-row,
+#package-tracking-enabled-row {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -160,14 +162,16 @@
   margin-bottom: 4px;
 }
 #briefing-enabled-row input[type="checkbox"],
-#email-triage-enabled-row input[type="checkbox"] {
+#email-triage-enabled-row input[type="checkbox"],
+#package-tracking-enabled-row input[type="checkbox"] {
   width: 15px;
   height: 15px;
   accent-color: var(--cyan-bright, #7fe9ff);
   cursor: pointer;
 }
 #briefing-form button,
-#email-triage-form button {
+#email-triage-form button,
+#package-tracking-form button {
   flex: 1;
   padding: 11px;
   background: rgba(127, 233, 255, 0.12);
@@ -184,12 +188,14 @@
     box-shadow 0.2s;
 }
 #briefing-form button:hover,
-#email-triage-form button:hover {
+#email-triage-form button:hover,
+#package-tracking-form button:hover {
   background: rgba(127, 233, 255, 0.22);
   box-shadow: 0 0 16px rgba(127, 233, 255, 0.3);
 }
 #briefing-msg,
-#email-triage-msg {
+#email-triage-msg,
+#package-tracking-msg {
   min-height: 16px;
   margin-top: 12px;
   font-family: "Share Tech Mono", monospace;
@@ -198,11 +204,13 @@
   color: rgba(127, 233, 255, 0.7);
 }
 #briefing-msg.ok,
-#email-triage-msg.ok {
+#email-triage-msg.ok,
+#package-tracking-msg.ok {
   color: #7fffc4;
 }
 #briefing-msg.err,
-#email-triage-msg.err {
+#email-triage-msg.err,
+#package-tracking-msg.err {
   color: #ff9a7a;
 }
 
@@ -278,6 +286,39 @@
   background: rgba(255, 154, 122, 0.15);
   border: 1px solid rgba(255, 154, 122, 0.4);
   color: #ff9a7a;
+  flex-shrink: 0;
+}
+
+#package-tracking-list {
+  margin-top: 10px;
+  font-family: "Share Tech Mono", monospace;
+  font-size: 11px;
+  color: rgba(210, 244, 255, 0.78);
+}
+.package-tracking-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 0;
+  border-top: 1px solid rgba(127, 233, 255, 0.12);
+  color: rgba(127, 233, 255, 0.9);
+}
+.package-tracking-row:first-child {
+  border-top: none;
+}
+.package-tracking-row span:first-child {
+  flex: 1;
+  word-break: break-word;
+}
+.package-tracking-badge {
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  background: rgba(127, 233, 255, 0.15);
+  border: 1px solid rgba(127, 233, 255, 0.4);
+  color: rgba(127, 233, 255, 0.9);
   flex-shrink: 0;
 }
 
