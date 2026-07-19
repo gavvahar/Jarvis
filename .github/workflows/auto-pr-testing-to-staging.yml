@@ -1,0 +1,41 @@
+name: Auto PR Testing to Staging
+
+on:
+  schedule:
+    # Tue/Thu/Sun 5pm EDT (UTC-4). GitHub Actions cron has no DST awareness,
+    # so during EST (Nov-Mar) this runs at 4pm EST instead of 5pm - a ~4-month,
+    # 1-hour drift that's preferable to firing twice year-round.
+    - cron: "0 21 * * 0,2,4"
+  workflow_dispatch: # Allow manual trigger
+
+jobs:
+  open-pr:
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+      contents: read
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Open PR from testing to staging
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if git merge-base --is-ancestor origin/testing origin/staging; then
+            echo "testing has no new commits over staging, nothing to do"
+            exit 0
+          fi
+
+          existing=$(gh pr list -R "${{ github.repository }}" --base staging --head testing --state open --json number -q '.[0].number')
+          if [ -n "$existing" ]; then
+            echo "PR #$existing already open from testing to staging, nothing to do"
+            exit 0
+          fi
+
+          gh pr create -R "${{ github.repository }}" \
+            --base staging --head testing \
+            --title "chore: merge testing into staging [$(date -u '+%B %-d, %Y')]" \
+            --body "Automated PR opened on schedule to merge \`testing\` into \`staging\`."
