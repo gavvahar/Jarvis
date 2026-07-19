@@ -979,12 +979,7 @@ class TestExtractPlainText:
         assert mail_mod._extract_plain_text(msg).strip() == "Hello world"
 
     def test_multipart_prefers_plain_text(self):
-        raw = (
-            'Content-Type: multipart/alternative; boundary="b"\n\n'
-            "--b\nContent-Type: text/plain\n\nPlain body\n"
-            "--b\nContent-Type: text/html\n\n<p>HTML body</p>\n"
-            "--b--\n"
-        )
+        raw = 'Content-Type: multipart/alternative; boundary="b"\n\n--b\nContent-Type: text/plain\n\nPlain body\n--b\nContent-Type: text/html\n\n<p>HTML body</p>\n--b--\n'
         msg = email_pkg.message_from_string(raw)
         assert "Plain body" in mail_mod._extract_plain_text(msg)
 
