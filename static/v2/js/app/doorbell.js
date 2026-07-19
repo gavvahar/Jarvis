@@ -77,6 +77,13 @@ socket.on("email_alert", ({ speak: speakText }) => {
   speak(msg);
 });
 
+socket.on("package_alert", ({ speak: speakText }) => {
+  const msg = speakText || "Package update.";
+  if (window.__chat) window.__chat.addMsg(msg, "in");
+  if (isStandby()) wake();
+  speak(msg);
+});
+
 socket.on("wake_trigger", ({ device_id }) => {
   if (isStandby()) {
     wake();
