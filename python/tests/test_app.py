@@ -72,7 +72,7 @@ from integrations.automation import _evaluate_alert_condition, _execute_device_a
 from integrations.shared_lists import _execute_shared_list_tool
 from integrations.multiroom.snapcast import _execute_snapcast_tool, _get_snapcast_tools, _snapcast_get_status
 from integrations.tesla import _execute_tesla_tool, _get_tesla_tools, _tesla_base_url, _tesla_pick_vehicle
-from llm import _build_system_prompt
+from llm import _build_system_prompt, _time_of_day_label
 from integrations.tesla import _c_to_f
 
 # ── Shared async-mock helpers ────────────────────────────────────────────────
@@ -334,6 +334,22 @@ class TestMyqSetDoor:
         assert "Could not reach MyQ" in result
 
 
+class TestTimeOfDayLabel:
+    def test_boundaries(self):
+        assert _time_of_day_label(0) == "late night"
+        assert _time_of_day_label(4) == "late night"
+        assert _time_of_day_label(5) == "early morning"
+        assert _time_of_day_label(6) == "early morning"
+        assert _time_of_day_label(7) == "morning"
+        assert _time_of_day_label(11) == "morning"
+        assert _time_of_day_label(12) == "afternoon"
+        assert _time_of_day_label(16) == "afternoon"
+        assert _time_of_day_label(17) == "evening"
+        assert _time_of_day_label(20) == "evening"
+        assert _time_of_day_label(21) == "night"
+        assert _time_of_day_label(23) == "night"
+
+
 class TestBuildSystemPrompt:
     def test_base_prompt_non_empty(self):
         prompt = _build_system_prompt({"ha_url": "", "ha_token": ""})
@@ -396,6 +412,14 @@ class TestBuildSystemPrompt:
     def test_spotify_section_absent_when_not_configured(self):
         cfg = {"ha_url": "", "ha_token": "", "spotify_refresh_token": ""}
         assert "SPOTIFY" not in _build_system_prompt(cfg)
+
+    def test_time_of_day_label_included(self):
+        prompt = _build_system_prompt({"ha_url": "", "ha_token": ""})
+        assert any(label in prompt for label in ("late night", "early morning", "morning", "afternoon", "evening", "night"))
+
+    def test_context_awareness_instructions_present(self):
+        prompt = _build_system_prompt({"ha_url": "", "ha_token": ""})
+        assert "CONTEXT AWARENESS" in prompt
 
     def test_all_integrations_configured(self):
         cfg = {
