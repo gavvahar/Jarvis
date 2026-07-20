@@ -6,7 +6,8 @@ Webhook auth tests use the `api_client` fixture from conftest.py which
 stubs out the database so no running PostgreSQL is required.
 """
 
-import asyncio, datetime, app as jarvis, auth, db as db_mod, integrations.automation as automation_mod, integrations.finance as finance_mod, integrations.vision as vision_mod, integrations.tesla as tesla_mod, integrations.sentry as sentry_mod, integrations.push as push_mod
+import asyncio, datetime, email as email_pkg, app as jarvis, auth, db as db_mod, integrations.automation as automation_mod, integrations.finance as finance_mod, integrations.vision as vision_mod, integrations.tesla as tesla_mod, integrations.vigil as vigil_mod, integrations.push as push_mod, integrations.briefing as briefing_mod, integrations.habits as habits_mod, integrations.email_triage as email_triage_mod, integrations.package_tracking as package_tracking_mod, integrations.pim.mail as mail_mod
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 from fastapi import HTTPException
 from app import (
@@ -42,6 +43,15 @@ from integrations.music.apple_music import (
 from integrations.myq import _get_myq_tools, _myq_set_door
 from integrations.pim.calendar import _execute_calendar_tool, _parse_ical_events
 from integrations.pim.contacts import _execute_contact_lookup_tool, _parse_vcards
+from integrations.pim.mail import _decode_header_value, _email_configured, _execute_email_tool
+from integrations.email_triage import _classify_email, _execute_email_triage_tool, _get_email_triage_tools
+from integrations.package_tracking import (
+    _detect_carrier,
+    _detect_status,
+    _execute_package_tool,
+    _extract_tracking_number,
+    _get_package_tools,
+)
 from integrations.pim.dav import (
     _dav_display_name,
     _dav_href,
@@ -191,6 +201,12 @@ class TestContactsConfigured:
     def test_all_fields_required(self):
         assert _contacts_configured({"contacts_url": "https://dav.example.com", "contacts_username": "me", "contacts_password": "secret"}) is True
         assert _contacts_configured({"contacts_url": "", "contacts_username": "me", "contacts_password": "secret"}) is False
+
+
+class TestEmailConfigured:
+    def test_all_fields_required(self):
+        assert _email_configured({"email_host": "imap.example.com", "email_username": "me", "email_password": "secret"}) is True
+        assert _email_configured({"email_host": "imap.example.com", "email_username": "me", "email_password": ""}) is False
 
 
 class TestUserConfigured:
@@ -943,6 +959,342 @@ class TestExecuteContactLookupTool:
         with patch("integrations.pim.contacts._lookup_contacts", new=AsyncMock(side_effect=ValueError("auth failed"))):
             result = asyncio.run(_execute_contact_lookup_tool(self._cfg, {"query": "Mom"}))
         assert "Could not search contacts" in result
+
+
+class TestDecodeHeaderValue:
+    def test_plain_ascii(self):
+        assert _decode_header_value("Hello there") == "Hello there"
+
+    def test_empty(self):
+        assert _decode_header_value(None) == ""
+        assert _decode_header_value("") == ""
+
+    def test_encoded_word(self):
+        assert _decode_header_value("=?utf-8?q?Caf=C3=A9?=") == "Café"
+
+
+class TestExtractPlainText:
+    def test_plain_text_message(self):
+        msg = email_pkg.message_from_string("Subject: Hi\n\nHello world")
+        assert mail_mod._extract_plain_text(msg).strip() == "Hello world"
+
+    def test_multipart_prefers_plain_text(self):
+        raw = 'Content-Type: multipart/alternative; boundary="b"\n\n--b\nContent-Type: text/plain\n\nPlain body\n--b\nContent-Type: text/html\n\n<p>HTML body</p>\n--b--\n'
+        msg = email_pkg.message_from_string(raw)
+        assert "Plain body" in mail_mod._extract_plain_text(msg)
+
+    def test_multipart_falls_back_to_stripped_html(self):
+        raw = 'Content-Type: multipart/alternative; boundary="b"\n\n--b\nContent-Type: text/html\n\n<p>Hello <b>there</b></p>\n--b--\n'
+        msg = email_pkg.message_from_string(raw)
+        text = mail_mod._extract_plain_text(msg)
+        assert "Hello" in text and "there" in text
+        assert "<p>" not in text
+
+
+class TestExecuteEmailTool:
+    _cfg = {
+        "email_host": "imap.example.com",
+        "email_username": "me@example.com",
+        "email_password": "secret",
+    }
+
+    def test_not_configured(self):
+        result = asyncio.run(_execute_email_tool({}, {}))
+        assert "not configured" in result
+
+    def test_no_unread(self):
+        with patch("integrations.pim.mail._imap_fetch_unread", new=AsyncMock(return_value=[])):
+            result = asyncio.run(_execute_email_tool(self._cfg, {}))
+        assert "No unread email" in result
+
+    def test_formats_messages(self):
+        messages = [{"uid": "1", "from": "Mom <mom@example.com>", "subject": "Dinner?", "date": "Mon, 1 Jan 2026"}]
+        with patch("integrations.pim.mail._imap_fetch_unread", new=AsyncMock(return_value=messages)):
+            result = asyncio.run(_execute_email_tool(self._cfg, {}))
+        assert "Mom <mom@example.com>" in result
+        assert "Dinner?" in result
+
+    def test_clamps_limit(self):
+        fetch = AsyncMock(return_value=[])
+        with patch("integrations.pim.mail._imap_fetch_unread", new=fetch):
+            asyncio.run(_execute_email_tool(self._cfg, {"limit": 999}))
+        fetch.assert_awaited_once_with(self._cfg, 25)
+
+    def test_fetch_error_surfaced(self):
+        with patch("integrations.pim.mail._imap_fetch_unread", new=AsyncMock(side_effect=ValueError("login failed"))):
+            result = asyncio.run(_execute_email_tool(self._cfg, {}))
+        assert "Could not read email" in result
+
+
+class TestClassifyEmail:
+    _msg = {"from": "billing@example.com", "subject": "Invoice #42"}
+
+    def test_no_client_falls_back_to_subject(self):
+        with patch("integrations.email_triage.build_llm_client", return_value=None):
+            result = asyncio.run(_classify_email({"provider": "anthropic", "api_key": ""}, self._msg))
+        assert result == {"summary": "Invoice #42", "important": False}
+
+    def test_parses_anthropic_json_response(self):
+        fake_client = MagicMock()
+        fake_client.messages.create = AsyncMock(return_value=SimpleNamespace(content=[SimpleNamespace(text='{"summary": "Bill due Friday", "important": true}')]))
+        with patch("integrations.email_triage.build_llm_client", return_value=fake_client):
+            result = asyncio.run(_classify_email({"provider": "anthropic", "api_key": "x", "model": "claude-haiku-4-5"}, self._msg))
+        assert result == {"summary": "Bill due Friday", "important": True}
+
+    def test_parses_openai_json_response(self):
+        fake_client = MagicMock()
+        fake_client.chat.completions.create = AsyncMock(
+            return_value=SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content='{"summary": "Weekly digest", "important": false}'))])
+        )
+        with patch("integrations.email_triage.build_llm_client", return_value=fake_client):
+            result = asyncio.run(_classify_email({"provider": "openai", "api_key": "x", "model": "gpt-4o-mini"}, self._msg))
+        assert result == {"summary": "Weekly digest", "important": False}
+
+    def test_strips_markdown_code_fence(self):
+        fake_client = MagicMock()
+        fake_client.messages.create = AsyncMock(return_value=SimpleNamespace(content=[SimpleNamespace(text='```json\n{"summary": "ok", "important": false}\n```')]))
+        with patch("integrations.email_triage.build_llm_client", return_value=fake_client):
+            result = asyncio.run(_classify_email({"provider": "anthropic", "api_key": "x"}, self._msg))
+        assert result == {"summary": "ok", "important": False}
+
+    def test_malformed_json_falls_back(self):
+        fake_client = MagicMock()
+        fake_client.messages.create = AsyncMock(return_value=SimpleNamespace(content=[SimpleNamespace(text="not json")]))
+        with patch("integrations.email_triage.build_llm_client", return_value=fake_client):
+            result = asyncio.run(_classify_email({"provider": "anthropic", "api_key": "x"}, self._msg))
+        assert result == {"summary": "Invoice #42", "important": False}
+
+
+class TestExecuteEmailTriageTool:
+    def test_no_messages(self):
+        with patch("integrations.email_triage._db_list_email_triage", new=AsyncMock(return_value=[])):
+            result = asyncio.run(_execute_email_triage_tool("u1", {}))
+        assert "No triaged email" in result
+
+    def test_formats_messages_with_urgent_marker(self):
+        rows = [
+            {"sender": "Mom", "subject": "Hi", "summary": "Says hi", "important": False},
+            {"sender": "Bank", "subject": "Alert", "summary": "Suspicious login", "important": True},
+        ]
+        with patch("integrations.email_triage._db_list_email_triage", new=AsyncMock(return_value=rows)):
+            result = asyncio.run(_execute_email_triage_tool("u1", {}))
+        assert "Mom — Says hi" in result
+        assert "⚠ Bank — Suspicious login" in result
+
+    def test_important_only_filter(self):
+        rows = [{"sender": "Mom", "subject": "Hi", "summary": "Says hi", "important": False}]
+        with patch("integrations.email_triage._db_list_email_triage", new=AsyncMock(return_value=rows)):
+            result = asyncio.run(_execute_email_triage_tool("u1", {"important_only": True}))
+        assert "No urgent email" in result
+
+
+class TestGetEmailTriageTools:
+    def test_not_configured_returns_empty(self):
+        assert _get_email_triage_tools({}, "anthropic") == []
+
+    def test_configured_returns_tool(self):
+        config = {"email_host": "imap.example.com", "email_username": "me", "email_password": "secret"}
+        tools = _get_email_triage_tools(config, "anthropic")
+        assert len(tools) == 1
+        assert tools[0]["name"] == "get_email_summary"
+
+
+class TestAlertUrgentEmail:
+    def test_emits_socket_and_push(self):
+        sio = MagicMock()
+        sio.emit = AsyncMock()
+        email_triage_mod.init(sio, lambda uid: ["sid1"])
+        with patch.object(email_triage_mod, "_send_push", new=AsyncMock()) as mock_push:
+            asyncio.run(
+                email_triage_mod._alert_urgent_email(
+                    "u1",
+                    {"from": "Bank", "subject": "Alert"},
+                    {"summary": "Suspicious login", "important": True},
+                )
+            )
+        sio.emit.assert_awaited_once()
+        assert sio.emit.call_args.args[0] == "email_alert"
+        assert sio.emit.call_args.args[1]["summary"] == "Suspicious login"
+        mock_push.assert_awaited_once()
+
+
+class TestTriageNewMessages:
+    def test_skips_already_classified(self):
+        messages = [{"uid": "1", "from": "a", "subject": "s"}]
+        with (
+            patch.object(email_triage_mod, "_imap_fetch_unread", new=AsyncMock(return_value=messages)),
+            patch.object(email_triage_mod, "_db_uids_already_classified", new=AsyncMock(return_value={"1"})),
+            patch.object(email_triage_mod, "_classify_email", new=AsyncMock()) as mock_classify,
+        ):
+            asyncio.run(email_triage_mod._triage_new_messages("u1", {}))
+        mock_classify.assert_not_awaited()
+
+    def test_classifies_new_message_and_alerts_when_important(self):
+        messages = [{"uid": "1", "from": "Bank", "subject": "Alert"}]
+        with (
+            patch.object(email_triage_mod, "_imap_fetch_unread", new=AsyncMock(return_value=messages)),
+            patch.object(email_triage_mod, "_db_uids_already_classified", new=AsyncMock(return_value=set())),
+            patch.object(email_triage_mod, "_classify_email", new=AsyncMock(return_value={"summary": "Suspicious login", "important": True})),
+            patch.object(email_triage_mod, "_db_insert_email_triage", new=AsyncMock()) as mock_insert,
+            patch.object(email_triage_mod, "_alert_urgent_email", new=AsyncMock()) as mock_alert,
+        ):
+            asyncio.run(email_triage_mod._triage_new_messages("u1", {}))
+        mock_insert.assert_awaited_once_with("u1", "1", "Bank", "Alert", "Suspicious login", True)
+        mock_alert.assert_awaited_once()
+
+    def test_no_alert_when_not_important(self):
+        messages = [{"uid": "1", "from": "Newsletter", "subject": "Digest"}]
+        with (
+            patch.object(email_triage_mod, "_imap_fetch_unread", new=AsyncMock(return_value=messages)),
+            patch.object(email_triage_mod, "_db_uids_already_classified", new=AsyncMock(return_value=set())),
+            patch.object(email_triage_mod, "_classify_email", new=AsyncMock(return_value={"summary": "Weekly digest", "important": False})),
+            patch.object(email_triage_mod, "_db_insert_email_triage", new=AsyncMock()),
+            patch.object(email_triage_mod, "_alert_urgent_email", new=AsyncMock()) as mock_alert,
+        ):
+            asyncio.run(email_triage_mod._triage_new_messages("u1", {}))
+        mock_alert.assert_not_awaited()
+
+    def test_fetch_failure_is_swallowed(self):
+        with patch.object(email_triage_mod, "_imap_fetch_unread", new=AsyncMock(side_effect=ValueError("boom"))):
+            asyncio.run(email_triage_mod._triage_new_messages("u1", {}))
+
+
+class TestDetectCarrier:
+    def test_ups(self):
+        assert _detect_carrier("UPS Quantum View <auto-notify@ups.com>") == "UPS"
+
+    def test_fedex(self):
+        assert _detect_carrier("FedEx <tracking@fedex.com>") == "FedEx"
+
+    def test_usps(self):
+        assert _detect_carrier("USPS <informeddelivery@usps.com>") == "USPS"
+
+    def test_amazon(self):
+        assert _detect_carrier("Amazon.com <shipment-tracking@amazon.com>") == "Amazon"
+
+    def test_no_match(self):
+        assert _detect_carrier("Newsletter <news@example.com>") is None
+
+
+class TestDetectStatus:
+    def test_delivered(self):
+        assert _detect_status("Your package was delivered at 2pm") == "delivered"
+
+    def test_out_for_delivery(self):
+        assert _detect_status("Your package is out for delivery") == "out_for_delivery"
+
+    def test_shipped(self):
+        assert _detect_status("Good news, your order has shipped!") == "shipped"
+
+    def test_default_update(self):
+        assert _detect_status("Your delivery date has changed") == "update"
+
+
+class TestExtractTrackingNumber:
+    def test_ups_number(self):
+        assert _extract_tracking_number("UPS", "Tracking: 1Z999AA10123456784") == "1Z999AA10123456784"
+
+    def test_fedex_number(self):
+        assert _extract_tracking_number("FedEx", "Tracking number 123456789012") == "123456789012"
+
+    def test_no_match_returns_empty(self):
+        assert _extract_tracking_number("UPS", "no tracking info here") == ""
+
+    def test_unknown_carrier_returns_empty(self):
+        assert _extract_tracking_number("Amazon", "Tracking: 1Z999AA10123456784") == ""
+
+
+class TestGetPackageTools:
+    def test_not_configured_returns_empty(self):
+        assert _get_package_tools({}, "anthropic") == []
+
+    def test_configured_returns_tool(self):
+        config = {"email_host": "imap.example.com", "email_username": "me", "email_password": "secret"}
+        tools = _get_package_tools(config, "anthropic")
+        assert len(tools) == 1
+        assert tools[0]["name"] == "get_package_updates"
+
+
+class TestExecutePackageTool:
+    def test_no_events(self):
+        with patch.object(package_tracking_mod, "_db_list_package_events", new=AsyncMock(return_value=[])):
+            result = asyncio.run(_execute_package_tool("u1", {}))
+        assert "No package updates" in result
+
+    def test_formats_with_tracking_number(self):
+        rows = [{"carrier": "UPS", "status": "delivered", "tracking_number": "1Z999AA10123456784"}]
+        with patch.object(package_tracking_mod, "_db_list_package_events", new=AsyncMock(return_value=rows)):
+            result = asyncio.run(_execute_package_tool("u1", {}))
+        assert "UPS: delivered" in result
+        assert "1Z999AA10123456784" in result
+
+    def test_formats_without_tracking_number(self):
+        rows = [{"carrier": "Amazon", "status": "out_for_delivery", "tracking_number": ""}]
+        with patch.object(package_tracking_mod, "_db_list_package_events", new=AsyncMock(return_value=rows)):
+            result = asyncio.run(_execute_package_tool("u1", {}))
+        assert result == "Amazon: out for delivery"
+
+
+class TestAlertPackageUpdate:
+    def test_emits_socket_and_push(self):
+        sio = MagicMock()
+        sio.emit = AsyncMock()
+        package_tracking_mod.init(sio, lambda uid: ["sid1"])
+        with patch.object(package_tracking_mod, "_send_push", new=AsyncMock()) as mock_push:
+            asyncio.run(package_tracking_mod._alert_package_update("u1", "UPS", "delivered", "1Z999AA10123456784"))
+        sio.emit.assert_awaited_once()
+        assert sio.emit.call_args.args[0] == "package_alert"
+        mock_push.assert_awaited_once()
+
+
+class TestScanForPackageUpdates:
+    def test_ignores_non_carrier_messages(self):
+        messages = [{"uid": "1", "from": "news@example.com", "subject": "Weekly digest"}]
+        with (
+            patch.object(package_tracking_mod, "_imap_fetch_unread", new=AsyncMock(return_value=messages)),
+            patch.object(package_tracking_mod, "_imap_fetch_body", new=AsyncMock()) as mock_body,
+        ):
+            asyncio.run(package_tracking_mod._scan_for_package_updates("u1", {}))
+        mock_body.assert_not_awaited()
+
+    def test_skips_already_tracked(self):
+        messages = [{"uid": "1", "from": "auto-notify@ups.com", "subject": "Your package has shipped"}]
+        with (
+            patch.object(package_tracking_mod, "_imap_fetch_unread", new=AsyncMock(return_value=messages)),
+            patch.object(package_tracking_mod, "_db_uids_already_tracked", new=AsyncMock(return_value={"1"})),
+            patch.object(package_tracking_mod, "_imap_fetch_body", new=AsyncMock()) as mock_body,
+        ):
+            asyncio.run(package_tracking_mod._scan_for_package_updates("u1", {}))
+        mock_body.assert_not_awaited()
+
+    def test_alerts_on_delivered(self):
+        messages = [{"uid": "1", "from": "auto-notify@ups.com", "subject": "Your package was delivered"}]
+        with (
+            patch.object(package_tracking_mod, "_imap_fetch_unread", new=AsyncMock(return_value=messages)),
+            patch.object(package_tracking_mod, "_db_uids_already_tracked", new=AsyncMock(return_value=set())),
+            patch.object(package_tracking_mod, "_imap_fetch_body", new=AsyncMock(return_value="")),
+            patch.object(package_tracking_mod, "_db_insert_package_event", new=AsyncMock()) as mock_insert,
+            patch.object(package_tracking_mod, "_alert_package_update", new=AsyncMock()) as mock_alert,
+        ):
+            asyncio.run(package_tracking_mod._scan_for_package_updates("u1", {}))
+        mock_insert.assert_awaited_once_with("u1", "1", "UPS", "delivered", "")
+        mock_alert.assert_awaited_once()
+
+    def test_no_alert_for_shipped(self):
+        messages = [{"uid": "1", "from": "auto-notify@ups.com", "subject": "Your package has shipped"}]
+        with (
+            patch.object(package_tracking_mod, "_imap_fetch_unread", new=AsyncMock(return_value=messages)),
+            patch.object(package_tracking_mod, "_db_uids_already_tracked", new=AsyncMock(return_value=set())),
+            patch.object(package_tracking_mod, "_imap_fetch_body", new=AsyncMock(return_value="")),
+            patch.object(package_tracking_mod, "_db_insert_package_event", new=AsyncMock()),
+            patch.object(package_tracking_mod, "_alert_package_update", new=AsyncMock()) as mock_alert,
+        ):
+            asyncio.run(package_tracking_mod._scan_for_package_updates("u1", {}))
+        mock_alert.assert_not_awaited()
+
+    def test_fetch_failure_is_swallowed(self):
+        with patch.object(package_tracking_mod, "_imap_fetch_unread", new=AsyncMock(side_effect=ValueError("boom"))):
+            asyncio.run(package_tracking_mod._scan_for_package_updates("u1", {}))
 
 
 class TestScoreContactMatch:
@@ -3722,26 +4074,72 @@ class TestDbCameras:
         assert result == b"jpegbytes"
 
 
-class TestDbSentryMode:
-    def test_get_sentry_mode_defaults_to_auto(self):
+class TestDbVigilMode:
+    def test_get_vigil_mode_defaults_to_auto(self):
         pool, conn = _mock_asyncpg_pool(fetchval=None)
         with patch("db._pool", return_value=pool):
-            result = asyncio.run(db_mod._db_get_sentry_mode())
+            result = asyncio.run(db_mod._db_get_vigil_mode())
         assert result == "auto"
 
-    def test_get_sentry_mode_returns_stored_value(self):
+    def test_get_vigil_mode_returns_stored_value(self):
         pool, conn = _mock_asyncpg_pool(fetchval="armed")
         with patch("db._pool", return_value=pool):
-            result = asyncio.run(db_mod._db_get_sentry_mode())
+            result = asyncio.run(db_mod._db_get_vigil_mode())
         assert result == "armed"
 
-    def test_set_sentry_mode_updates_row(self):
+    def test_set_vigil_mode_updates_row(self):
         pool, conn = _mock_asyncpg_pool()
         with patch("db._pool", return_value=pool):
-            asyncio.run(db_mod._db_set_sentry_mode("disarmed", "u1"))
+            asyncio.run(db_mod._db_set_vigil_mode("disarmed", "u1"))
         conn.execute.assert_awaited_once()
         assert conn.execute.call_args.args[1] == "disarmed"
         assert conn.execute.call_args.args[2] == "u1"
+
+
+class TestDbBriefing:
+    def test_get_briefing_prefs_missing_row_returns_defaults(self):
+        pool, conn = _mock_asyncpg_pool(fetchrow=None)
+        with patch("db._pool", return_value=pool):
+            result = asyncio.run(db_mod._db_get_briefing_prefs("u1"))
+        assert result == {"enabled": False, "morning_time": "07:00", "evening_time": "18:00"}
+
+    def test_get_briefing_prefs_returns_stored_row(self):
+        row = {"briefing_enabled": True, "briefing_morning_time": "06:30", "briefing_evening_time": "19:00"}
+        pool, conn = _mock_asyncpg_pool(fetchrow=row)
+        with patch("db._pool", return_value=pool):
+            result = asyncio.run(db_mod._db_get_briefing_prefs("u1"))
+        assert result == {"enabled": True, "morning_time": "06:30", "evening_time": "19:00"}
+
+    def test_set_briefing_prefs_updates_row(self):
+        pool, conn = _mock_asyncpg_pool()
+        with patch("db._pool", return_value=pool):
+            asyncio.run(db_mod._db_set_briefing_prefs("u1", True, "06:00", "20:00"))
+        conn.execute.assert_awaited_once()
+        assert conn.execute.call_args.args[1:] == ("u1", True, "06:00", "20:00")
+
+    def test_list_users_due_for_briefing_morning(self):
+        pool, conn = _mock_asyncpg_pool(fetch=[{"user_id": "u1"}, {"user_id": "u2"}])
+        with patch("db._pool", return_value=pool):
+            result = asyncio.run(db_mod._db_list_users_due_for_briefing("morning", "07:00", datetime.date(2026, 7, 17)))
+        assert result == ["u1", "u2"]
+        assert "briefing_morning_time" in conn.fetch.call_args.args[0]
+        assert conn.fetch.call_args.args[1] == "07:00"
+
+    def test_list_users_due_for_briefing_evening(self):
+        pool, conn = _mock_asyncpg_pool(fetch=[])
+        with patch("db._pool", return_value=pool):
+            result = asyncio.run(db_mod._db_list_users_due_for_briefing("evening", "18:00", datetime.date(2026, 7, 17)))
+        assert result == []
+        assert "briefing_evening_time" in conn.fetch.call_args.args[0]
+
+    def test_mark_briefing_sent(self):
+        pool, conn = _mock_asyncpg_pool()
+        today = datetime.date(2026, 7, 17)
+        with patch("db._pool", return_value=pool):
+            asyncio.run(db_mod._db_mark_briefing_sent("u1", "evening", today))
+        conn.execute.assert_awaited_once()
+        assert "briefing_last_evening_sent" in conn.execute.call_args.args[0]
+        assert conn.execute.call_args.args[1:] == ("u1", today)
 
 
 class TestDbPushSubscriptions:
@@ -3825,6 +4223,72 @@ class TestDbFacePresence:
         with patch("db._pool", return_value=pool):
             asyncio.run(db_mod._db_update_presence("u1", True))
         conn.execute.assert_awaited_once()
+
+
+class TestDbHabits:
+    def test_record_presence_event_defaults_to_now(self):
+        pool, conn = _mock_asyncpg_pool()
+        with patch("db._pool", return_value=pool):
+            asyncio.run(db_mod._db_record_presence_event("u1", "arrived"))
+        conn.execute.assert_awaited_once()
+        assert conn.execute.call_args.args[1:] == ("u1", "arrived", None)
+
+    def test_record_presence_event_explicit_timestamp(self):
+        pool, conn = _mock_asyncpg_pool()
+        ts = datetime.datetime(2026, 7, 17, 8, 30, tzinfo=datetime.timezone.utc)
+        with patch("db._pool", return_value=pool):
+            asyncio.run(db_mod._db_record_presence_event("u1", "departed", ts))
+        assert conn.execute.call_args.args[1:] == ("u1", "departed", ts)
+
+    def test_get_presence_events(self):
+        ts = datetime.datetime(2026, 7, 17, 8, 30, tzinfo=datetime.timezone.utc)
+        pool, conn = _mock_asyncpg_pool(fetch=[{"occurred_at": ts}])
+        with patch("db._pool", return_value=pool):
+            result = asyncio.run(db_mod._db_get_presence_events("u1", "departed"))
+        assert result == [ts]
+
+    def test_has_presence_event_today_true(self):
+        pool, conn = _mock_asyncpg_pool(fetchval=True)
+        with patch("db._pool", return_value=pool):
+            result = asyncio.run(db_mod._db_has_presence_event_today("u1", "departed", datetime.date(2026, 7, 17)))
+        assert result is True
+
+    def test_has_presence_event_today_false(self):
+        pool, conn = _mock_asyncpg_pool(fetchval=False)
+        with patch("db._pool", return_value=pool):
+            result = asyncio.run(db_mod._db_has_presence_event_today("u1", "departed", datetime.date(2026, 7, 17)))
+        assert result is False
+
+    def test_get_habit_nudge_prefs_missing_row(self):
+        pool, conn = _mock_asyncpg_pool(fetchrow=None)
+        with patch("db._pool", return_value=pool):
+            result = asyncio.run(db_mod._db_get_habit_nudge_prefs("u1"))
+        assert result == {"enabled": False}
+
+    def test_get_habit_nudge_prefs_stored(self):
+        pool, conn = _mock_asyncpg_pool(fetchrow={"habit_nudges_enabled": True})
+        with patch("db._pool", return_value=pool):
+            result = asyncio.run(db_mod._db_get_habit_nudge_prefs("u1"))
+        assert result == {"enabled": True}
+
+    def test_set_habit_nudges_enabled(self):
+        pool, conn = _mock_asyncpg_pool()
+        with patch("db._pool", return_value=pool):
+            asyncio.run(db_mod._db_set_habit_nudges_enabled("u1", True))
+        conn.execute.assert_awaited_once_with("UPDATE user_configs SET habit_nudges_enabled=$2 WHERE user_id=$1", "u1", True)
+
+    def test_list_users_for_habit_nudge(self):
+        pool, conn = _mock_asyncpg_pool(fetch=[{"user_id": "u1"}])
+        with patch("db._pool", return_value=pool):
+            result = asyncio.run(db_mod._db_list_users_for_habit_nudge(datetime.date(2026, 7, 17)))
+        assert result == ["u1"]
+
+    def test_mark_habit_nudge_sent(self):
+        pool, conn = _mock_asyncpg_pool()
+        today = datetime.date(2026, 7, 17)
+        with patch("db._pool", return_value=pool):
+            asyncio.run(db_mod._db_mark_habit_nudge_sent("u1", today))
+        conn.execute.assert_awaited_once_with("UPDATE user_configs SET habit_nudge_last_sent=$2 WHERE user_id=$1", "u1", today)
 
 
 class TestDbPlaid:
@@ -4082,13 +4546,18 @@ class TestPWARoutes:
 class TestApiStatus:
     def test_returns_status_fields(self, api_client):
         _seed_user_state(config={"provider": "anthropic", "model": "claude-haiku-4-5"})
-        with patch.object(jarvis, "_finance_configured", new=AsyncMock(return_value=False)):
+        with (
+            patch.object(jarvis, "_finance_configured", new=AsyncMock(return_value=False)),
+            patch.object(jarvis, "_user_has_face_enrollment", return_value=True),
+        ):
             resp = api_client.get("/api/status")
         assert resp.status_code == 200
         data = resp.json()
         assert data["provider"] == "anthropic"
         assert data["model"] == "claude-haiku-4-5"
         assert data["role"] == "user"
+        assert data["user_id"] == "local"
+        assert data["face_enrolled"] is True
 
 
 class TestApiSaveConfig:
@@ -4181,6 +4650,24 @@ class TestApiCamerasAndVision:
         with patch.object(jarvis, "_face_enroll_delete", new=AsyncMock(return_value={"ok": True})):
             resp = api_client.delete("/api/face/enrollment")
         assert resp.json() == {"ok": True}
+
+    def test_face_check_presence(self, api_client):
+        with patch.object(jarvis, "_check_presence", new=AsyncMock(return_value={"faces": []})) as mock_check:
+            resp = api_client.post("/api/face/check-presence", files={"image": ("frame.jpg", b"fake-bytes", "image/jpeg")})
+        assert resp.json() == {"faces": []}
+        mock_check.assert_awaited_once_with(b"fake-bytes")
+
+    def test_face_lock_event(self, api_client):
+        with patch.object(jarvis, "_record_device_lock", new=AsyncMock(return_value={"ok": True})) as mock_lock:
+            resp = api_client.post("/api/face/lock-event", files={"image": ("frame.jpg", b"fake-bytes", "image/jpeg")})
+        assert resp.json() == {"ok": True}
+        mock_lock.assert_awaited_once_with("local", b"fake-bytes")
+
+    def test_face_lock_event_without_image(self, api_client):
+        with patch.object(jarvis, "_record_device_lock", new=AsyncMock(return_value={"ok": True})) as mock_lock:
+            resp = api_client.post("/api/face/lock-event")
+        assert resp.json() == {"ok": True}
+        mock_lock.assert_awaited_once_with("local", None)
 
 
 class TestApiSaveHa:
@@ -5399,6 +5886,31 @@ class TestVisionAppHelpers:
         assert result == {"ok": True}
         mock_clear.assert_awaited_once()
 
+    def test_user_has_face_enrollment_true(self):
+        with patch.object(vision_mod, "_face_cache", {"u1": ([0.1], "Alice")}):
+            assert vision_mod._user_has_face_enrollment("u1") is True
+
+    def test_user_has_face_enrollment_false(self):
+        with patch.object(vision_mod, "_face_cache", {}):
+            assert vision_mod._user_has_face_enrollment("u1") is False
+
+    def test_check_presence_unavailable_returns_no_faces(self):
+        with patch.object(vision_mod, "_VISION_OK", False):
+            result = asyncio.run(vision_mod._check_presence(b"data"))
+        assert result == {"faces": []}
+
+    def test_check_presence_returns_identified_faces(self):
+        faces = [{"detected_user_id": "u1", "name": "Alice", "confidence": 0.9}]
+        with patch.object(vision_mod, "_identify_faces_in_image", return_value=faces):
+            result = asyncio.run(vision_mod._check_presence(b"data"))
+        assert result == {"faces": faces}
+
+    def test_record_device_lock(self):
+        with patch.object(vision_mod, "_db_record_security_event", new=AsyncMock()) as mock_record:
+            result = asyncio.run(vision_mod._record_device_lock("u1", b"jpeg"))
+        assert result == {"ok": True}
+        mock_record.assert_awaited_once_with("u1", None, "device_lock", "", b"jpeg")
+
 
 class TestVisionLoop:
     def _fake_sleep(self, stop_after):
@@ -5428,11 +5940,12 @@ class TestVisionLoop:
             patch.object(vision_mod, "_VISION_OK", True),
             patch.object(vision_mod, "_pool", return_value=pool),
             patch.object(vision_mod, "_db_get_all_face_embeddings", new=AsyncMock(return_value={})),
-            patch.object(vision_mod, "_db_get_sentry_mode", new=AsyncMock(return_value="auto")),
+            patch.object(vision_mod, "_db_get_vigil_mode", new=AsyncMock(return_value="auto")),
             patch.object(vision_mod, "_get_ha_camera_snapshot", new=AsyncMock(return_value=b"jpeg")),
             patch.object(vision_mod, "_identify_faces_in_image", return_value=[{"detected_user_id": "u2", "name": "Bob", "confidence": 0.9}]),
             patch.object(vision_mod, "_db_record_detection", new=AsyncMock()),
             patch.object(vision_mod, "_db_update_presence", new=AsyncMock()) as mock_presence,
+            patch.object(vision_mod, "_db_record_presence_event", new=AsyncMock()) as mock_presence_event,
             patch.object(vision_mod, "_db_get_who_is_home", new=AsyncMock(return_value=[])),
         ):
             try:
@@ -5441,6 +5954,7 @@ class TestVisionLoop:
             except RuntimeError:
                 pass
         mock_presence.assert_awaited_once_with("u2", True)
+        mock_presence_event.assert_awaited_once_with("u2", "arrived")
         sio.emit.assert_awaited_once()
         assert sio.emit.call_args.args[0] == "presence_update"
 
@@ -5458,7 +5972,7 @@ class TestVisionLoop:
             patch.object(vision_mod, "_VISION_OK", True),
             patch.object(vision_mod, "_pool", return_value=pool),
             patch.object(vision_mod, "_db_get_all_face_embeddings", new=AsyncMock(return_value={})),
-            patch.object(vision_mod, "_db_get_sentry_mode", new=AsyncMock(return_value="auto")),
+            patch.object(vision_mod, "_db_get_vigil_mode", new=AsyncMock(return_value="auto")),
             patch.object(vision_mod, "_capture_rtsp_frame", return_value=b"jpeg"),
             patch.object(vision_mod, "_identify_faces_in_image", return_value=[{"detected_user_id": None, "name": "unknown", "confidence": 0.0}]),
             patch.object(vision_mod, "_db_record_detection", new=AsyncMock()),
@@ -5491,7 +6005,7 @@ class TestVisionLoop:
             patch.object(vision_mod, "_VISION_OK", True),
             patch.object(vision_mod, "_pool", return_value=pool),
             patch.object(vision_mod, "_db_get_all_face_embeddings", new=AsyncMock(return_value={})),
-            patch.object(vision_mod, "_db_get_sentry_mode", new=AsyncMock(return_value="auto")),
+            patch.object(vision_mod, "_db_get_vigil_mode", new=AsyncMock(return_value="auto")),
             patch.object(vision_mod, "_get_ha_camera_snapshot", new=AsyncMock(side_effect=[None, b"jpeg"])),
             patch.object(vision_mod, "_identify_faces_in_image", return_value=[]),
             patch.object(vision_mod, "_db_get_who_is_home", new=AsyncMock(return_value=[])),
@@ -5505,7 +6019,8 @@ class TestVisionLoop:
 
     def test_marks_stale_users_away(self):
         pool, conn = _mock_asyncpg_pool()
-        conn.fetch = AsyncMock(side_effect=[[], [{"user_id": "u3"}]])
+        last_seen = datetime.datetime(2026, 7, 17, 8, 0, tzinfo=datetime.timezone.utc)
+        conn.fetch = AsyncMock(side_effect=[[], [{"user_id": "u3", "last_seen_at": last_seen}]])
         sio = MagicMock()
         sio.emit = AsyncMock()
         vision_mod.init(sio, lambda uid: ["sid1"])
@@ -5515,8 +6030,9 @@ class TestVisionLoop:
             patch.object(vision_mod, "_VISION_OK", True),
             patch.object(vision_mod, "_pool", return_value=pool),
             patch.object(vision_mod, "_db_get_all_face_embeddings", new=AsyncMock(return_value={})),
-            patch.object(vision_mod, "_db_get_sentry_mode", new=AsyncMock(return_value="auto")),
+            patch.object(vision_mod, "_db_get_vigil_mode", new=AsyncMock(return_value="auto")),
             patch.object(vision_mod, "_db_update_presence", new=AsyncMock()) as mock_presence,
+            patch.object(vision_mod, "_db_record_presence_event", new=AsyncMock()) as mock_presence_event,
             patch.object(vision_mod, "_db_get_who_is_home", new=AsyncMock(return_value=[])),
         ):
             try:
@@ -5525,6 +6041,7 @@ class TestVisionLoop:
             except RuntimeError:
                 pass
         mock_presence.assert_awaited_once_with("u3", False)
+        mock_presence_event.assert_awaited_once_with("u3", "departed", last_seen)
         sio.emit.assert_awaited_once()
         assert sio.emit.call_args.args[0] == "presence_update"
 
@@ -5544,7 +6061,7 @@ class TestVisionLoop:
             patch.object(vision_mod, "_VISION_OK", True),
             patch.object(vision_mod, "_pool", return_value=pool),
             patch.object(vision_mod, "_db_get_all_face_embeddings", new=AsyncMock(return_value={})),
-            patch.object(vision_mod, "_db_get_sentry_mode", new=AsyncMock(return_value="armed")),
+            patch.object(vision_mod, "_db_get_vigil_mode", new=AsyncMock(return_value="armed")),
             patch.object(vision_mod, "_get_ha_camera_snapshot", new=AsyncMock(return_value=b"jpeg")),
             patch.object(vision_mod, "_identify_faces_in_image", return_value=[]),
             patch.object(vision_mod, "_frame_motion_score", return_value=99.0),
@@ -5579,7 +6096,7 @@ class TestVisionLoop:
             patch.object(vision_mod, "_VISION_OK", True),
             patch.object(vision_mod, "_pool", return_value=pool),
             patch.object(vision_mod, "_db_get_all_face_embeddings", new=AsyncMock(return_value={})),
-            patch.object(vision_mod, "_db_get_sentry_mode", new=AsyncMock(return_value="armed")),
+            patch.object(vision_mod, "_db_get_vigil_mode", new=AsyncMock(return_value="armed")),
             patch.object(vision_mod, "_get_ha_camera_snapshot", new=AsyncMock(return_value=b"jpeg")),
             patch.object(vision_mod, "_identify_faces_in_image", return_value=[]),
             patch.object(vision_mod, "_frame_motion_score", return_value=1.0),
@@ -5606,7 +6123,7 @@ class TestVisionLoop:
             patch.object(vision_mod, "_VISION_OK", True),
             patch.object(vision_mod, "_pool", return_value=pool),
             patch.object(vision_mod, "_db_get_all_face_embeddings", new=AsyncMock(return_value={})),
-            patch.object(vision_mod, "_db_get_sentry_mode", new=AsyncMock(return_value="disarmed")),
+            patch.object(vision_mod, "_db_get_vigil_mode", new=AsyncMock(return_value="disarmed")),
             patch.object(vision_mod, "_capture_rtsp_frame", return_value=b"jpeg"),
             patch.object(vision_mod, "_identify_faces_in_image", return_value=[{"detected_user_id": None, "name": "unknown", "confidence": 0.0}]),
             patch.object(vision_mod, "_db_record_detection", new=AsyncMock()),
@@ -5649,45 +6166,45 @@ class TestVisionLoop:
                 pass
 
 
-class TestSentryIntegration:
-    def test_get_sentry_tools_returns_both_tools(self):
-        names = {t["name"] for t in sentry_mod._get_sentry_tools("anthropic")}
-        assert names == {"set_sentry_mode", "get_sentry_mode"}
+class TestVigilIntegration:
+    def test_get_vigil_tools_returns_both_tools(self):
+        names = {t["name"] for t in vigil_mod._get_vigil_tools("anthropic")}
+        assert names == {"set_vigil_mode", "get_vigil_mode"}
 
-    def test_set_sentry_mode_rejects_invalid_mode(self):
+    def test_set_vigil_mode_rejects_invalid_mode(self):
         try:
-            asyncio.run(sentry_mod._set_sentry_mode("bogus", "u1"))
+            asyncio.run(vigil_mod._set_vigil_mode("bogus", "u1"))
             raise AssertionError("expected HTTPException")
         except HTTPException as e:
             assert e.status_code == 400
 
-    def test_set_sentry_mode_updates_and_broadcasts(self):
+    def test_set_vigil_mode_updates_and_broadcasts(self):
         mock_broadcast = AsyncMock()
-        sentry_mod.init(mock_broadcast)
-        with patch.object(sentry_mod, "_db_set_sentry_mode", new=AsyncMock()) as mock_set:
-            result = asyncio.run(sentry_mod._set_sentry_mode("ARMED", "u1"))
+        vigil_mod.init(mock_broadcast)
+        with patch.object(vigil_mod, "_db_set_vigil_mode", new=AsyncMock()) as mock_set:
+            result = asyncio.run(vigil_mod._set_vigil_mode("ARMED", "u1"))
         assert result == {"ok": True, "mode": "armed"}
         mock_set.assert_awaited_once_with("armed", "u1")
-        mock_broadcast.assert_awaited_once_with("sentry_mode_changed", {"mode": "armed", "updated_by": "u1"})
+        mock_broadcast.assert_awaited_once_with("vigil_mode_changed", {"mode": "armed", "updated_by": "u1"})
 
-    def test_execute_sentry_tool_set_mode_returns_speak_text(self):
-        sentry_mod.init(AsyncMock())
-        with patch.object(sentry_mod, "_db_set_sentry_mode", new=AsyncMock()):
-            result = asyncio.run(sentry_mod._execute_sentry_tool("set_sentry_mode", {"mode": "disarmed"}, "u1"))
+    def test_execute_vigil_tool_set_mode_returns_speak_text(self):
+        vigil_mod.init(AsyncMock())
+        with patch.object(vigil_mod, "_db_set_vigil_mode", new=AsyncMock()):
+            result = asyncio.run(vigil_mod._execute_vigil_tool("set_vigil_mode", {"mode": "disarmed"}, "u1"))
         assert "disarmed" in result.lower()
 
-    def test_execute_sentry_tool_set_mode_invalid(self):
-        result = asyncio.run(sentry_mod._execute_sentry_tool("set_sentry_mode", {"mode": "nope"}, "u1"))
+    def test_execute_vigil_tool_set_mode_invalid(self):
+        result = asyncio.run(vigil_mod._execute_vigil_tool("set_vigil_mode", {"mode": "nope"}, "u1"))
         assert "mode must be one of" in result
 
-    def test_execute_sentry_tool_get_mode(self):
-        with patch.object(sentry_mod, "_db_get_sentry_mode", new=AsyncMock(return_value="auto")):
-            result = asyncio.run(sentry_mod._execute_sentry_tool("get_sentry_mode", {}, "u1"))
+    def test_execute_vigil_tool_get_mode(self):
+        with patch.object(vigil_mod, "_db_get_vigil_mode", new=AsyncMock(return_value="auto")):
+            result = asyncio.run(vigil_mod._execute_vigil_tool("get_vigil_mode", {}, "u1"))
         assert "auto" in result
 
-    def test_execute_sentry_tool_unknown_name(self):
-        result = asyncio.run(sentry_mod._execute_sentry_tool("nonsense", {}, "u1"))
-        assert "Unknown sentry tool" in result
+    def test_execute_vigil_tool_unknown_name(self):
+        result = asyncio.run(vigil_mod._execute_vigil_tool("nonsense", {}, "u1"))
+        assert "Unknown vigil tool" in result
 
 
 class TestPushIntegration:
@@ -5735,3 +6252,470 @@ class TestPushIntegration:
         ):
             asyncio.run(push_mod._send_push("u1", "Title", "Body"))
         mock_remove.assert_not_awaited()
+
+
+class TestBriefingIntegration:
+    def test_get_briefing_tools_returns_tool_for_each_provider(self):
+        assert {t["name"] for t in briefing_mod._get_briefing_tools("anthropic")} == {"manage_briefing"}
+        assert {t["function"]["name"] for t in briefing_mod._get_briefing_tools("openai")} == {"manage_briefing"}
+
+    def test_weather_line_empty_without_temp(self):
+        with patch.object(briefing_mod, "_location_context", {}):
+            assert briefing_mod._weather_line() == ""
+
+    def test_weather_line_formats_available_data(self):
+        ctx = {"temp_f": 72, "condition": "Clear", "city": "Springfield"}
+        with patch.object(briefing_mod, "_location_context", ctx):
+            line = briefing_mod._weather_line()
+        assert "72" in line
+        assert "Clear" in line
+        assert "Springfield" in line
+
+    def test_calendar_line_not_configured_returns_empty(self):
+        result = asyncio.run(briefing_mod._calendar_line({}))
+        assert result == ""
+
+    def test_calendar_line_no_events(self):
+        config = {"calendar_url": "u", "calendar_username": "n", "calendar_password": "p"}
+        with patch.object(briefing_mod, "_calendar_events_between", new=AsyncMock(return_value=[])):
+            result = asyncio.run(briefing_mod._calendar_line(config))
+        assert "Nothing left" in result
+
+    def test_calendar_line_swallows_errors(self):
+        config = {"calendar_url": "u", "calendar_username": "n", "calendar_password": "p"}
+        with patch.object(briefing_mod, "_calendar_events_between", new=AsyncMock(side_effect=Exception("dav down"))):
+            result = asyncio.run(briefing_mod._calendar_line(config))
+        assert result == ""
+
+    def test_reminders_line_filters_to_today(self):
+        now = datetime.datetime.now().astimezone()
+        today_reminder = {"text": "Take out trash", "fire_at": now.replace(hour=20, minute=0)}
+        tomorrow_reminder = {"text": "Dentist", "fire_at": now + datetime.timedelta(days=1)}
+        with patch.object(briefing_mod, "_db_list_reminders", new=AsyncMock(return_value=[today_reminder, tomorrow_reminder])):
+            result = asyncio.run(briefing_mod._reminders_line("u1"))
+        assert "Take out trash" in result
+        assert "Dentist" not in result
+
+    def test_reminders_line_empty_when_none_today(self):
+        with patch.object(briefing_mod, "_db_list_reminders", new=AsyncMock(return_value=[])):
+            result = asyncio.run(briefing_mod._reminders_line("u1"))
+        assert result == ""
+
+    def test_news_line_formats_headlines(self):
+        with patch.object(briefing_mod, "_fetch_news_headlines", new=AsyncMock(return_value=["Story One", "Story Two"])):
+            result = asyncio.run(briefing_mod._news_line())
+        assert "Story One" in result and "Story Two" in result
+
+    def test_news_line_swallows_errors(self):
+        with patch.object(briefing_mod, "_fetch_news_headlines", new=AsyncMock(side_effect=Exception("rss down"))):
+            result = asyncio.run(briefing_mod._news_line())
+        assert result == ""
+
+    def test_compose_briefing_joins_available_parts(self):
+        with (
+            patch.object(briefing_mod, "_weather_line", return_value="Weather bit."),
+            patch.object(briefing_mod, "_calendar_line", new=AsyncMock(return_value="Calendar bit.")),
+            patch.object(briefing_mod, "_reminders_line", new=AsyncMock(return_value="")),
+            patch.object(briefing_mod, "_news_line", new=AsyncMock(return_value="News bit.")),
+        ):
+            result = asyncio.run(briefing_mod._compose_briefing("u1", {}))
+        assert result == "Weather bit. Calendar bit. News bit."
+
+    def test_compose_briefing_fallback_when_all_empty(self):
+        with (
+            patch.object(briefing_mod, "_weather_line", return_value=""),
+            patch.object(briefing_mod, "_calendar_line", new=AsyncMock(return_value="")),
+            patch.object(briefing_mod, "_reminders_line", new=AsyncMock(return_value="")),
+            patch.object(briefing_mod, "_news_line", new=AsyncMock(return_value="")),
+        ):
+            result = asyncio.run(briefing_mod._compose_briefing("u1", {}))
+        assert result == "Nothing new to report, sir."
+
+    def test_execute_briefing_tool_now_returns_composed_text(self):
+        with patch.object(briefing_mod, "_compose_briefing", new=AsyncMock(return_value="Here's your day.")):
+            result = asyncio.run(briefing_mod._execute_briefing_tool("u1", {"action": "now"}, {}))
+        assert result == "Here's your day."
+
+    def test_execute_briefing_tool_status(self):
+        prefs = {"enabled": True, "morning_time": "07:00", "evening_time": "18:00"}
+        with patch.object(briefing_mod, "_db_get_briefing_prefs", new=AsyncMock(return_value=prefs)):
+            result = asyncio.run(briefing_mod._execute_briefing_tool("u1", {"action": "status"}, {}))
+        assert "enabled" in result
+        assert "07:00" in result and "18:00" in result
+
+    def test_execute_briefing_tool_enable(self):
+        prefs = {"enabled": False, "morning_time": "07:00", "evening_time": "18:00"}
+        with (
+            patch.object(briefing_mod, "_db_get_briefing_prefs", new=AsyncMock(return_value=prefs)),
+            patch.object(briefing_mod, "_db_set_briefing_prefs", new=AsyncMock()) as mock_set,
+        ):
+            result = asyncio.run(briefing_mod._execute_briefing_tool("u1", {"action": "enable"}, {}))
+        mock_set.assert_awaited_once_with("u1", True, "07:00", "18:00")
+        assert "enabled" in result.lower()
+
+    def test_execute_briefing_tool_disable(self):
+        prefs = {"enabled": True, "morning_time": "07:00", "evening_time": "18:00"}
+        with (
+            patch.object(briefing_mod, "_db_get_briefing_prefs", new=AsyncMock(return_value=prefs)),
+            patch.object(briefing_mod, "_db_set_briefing_prefs", new=AsyncMock()) as mock_set,
+        ):
+            result = asyncio.run(briefing_mod._execute_briefing_tool("u1", {"action": "disable"}, {}))
+        mock_set.assert_awaited_once_with("u1", False, "07:00", "18:00")
+        assert "disabled" in result.lower()
+
+    def test_execute_briefing_tool_set_time_valid(self):
+        prefs = {"enabled": True, "morning_time": "07:00", "evening_time": "18:00"}
+        with (
+            patch.object(briefing_mod, "_db_get_briefing_prefs", new=AsyncMock(return_value=prefs)),
+            patch.object(briefing_mod, "_db_set_briefing_prefs", new=AsyncMock()) as mock_set,
+        ):
+            result = asyncio.run(briefing_mod._execute_briefing_tool("u1", {"action": "set_time", "slot": "morning", "time": "06:15"}, {}))
+        mock_set.assert_awaited_once_with("u1", True, "06:15", "18:00")
+        assert "06:15" in result
+
+    def test_execute_briefing_tool_set_time_invalid_slot(self):
+        prefs = {"enabled": True, "morning_time": "07:00", "evening_time": "18:00"}
+        with patch.object(briefing_mod, "_db_get_briefing_prefs", new=AsyncMock(return_value=prefs)):
+            result = asyncio.run(briefing_mod._execute_briefing_tool("u1", {"action": "set_time", "slot": "noon", "time": "12:00"}, {}))
+        assert "morning" in result.lower() and "evening" in result.lower()
+
+    def test_execute_briefing_tool_set_time_invalid_time(self):
+        prefs = {"enabled": True, "morning_time": "07:00", "evening_time": "18:00"}
+        with patch.object(briefing_mod, "_db_get_briefing_prefs", new=AsyncMock(return_value=prefs)):
+            result = asyncio.run(briefing_mod._execute_briefing_tool("u1", {"action": "set_time", "slot": "morning", "time": "not-a-time"}, {}))
+        assert "HH:MM" in result
+
+    def test_execute_briefing_tool_unknown_action(self):
+        prefs = {"enabled": True, "morning_time": "07:00", "evening_time": "18:00"}
+        with patch.object(briefing_mod, "_db_get_briefing_prefs", new=AsyncMock(return_value=prefs)):
+            result = asyncio.run(briefing_mod._execute_briefing_tool("u1", {"action": "bogus"}, {}))
+        assert "Unknown action" in result
+
+    def test_get_briefing_prefs_helper(self):
+        prefs = {"enabled": True, "morning_time": "07:00", "evening_time": "18:00"}
+        with patch.object(briefing_mod, "_db_get_briefing_prefs", new=AsyncMock(return_value=prefs)):
+            result = asyncio.run(briefing_mod._get_briefing_prefs("u1"))
+        assert result == prefs
+
+    def test_set_briefing_prefs_helper_rejects_bad_time(self):
+        try:
+            asyncio.run(briefing_mod._set_briefing_prefs("u1", {"enabled": True, "morning_time": "7am", "evening_time": "18:00"}))
+            raise AssertionError("expected HTTPException")
+        except HTTPException as e:
+            assert e.status_code == 400
+
+    def test_set_briefing_prefs_helper_success(self):
+        with patch.object(briefing_mod, "_db_set_briefing_prefs", new=AsyncMock()) as mock_set:
+            result = asyncio.run(briefing_mod._set_briefing_prefs("u1", {"enabled": True, "morning_time": "06:45", "evening_time": "19:30"}))
+        mock_set.assert_awaited_once_with("u1", True, "06:45", "19:30")
+        assert result == {"ok": True, "enabled": True, "morning_time": "06:45", "evening_time": "19:30"}
+
+    def test_deliver_briefing_emits_pushes_and_marks_sent(self):
+        sio = MagicMock()
+        sio.emit = AsyncMock()
+        briefing_mod.init(sio, lambda uid: ["sid1"], {})
+        today = datetime.date(2026, 7, 17)
+        with (
+            patch.object(briefing_mod, "_db_load_config", new=AsyncMock(return_value={})),
+            patch.object(briefing_mod, "_compose_briefing", new=AsyncMock(return_value="Your summary.")),
+            patch.object(briefing_mod, "_send_push", new=AsyncMock()) as mock_push,
+            patch.object(briefing_mod, "_db_mark_briefing_sent", new=AsyncMock()) as mock_mark,
+        ):
+            asyncio.run(briefing_mod._deliver_briefing("u1", "morning", today))
+        sio.emit.assert_awaited_once()
+        assert sio.emit.call_args.args[0] == "briefing_ready"
+        assert sio.emit.call_args.args[1]["text"] == "Your summary."
+        mock_push.assert_awaited_once()
+        mock_mark.assert_awaited_once_with("u1", "morning", today)
+
+    def _fake_sleep(self, stop_after):
+        call_count = 0
+
+        async def fake_sleep(secs):
+            nonlocal call_count
+            call_count += 1
+            if call_count > stop_after:
+                raise RuntimeError("stop-loop")
+
+        return fake_sleep
+
+    def test_briefing_loop_delivers_due_users(self):
+        with (
+            patch("integrations.briefing.asyncio.sleep", new=self._fake_sleep(1)),
+            patch.object(briefing_mod, "_db_ready", return_value=True),
+            patch.object(briefing_mod, "_db_list_users_due_for_briefing", new=AsyncMock(side_effect=lambda slot, hhmm, today: ["u1"] if slot == "morning" else [])),
+            patch.object(briefing_mod, "_deliver_briefing", new=AsyncMock()) as mock_deliver,
+        ):
+            try:
+                asyncio.run(briefing_mod._briefing_loop())
+                raise AssertionError("expected loop to stop")
+            except RuntimeError:
+                pass
+        mock_deliver.assert_awaited_once()
+        assert mock_deliver.call_args.args[0] == "u1"
+        assert mock_deliver.call_args.args[1] == "morning"
+
+    def test_briefing_loop_skips_when_not_ready(self):
+        with (
+            patch("integrations.briefing.asyncio.sleep", new=self._fake_sleep(1)),
+            patch.object(briefing_mod, "_db_ready", return_value=False),
+            patch.object(briefing_mod, "_db_list_users_due_for_briefing", new=AsyncMock()) as mock_list,
+        ):
+            try:
+                asyncio.run(briefing_mod._briefing_loop())
+                raise AssertionError("expected loop to stop")
+            except RuntimeError:
+                pass
+        mock_list.assert_not_awaited()
+
+    def test_briefing_loop_swallows_exceptions(self):
+        with (
+            patch("integrations.briefing.asyncio.sleep", new=self._fake_sleep(1)),
+            patch.object(briefing_mod, "_db_ready", return_value=True),
+            patch.object(briefing_mod, "_db_list_users_due_for_briefing", new=AsyncMock(side_effect=Exception("db down"))),
+        ):
+            try:
+                asyncio.run(briefing_mod._briefing_loop())
+                raise AssertionError("expected loop to stop")
+            except RuntimeError:
+                pass
+
+
+class TestApiBriefing:
+    def test_get_briefing_prefs(self, api_client):
+        prefs = {"enabled": True, "morning_time": "07:00", "evening_time": "18:00"}
+        with patch.object(jarvis, "_get_briefing_prefs", new=AsyncMock(return_value=prefs)):
+            resp = api_client.get("/api/briefing")
+        assert resp.json() == prefs
+
+    def test_set_briefing_prefs(self, api_client):
+        with patch.object(jarvis, "_set_briefing_prefs", new=AsyncMock(return_value={"ok": True})) as mock_set:
+            resp = api_client.post("/api/briefing", json={"enabled": True, "morning_time": "06:00", "evening_time": "20:00"})
+        assert resp.json() == {"ok": True}
+        mock_set.assert_awaited_once_with("local", {"enabled": True, "morning_time": "06:00", "evening_time": "20:00"})
+
+
+class TestHabitsIntegration:
+    def test_get_habits_tools_returns_tool_for_each_provider(self):
+        assert {t["name"] for t in habits_mod._get_habits_tools("anthropic")} == {"get_habits"}
+        assert {t["function"]["name"] for t in habits_mod._get_habits_tools("openai")} == {"get_habits"}
+
+    def test_bucket_for_weekday(self):
+        dt = datetime.datetime(2026, 7, 20, 8, 30, tzinfo=datetime.timezone.utc)
+        assert habits_mod._bucket_for(dt) == "weekday"
+
+    def test_bucket_for_weekend(self):
+        dt = datetime.datetime(2026, 7, 18, 8, 30, tzinfo=datetime.timezone.utc)
+        assert habits_mod._bucket_for(dt) == "weekend"
+
+    def test_minutes_to_clock_am(self):
+        assert habits_mod._minutes_to_clock(8 * 60 + 30) == "8:30 AM"
+
+    def test_minutes_to_clock_pm(self):
+        assert habits_mod._minutes_to_clock(18 * 60) == "6:00 PM"
+
+    def test_minutes_to_clock_midnight(self):
+        assert habits_mod._minutes_to_clock(0) == "12:00 AM"
+
+    def test_minutes_to_clock_noon(self):
+        assert habits_mod._minutes_to_clock(12 * 60) == "12:00 PM"
+
+    def _local_dt(self, y, m, d, h, mi):
+        return datetime.datetime(y, m, d, h, mi, tzinfo=datetime.datetime.now().astimezone().tzinfo)
+
+    def test_analyze_habit_not_enough_samples(self):
+        events = [self._local_dt(2026, 7, 20, 8, 30), self._local_dt(2026, 7, 21, 8, 30)]
+        with patch.object(habits_mod, "_db_get_presence_events", new=AsyncMock(return_value=events)):
+            result = asyncio.run(habits_mod._analyze_habit("u1", "departed"))
+        assert result is None
+
+    def test_analyze_habit_weekday_pattern(self):
+        events = [self._local_dt(2026, 7, 20, 8, 30), self._local_dt(2026, 7, 21, 8, 32), self._local_dt(2026, 7, 22, 8, 28)]
+        with patch.object(habits_mod, "_db_get_presence_events", new=AsyncMock(return_value=events)):
+            result = asyncio.run(habits_mod._analyze_habit("u1", "departed"))
+        assert result is not None
+        assert "weekday" in result
+        assert "weekend" not in result
+        assert result["weekday"]["typical_minutes"] == 8 * 60 + 30
+        assert result["weekday"]["sample_size"] == 3
+
+    def test_analyze_habit_mixed_weekday_weekend(self):
+        events = [
+            self._local_dt(2026, 7, 20, 8, 30),
+            self._local_dt(2026, 7, 21, 8, 30),
+            self._local_dt(2026, 7, 22, 8, 30),
+            self._local_dt(2026, 7, 18, 10, 0),
+            self._local_dt(2026, 7, 19, 10, 0),
+            self._local_dt(2026, 7, 25, 10, 0),
+        ]
+        with patch.object(habits_mod, "_db_get_presence_events", new=AsyncMock(return_value=events)):
+            result = asyncio.run(habits_mod._analyze_habit("u1", "departed"))
+        assert set(result) == {"weekday", "weekend"}
+
+    def test_format_habit_line(self):
+        habit = {"weekday": {"typical_minutes": 510, "sample_size": 5}}
+        line = habits_mod._format_habit_line("departed", habit)
+        assert "leave home" in line
+        assert "8:30 AM" in line
+        assert "weekdays" in line
+
+    def test_execute_habits_tool_specific_event_type(self):
+        with patch.object(habits_mod, "_analyze_habit", new=AsyncMock(return_value=None)):
+            result = asyncio.run(habits_mod._execute_habits_tool("u1", {"event_type": "departed"}))
+        assert "Not enough data" in result
+        assert "leave home" in result
+
+    def test_execute_habits_tool_both_when_no_event_type(self):
+        with patch.object(habits_mod, "_analyze_habit", new=AsyncMock(return_value=None)):
+            result = asyncio.run(habits_mod._execute_habits_tool("u1", {}))
+        assert result.count("Not enough data") == 2
+
+    def test_get_habit_prefs_helper(self):
+        with (
+            patch.object(habits_mod, "_db_get_habit_nudge_prefs", new=AsyncMock(return_value={"enabled": True})),
+            patch.object(habits_mod, "_analyze_habit", new=AsyncMock(side_effect=[{"weekday": {"typical_minutes": 500, "sample_size": 3}}, None])),
+        ):
+            result = asyncio.run(habits_mod._get_habit_prefs("u1"))
+        assert result["enabled"] is True
+        assert result["departed"] is not None
+        assert result["arrived"] is None
+
+    def test_set_habit_prefs_helper(self):
+        with patch.object(habits_mod, "_db_set_habit_nudges_enabled", new=AsyncMock()) as mock_set:
+            result = asyncio.run(habits_mod._set_habit_prefs("u1", {"enabled": True}))
+        mock_set.assert_awaited_once_with("u1", True)
+        assert result == {"ok": True, "enabled": True}
+
+    def test_maybe_nudge_no_habit_does_nothing(self):
+        with patch.object(habits_mod, "_analyze_habit", new=AsyncMock(return_value=None)):
+            asyncio.run(habits_mod._maybe_nudge("u1", datetime.date(2026, 7, 17)))
+
+    def test_maybe_nudge_in_window_emits_and_marks_sent(self):
+        now = datetime.datetime.now().astimezone()
+        bucket = "weekend" if now.weekday() >= 5 else "weekday"
+        now_minutes = now.hour * 60 + now.minute
+        habit = {bucket: {"typical_minutes": now_minutes, "sample_size": 5}}
+        sio = MagicMock()
+        sio.emit = AsyncMock()
+        habits_mod.init(sio, lambda uid: ["sid1"])
+        with (
+            patch.object(habits_mod, "_analyze_habit", new=AsyncMock(return_value=habit)),
+            patch.object(habits_mod, "_db_has_presence_event_today", new=AsyncMock(return_value=False)),
+            patch.object(habits_mod, "_send_push", new=AsyncMock()) as mock_push,
+            patch.object(habits_mod, "_db_mark_habit_nudge_sent", new=AsyncMock()) as mock_mark,
+        ):
+            asyncio.run(habits_mod._maybe_nudge("u1", now.date()))
+        sio.emit.assert_awaited_once()
+        assert sio.emit.call_args.args[0] == "habit_nudge"
+        mock_push.assert_awaited_once()
+        mock_mark.assert_awaited_once_with("u1", now.date())
+
+    def test_maybe_nudge_outside_window_skips(self):
+        now = datetime.datetime.now().astimezone()
+        bucket = "weekend" if now.weekday() >= 5 else "weekday"
+        now_minutes = now.hour * 60 + now.minute
+        far_minutes = (now_minutes + 120) % 1440
+        habit = {bucket: {"typical_minutes": far_minutes, "sample_size": 5}}
+        sio = MagicMock()
+        sio.emit = AsyncMock()
+        habits_mod.init(sio, lambda uid: ["sid1"])
+        with (
+            patch.object(habits_mod, "_analyze_habit", new=AsyncMock(return_value=habit)),
+            patch.object(habits_mod, "_db_mark_habit_nudge_sent", new=AsyncMock()) as mock_mark,
+        ):
+            asyncio.run(habits_mod._maybe_nudge("u1", now.date()))
+        sio.emit.assert_not_awaited()
+        mock_mark.assert_not_awaited()
+
+    def test_maybe_nudge_already_departed_today_skips(self):
+        now = datetime.datetime.now().astimezone()
+        bucket = "weekend" if now.weekday() >= 5 else "weekday"
+        now_minutes = now.hour * 60 + now.minute
+        habit = {bucket: {"typical_minutes": now_minutes, "sample_size": 5}}
+        sio = MagicMock()
+        sio.emit = AsyncMock()
+        habits_mod.init(sio, lambda uid: ["sid1"])
+        with (
+            patch.object(habits_mod, "_analyze_habit", new=AsyncMock(return_value=habit)),
+            patch.object(habits_mod, "_db_has_presence_event_today", new=AsyncMock(return_value=True)),
+            patch.object(habits_mod, "_db_mark_habit_nudge_sent", new=AsyncMock()) as mock_mark,
+        ):
+            asyncio.run(habits_mod._maybe_nudge("u1", now.date()))
+        sio.emit.assert_not_awaited()
+        mock_mark.assert_not_awaited()
+
+    def test_maybe_nudge_wrong_bucket_skips(self):
+        now = datetime.datetime.now().astimezone()
+        other_bucket = "weekday" if now.weekday() >= 5 else "weekend"
+        habit = {other_bucket: {"typical_minutes": 0, "sample_size": 5}}
+        sio = MagicMock()
+        sio.emit = AsyncMock()
+        habits_mod.init(sio, lambda uid: ["sid1"])
+        with patch.object(habits_mod, "_analyze_habit", new=AsyncMock(return_value=habit)):
+            asyncio.run(habits_mod._maybe_nudge("u1", now.date()))
+        sio.emit.assert_not_awaited()
+
+    def _fake_sleep(self, stop_after):
+        call_count = 0
+
+        async def fake_sleep(secs):
+            nonlocal call_count
+            call_count += 1
+            if call_count > stop_after:
+                raise RuntimeError("stop-loop")
+
+        return fake_sleep
+
+    def test_habit_nudge_loop_calls_maybe_nudge_for_due_users(self):
+        with (
+            patch("integrations.habits.asyncio.sleep", new=self._fake_sleep(1)),
+            patch.object(habits_mod, "_db_ready", return_value=True),
+            patch.object(habits_mod, "_db_list_users_for_habit_nudge", new=AsyncMock(return_value=["u1"])),
+            patch.object(habits_mod, "_maybe_nudge", new=AsyncMock()) as mock_nudge,
+        ):
+            try:
+                asyncio.run(habits_mod._habit_nudge_loop())
+                raise AssertionError("expected loop to stop")
+            except RuntimeError:
+                pass
+        mock_nudge.assert_awaited_once()
+        assert mock_nudge.call_args.args[0] == "u1"
+
+    def test_habit_nudge_loop_skips_when_not_ready(self):
+        with (
+            patch("integrations.habits.asyncio.sleep", new=self._fake_sleep(1)),
+            patch.object(habits_mod, "_db_ready", return_value=False),
+            patch.object(habits_mod, "_db_list_users_for_habit_nudge", new=AsyncMock()) as mock_list,
+        ):
+            try:
+                asyncio.run(habits_mod._habit_nudge_loop())
+                raise AssertionError("expected loop to stop")
+            except RuntimeError:
+                pass
+        mock_list.assert_not_awaited()
+
+    def test_habit_nudge_loop_swallows_exceptions(self):
+        with (
+            patch("integrations.habits.asyncio.sleep", new=self._fake_sleep(1)),
+            patch.object(habits_mod, "_db_ready", return_value=True),
+            patch.object(habits_mod, "_db_list_users_for_habit_nudge", new=AsyncMock(side_effect=Exception("db down"))),
+        ):
+            try:
+                asyncio.run(habits_mod._habit_nudge_loop())
+                raise AssertionError("expected loop to stop")
+            except RuntimeError:
+                pass
+
+
+class TestApiHabits:
+    def test_get_habits(self, api_client):
+        prefs = {"enabled": True, "departed": None, "arrived": None}
+        with patch.object(jarvis, "_get_habit_prefs", new=AsyncMock(return_value=prefs)):
+            resp = api_client.get("/api/habits")
+        assert resp.json() == prefs
+
+    def test_set_habits(self, api_client):
+        with patch.object(jarvis, "_set_habit_prefs", new=AsyncMock(return_value={"ok": True, "enabled": True})) as mock_set:
+            resp = api_client.post("/api/habits", json={"enabled": True})
+        assert resp.json() == {"ok": True, "enabled": True}
+        mock_set.assert_awaited_once_with("local", {"enabled": True})

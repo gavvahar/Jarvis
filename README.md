@@ -78,27 +78,29 @@ Required variables:
 
 Optional:
 
-| Variable                  | What it is                                                                                           |
-| ------------------------- | ---------------------------------------------------------------------------------------------------- |
-| `OIDC_DISCOVERY_URL`      | Override the OIDC discovery URL if it doesn't follow the Authentik pattern                           |
-| `OIDC_ADMIN_GROUP`        | Authentik group whose members get the admin role (default: `jarvis-admins`)                          |
-| `MQTT_BROKER`             | Hostname/IP of your Zigbee2MQTT MQTT broker (enables Zigbee control)                                 |
-| `MQTT_PORT`               | MQTT broker port (default: `1883`)                                                                   |
-| `MQTT_USER`               | MQTT username (optional)                                                                             |
-| `MQTT_PASSWORD`           | MQTT password (optional)                                                                             |
-| `Z2M_BASE_TOPIC`          | Zigbee2MQTT base topic (default: `zigbee2mqtt`)                                                      |
-| `SNAPCAST_URL`            | Snapcast server JSON-RPC URL, e.g. `http://192.168.1.100:1780`                                       |
-| `PLAID_CLIENT_ID`         | Plaid client ID (enables the FINANCE panel)                                                          |
-| `PLAID_SECRET`            | Plaid secret matching `PLAID_ENV`                                                                    |
-| `PLAID_ENV`               | `sandbox` (default, no real bank needed) or `production`                                             |
-| `FINANCE_POLL_INTERVAL`   | Seconds between background transaction syncs (default: `14400`, 4h)                                  |
-| `VISION_POLL_INTERVAL`    | Seconds between camera presence checks (default: `30`)                                               |
-| `VISION_AWAY_TIMEOUT`     | Seconds without a detection before someone is marked away (default: `1800`)                          |
-| `VISION_FACE_THRESHOLD`   | Face-match distance threshold, lower = stricter (default: `0.4`)                                     |
-| `VISION_MOTION_THRESHOLD` | Mean-pixel-diff threshold for Sentry Mode motion detection, lower = more sensitive (default: `15.0`) |
-| `VAPID_PUBLIC_KEY`        | Web Push public key (enables push notifications for Sentry Mode alerts)                              |
-| `VAPID_PRIVATE_KEY`       | Web Push private key matching `VAPID_PUBLIC_KEY`                                                     |
-| `VAPID_SUBJECT`           | Contact URI for Web Push, e.g. `mailto:you@example.com` (default: `mailto:admin@example.com`)        |
+| Variable                  | What it is                                                                                          |
+| ------------------------- | --------------------------------------------------------------------------------------------------- |
+| `OIDC_DISCOVERY_URL`      | Override the OIDC discovery URL if it doesn't follow the Authentik pattern                          |
+| `OIDC_ADMIN_GROUP`        | Authentik group whose members get the admin role (default: `jarvis-admins`)                         |
+| `MQTT_BROKER`             | Hostname/IP of your Zigbee2MQTT MQTT broker (enables Zigbee control)                                |
+| `MQTT_PORT`               | MQTT broker port (default: `1883`)                                                                  |
+| `MQTT_USER`               | MQTT username (optional)                                                                            |
+| `MQTT_PASSWORD`           | MQTT password (optional)                                                                            |
+| `Z2M_BASE_TOPIC`          | Zigbee2MQTT base topic (default: `zigbee2mqtt`)                                                     |
+| `SNAPCAST_URL`            | Snapcast server JSON-RPC URL, e.g. `http://192.168.1.100:1780`                                      |
+| `PLAID_CLIENT_ID`         | Plaid client ID (enables the FINANCE panel)                                                         |
+| `PLAID_SECRET`            | Plaid secret matching `PLAID_ENV`                                                                   |
+| `PLAID_ENV`               | `sandbox` (default, no real bank needed) or `production`                                            |
+| `FINANCE_POLL_INTERVAL`   | Seconds between background transaction syncs (default: `14400`, 4h)                                 |
+| `VISION_POLL_INTERVAL`    | Seconds between camera presence checks (default: `30`)                                              |
+| `VISION_AWAY_TIMEOUT`     | Seconds without a detection before someone is marked away (default: `1800`)                         |
+| `VISION_FACE_THRESHOLD`   | Face-match distance threshold, lower = stricter (default: `0.4`)                                    |
+| `VISION_MOTION_THRESHOLD` | Mean-pixel-diff threshold for Vigil Mode motion detection, lower = more sensitive (default: `15.0`) |
+| `VAPID_PUBLIC_KEY`        | Web Push public key (enables push notifications for Vigil Mode alerts)                              |
+| `VAPID_PRIVATE_KEY`       | Web Push private key matching `VAPID_PUBLIC_KEY`                                                    |
+| `VAPID_SUBJECT`           | Contact URI for Web Push, e.g. `mailto:you@example.com` (default: `mailto:admin@example.com`)       |
+| `AERODATABOX_KEY`         | RapidAPI key for the AeroDataBox API (enables the TRAVEL ALERTS panel)                              |
+| `TRAVEL_POLL_INTERVAL`    | Seconds between flight status checks (default: `900`, 15m)                                          |
 
 Generate a VAPID key pair once with `vapid --gen` (installed alongside
 `pywebpush`), then copy `applicationServerKey`/`privateKey` into
@@ -253,6 +255,32 @@ Examples:
 - "What's Mom's number?"
 - "Look up John's email."
 
+## EMAIL
+
+Open the **AGENDA** button in the top bar (same modal as Calendar & Contacts)
+and add an **EMAIL** section entry: an IMAP server, username, and password.
+This works with Gmail, iCloud, Fastmail, and most other providers — use an
+app-specific password where required (for Gmail: enable IMAP in Gmail
+settings and create an app password). This is read-only: J.A.R.V.I.S. never
+deletes, marks read, or sends anything.
+
+Ask "do I have any unread email?" for a raw list.
+
+Once connected, turn on **ENABLE EMAIL TRIAGE** in the same EMAIL TRIAGE
+section to have J.A.R.V.I.S. classify unread mail in the background (every 5
+minutes) — a one-line summary plus an important/not-important flag, shown in
+the settings panel and available by voice ("summarize my email", "any urgent
+email?"). Anything flagged important is announced right away (spoken + push
+notification), the same way timer and reminder alerts are.
+
+Turn on **ENABLE PACKAGE TRACKING** in the same modal to have J.A.R.V.I.S.
+watch unread mail from UPS, FedEx, USPS, and Amazon for shipping updates —
+"shipped," "out for delivery," or "delivered" — shown in the settings panel
+and available by voice ("any package updates?"). Deliveries and out-for-
+delivery notices are announced right away; a tracking number is included
+when one can be found in the email. This is heuristic (regex over the email
+text, not a carrier tracking API), so an occasional miss is expected.
+
 ## NEWS
 
 J.A.R.V.I.S. pulls live headlines from the BBC RSS feeds — no API key required:
@@ -262,6 +290,24 @@ J.A.R.V.I.S. pulls live headlines from the BBC RSS feeds — no API key required
 - "Any health news?"
 
 Categories: general, technology, science, health, business, sports.
+
+## DAILY BRIEFING
+
+A spoken morning and/or evening summary — current weather, today's remaining
+calendar events, today's reminders, and top news headlines — delivered
+automatically at times you choose. Off by default; enable it under **DAILY
+BRIEFING** in the calendar/contacts (**AGENDA**) settings panel, or by voice:
+
+- "Turn on my daily briefing."
+- "Set my morning briefing for 6:30."
+- "What's my briefing status?"
+- "Give me my briefing now." _(delivers it immediately, any time)_
+- "Turn off my daily briefing."
+
+When a scheduled briefing fires, J.A.R.V.I.S. wakes from standby and speaks it
+on every connected session for that user, and sends a push notification if
+you've enabled push (see **VISION & PRESENCE** below) — so it reaches you even
+if the app isn't open.
 
 ## HOME ASSISTANT
 
@@ -419,6 +465,25 @@ Balances and transactions sync automatically in the background (every 4 hours
 by default — see `FINANCE_POLL_INTERVAL`). This is read-only: J.A.R.V.I.S.
 cannot move money or make payments.
 
+## TRAVEL ALERTS
+
+Track a flight from the **TRAVEL ALERTS** section of the PIM settings panel,
+or by voice ("track flight UA 523 tomorrow"). The admin needs
+`AERODATABOX_KEY` set in `.env` — get a free key from
+[AeroDataBox on RapidAPI](https://rapidapi.com/aedbx-aedbx/api/aerodatabox).
+
+Once tracked:
+
+- "What's the status of my flight?"
+- "Any updates on UA 523?"
+- "Stop tracking that flight."
+
+J.A.R.V.I.S. checks for gate, terminal, and status changes in the background
+(every 15 minutes by default — see `TRAVEL_POLL_INTERVAL`, only for flights
+departing within a day to stay inside AeroDataBox's free-tier request
+budget) and speaks/pushes an update whenever something changes. Tracking
+stops automatically once a flight lands, is cancelled, or diverts.
+
 ## PHONE MESSAGES
 
 J.A.R.V.I.S. can receive your text messages and alert you to the important ones.
@@ -471,17 +536,28 @@ Once set up:
 - "Any security events today?"
 - "Add a camera for the backyard."
 - "Turn on privacy mode for the office camera." _(pauses detection for that camera)_
-- "Arm Sentry Mode." / "Disarm Sentry Mode." / "Put Sentry Mode back on auto."
+- "Arm Vigil Mode." / "Disarm Vigil Mode." / "Put Vigil Mode back on auto."
 
 Cameras are polled every 30 seconds by default (`VISION_POLL_INTERVAL`); a
 household member is marked away after no detection for 30 minutes
 (`VISION_AWAY_TIMEOUT`). Unrecognized faces and motion (frame-difference
 detection, threshold `VISION_MOTION_THRESHOLD`) are logged as security events
-with a snapshot whenever Sentry Mode is heightened — which happens
+with a snapshot whenever Vigil Mode is heightened — which happens
 automatically while everyone's away or it's night (**AUTO**, the default),
 always (**ARMED**), or never (**DISARMED**). Toggle it by voice or in the
 VISION settings panel. If you've enabled push notifications there, alerts
 reach you even when the app isn't open.
+
+**Habit learning:** once camera presence detection has a few days of
+history, J.A.R.V.I.S. picks up on when you typically leave and arrive home
+(split into weekday/weekend patterns) and can tell you on request:
+
+- "When do I usually leave?"
+- "What are my habits?"
+
+Turn on **NUDGE ME AROUND MY USUAL LEAVE TIME** in the VISION settings panel
+(off by default) for a proactive heads-up around your usual departure time,
+if you haven't left yet that day.
 
 ## MEETING RECORDER
 

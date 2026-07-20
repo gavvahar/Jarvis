@@ -14,10 +14,12 @@ const visionEnrollBtn = $("vision-enroll-btn");
 const visionEnrollClear = $("vision-enroll-clear-btn");
 const visionFaceFile = $("vision-face-file");
 const visionEnrollStatus = $("vision-enroll-status");
-const visionSentryButtons = document.querySelectorAll(".vision-sentry-btn");
+const visionVigilButtons = document.querySelectorAll(".vision-vigil-btn");
 const visionEnablePushBtn = $("vision-enable-push-btn");
 const visionPushStatus = $("vision-push-status");
 const visionSecurityEvents = $("vision-security-events");
+const visionHabitsSummary = $("vision-habits-summary");
+const visionHabitsNudgeEnabled = $("vision-habits-nudge-enabled");
 
 async function loadCameras() {
   if (!visionCameraList) return;
@@ -76,35 +78,35 @@ async function loadPresence() {
   }
 }
 
-function setSentryModeUI(mode) {
-  visionSentryButtons.forEach((btn) => {
+function setVigilModeUI(mode) {
+  visionVigilButtons.forEach((btn) => {
     btn.classList.toggle("active", btn.dataset.mode === mode);
   });
 }
 
-async function loadSentryMode() {
-  if (!visionSentryButtons.length) return;
+async function loadVigilMode() {
+  if (!visionVigilButtons.length) return;
   try {
-    const r = await fetch("/api/sentry-mode");
+    const r = await fetch("/api/vigil-mode");
     const { mode } = await r.json();
-    setSentryModeUI(mode);
+    setVigilModeUI(mode);
   } catch {
     /* leave buttons in their last-known state */
   }
 }
 
-visionSentryButtons.forEach((btn) => {
+visionVigilButtons.forEach((btn) => {
   btn.addEventListener("click", async () => {
     const mode = btn.dataset.mode;
-    setSentryModeUI(mode);
+    setVigilModeUI(mode);
     try {
-      await fetch("/api/sentry-mode", {
+      await fetch("/api/vigil-mode", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ mode }),
       });
     } catch {
-      loadSentryMode();
+      loadVigilMode();
     }
   });
 });
@@ -112,6 +114,7 @@ visionSentryButtons.forEach((btn) => {
 const SECURITY_EVENT_LABELS = {
   unknown_person: "UNKNOWN PERSON",
   motion: "MOTION",
+  device_lock: "DEVICE LOCKED",
 };
 
 async function loadSecurityEvents() {
@@ -145,6 +148,52 @@ async function loadSecurityEvents() {
   }
 }
 
+const HABIT_BUCKET_LABELS = { weekday: "weekdays", weekend: "weekends" };
+
+function formatHabit(label, habit) {
+  if (!habit) return `<em>${label}: not enough data yet.</em>`;
+  const bits = Object.keys(HABIT_BUCKET_LABELS)
+    .filter((b) => habit[b])
+    .map((b) => {
+      const mins = Math.round(habit[b].typical_minutes);
+      const h = Math.floor(mins / 60);
+      const m = mins % 60;
+      const period = h < 12 ? "AM" : "PM";
+      const h12 = h % 12 || 12;
+      return `around ${h12}:${String(m).padStart(2, "0")} ${period} on ${HABIT_BUCKET_LABELS[b]}`;
+    });
+  return `${label}: ${bits.join(" and ")}.`;
+}
+
+async function loadHabits() {
+  if (!visionHabitsSummary) return;
+  try {
+    const r = await fetch("/api/habits");
+    const { enabled, departed, arrived } = await r.json();
+    visionHabitsSummary.innerHTML = [
+      formatHabit("Leaves home", departed),
+      formatHabit("Arrives home", arrived),
+    ].join("<br>");
+    if (visionHabitsNudgeEnabled) visionHabitsNudgeEnabled.checked = !!enabled;
+  } catch {
+    visionHabitsSummary.innerHTML = "<em>Could not load habits.</em>";
+  }
+}
+
+if (visionHabitsNudgeEnabled) {
+  visionHabitsNudgeEnabled.addEventListener("change", async () => {
+    try {
+      await fetch("/api/habits", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled: visionHabitsNudgeEnabled.checked }),
+      });
+    } catch {
+      loadHabits();
+    }
+  });
+}
+
 if (visionEnablePushBtn) {
   visionEnablePushBtn.addEventListener("click", async () => {
     if (visionPushStatus) visionPushStatus.textContent = "Requesting…";
@@ -162,8 +211,9 @@ if (visionBtn) {
       visionSettingsEl.classList.remove("setup-hidden");
       loadPresence();
       loadCameras();
-      loadSentryMode();
+      loadVigilMode();
       loadSecurityEvents();
+      loadHabits();
     }
   });
 }
@@ -249,8 +299,8 @@ socket.on("presence_update", ({ name, is_home, room }) => {
   loadPresence();
 });
 
-socket.on("sentry_mode_changed", ({ mode }) => {
-  setSentryModeUI(mode);
+socket.on("vigil_mode_changed", ({ mode }) => {
+  setVigilModeUI(mode);
 });
 
 socket.on("security_alert", () => {
