@@ -49,6 +49,41 @@ socket.on("device_alert", ({ name, message, speak: speakText }) => {
   speak(msg);
 });
 
+socket.on("briefing_ready", ({ text, speak: speakText }) => {
+  const msg = speakText || text || "Here's your briefing.";
+  if (window.__chat) window.__chat.addMsg(msg, "in");
+  if (isStandby()) wake();
+  speak(msg);
+});
+
+socket.on("habit_nudge", ({ speak: speakText }) => {
+  const msg = speakText || "Just a heads up, sir.";
+  if (window.__chat) window.__chat.addMsg(msg, "in");
+  if (isStandby()) wake();
+  speak(msg);
+});
+
+socket.on("travel_alert", ({ speak: speakText }) => {
+  const msg = speakText || "Flight status update.";
+  if (window.__chat) window.__chat.addMsg(msg, "in");
+  if (isStandby()) wake();
+  speak(msg);
+});
+
+socket.on("email_alert", ({ speak: speakText }) => {
+  const msg = speakText || "You have an urgent email.";
+  if (window.__chat) window.__chat.addMsg(msg, "in");
+  if (isStandby()) wake();
+  speak(msg);
+});
+
+socket.on("package_alert", ({ speak: speakText }) => {
+  const msg = speakText || "Package update.";
+  if (window.__chat) window.__chat.addMsg(msg, "in");
+  if (isStandby()) wake();
+  speak(msg);
+});
+
 socket.on("wake_trigger", ({ device_id }) => {
   if (isStandby()) {
     wake();

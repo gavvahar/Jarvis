@@ -12,11 +12,12 @@ from db import (
     _db_get_all_face_embeddings,
     _db_get_recent_security_events,
     _db_get_security_event_snapshot,
-    _db_get_sentry_mode,
+    _db_get_vigil_mode,
     _db_get_who_is_home,
     _db_list_cameras,
     _db_ready,
     _db_record_detection,
+    _db_record_presence_event,
     _db_record_security_event,
     _db_save_face_embedding,
     _db_update_camera,
@@ -59,6 +60,10 @@ def _vision_available() -> bool:
 
 def _get_presence_cache() -> list:
     return _presence_cache
+
+
+def _user_has_face_enrollment(user_id: str) -> bool:
+    return user_id in _face_cache
 
 
 def _get_presence_prompt_context() -> str:
@@ -285,7 +290,7 @@ async def _vision_loop():
             continue
         try:
             await _refresh_face_cache()
-            mode = await _db_get_sentry_mode()
+            mode = await _db_get_vigil_mode()
             now = datetime.datetime.now(datetime.timezone.utc)
             hour = now.hour
             async with _pool().acquire() as conn:
@@ -339,6 +344,7 @@ async def _vision_loop():
                         await _db_update_presence(det["detected_user_id"], True)
                         activity = _infer_activity(room, hour)
                         if not prev_home:
+                            await _db_record_presence_event(det["detected_user_id"], "arrived")
                             for sid in sids_fn(user_id):
                                 await sio.emit(
                                     "presence_update",
@@ -355,12 +361,13 @@ async def _vision_loop():
             async with _pool().acquire() as conn:
                 cutoff = datetime.timedelta(seconds=VISION_AWAY_TIMEOUT)
                 stale = await conn.fetch(
-                    "SELECT user_id FROM user_configs WHERE is_home=TRUE AND (last_seen_at IS NULL OR last_seen_at < NOW()-$1::interval)",
+                    "SELECT user_id, last_seen_at FROM user_configs WHERE is_home=TRUE AND (last_seen_at IS NULL OR last_seen_at < NOW()-$1::interval)",
                     cutoff,
                 )
             for row in stale:
                 uid = row["user_id"]
                 await _db_update_presence(uid, False)
+                await _db_record_presence_event(uid, "departed", row["last_seen_at"])
                 for sid in sids_fn(uid):
                     await sio.emit("presence_update", {"user_id": uid, "name": uid, "is_home": False, "room": "", "activity": ""}, to=sid)
 
@@ -415,6 +422,18 @@ async def _get_security_event_snapshot(user_id: str, event_id: int) -> bytes:
     if not snapshot:
         raise HTTPException(404, "No snapshot for this event")
     return snapshot
+
+
+async def _check_presence(image_bytes: bytes) -> dict:
+    if not _VISION_OK:
+        return {"faces": []}
+    faces = await asyncio.to_thread(_identify_faces_in_image, image_bytes)
+    return {"faces": faces}
+
+
+async def _record_device_lock(user_id: str, image_bytes: bytes | None) -> dict:
+    await _db_record_security_event(user_id, None, "device_lock", "", image_bytes)
+    return {"ok": True}
 
 
 async def _face_enroll_sample(image_bytes: bytes) -> dict:
