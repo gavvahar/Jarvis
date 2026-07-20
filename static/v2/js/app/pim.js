@@ -51,6 +51,11 @@ const travelFlightNumberInput = $("travel-flight-number");
 const travelFlightDateInput = $("travel-flight-date");
 const travelAddBtn = $("travel-add-btn");
 const travelMsg = $("travel-msg");
+const meetingPrepForm = $("meeting-prep-form");
+const meetingPrepEnabledInput = $("meeting-prep-enabled");
+const meetingPrepLeadMinutesInput = $("meeting-prep-lead-minutes");
+const meetingPrepSaveBtn = $("meeting-prep-save");
+const meetingPrepMsg = $("meeting-prep-msg");
 
 let _calendarDavConfigured = false;
 let _contactsDavConfigured = false;
@@ -121,6 +126,19 @@ async function loadBriefingPrefs() {
       briefingMorningInput.value = morning_time;
     if (briefingEveningInput && evening_time)
       briefingEveningInput.value = evening_time;
+  } catch {
+    /* leave defaults */
+  }
+}
+
+async function loadMeetingPrepPrefs() {
+  if (!meetingPrepEnabledInput) return;
+  try {
+    const r = await fetch("/api/meeting-prep");
+    const { enabled, lead_minutes } = await r.json();
+    meetingPrepEnabledInput.checked = !!enabled;
+    if (meetingPrepLeadMinutesInput && lead_minutes)
+      meetingPrepLeadMinutesInput.value = lead_minutes;
   } catch {
     /* leave defaults */
   }
@@ -250,10 +268,15 @@ function showPimSettings() {
     packageTrackingMsg.textContent = "";
     packageTrackingMsg.className = "";
   }
+  if (meetingPrepMsg) {
+    meetingPrepMsg.textContent = "";
+    meetingPrepMsg.className = "";
+  }
   loadBriefingPrefs();
   loadTravelTrips();
   loadEmailTriagePrefs();
   loadPackageTrackingPrefs();
+  loadMeetingPrepPrefs();
   setTimeout(() => calendarUrlInput && calendarUrlInput.focus(), 150);
 }
 
@@ -534,6 +557,38 @@ if (packageTrackingForm) {
       packageTrackingMsg.textContent = "Could not reach the server.";
     } finally {
       packageTrackingSaveBtn.disabled = false;
+    }
+  });
+}
+
+if (meetingPrepForm) {
+  meetingPrepForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    meetingPrepSaveBtn.disabled = true;
+    meetingPrepMsg.className = "";
+    meetingPrepMsg.textContent = "Saving…";
+    try {
+      const res = await fetch("/api/meeting-prep", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          enabled: meetingPrepEnabledInput.checked,
+          lead_minutes: parseInt(meetingPrepLeadMinutesInput.value, 10) || 15,
+        }),
+      });
+      const data = await res.json();
+      if (data.ok) {
+        meetingPrepMsg.className = "ok";
+        meetingPrepMsg.textContent = "Meeting prep settings saved.";
+      } else {
+        meetingPrepMsg.className = "err";
+        meetingPrepMsg.textContent = data.error || "Could not save settings.";
+      }
+    } catch {
+      meetingPrepMsg.className = "err";
+      meetingPrepMsg.textContent = "Could not reach the server.";
+    } finally {
+      meetingPrepSaveBtn.disabled = false;
     }
   });
 }

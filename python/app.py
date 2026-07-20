@@ -10,7 +10,7 @@ Three providers:
   • openai_compatible — any OpenAI-compatible endpoint (Ollama, OpenRouter, …)
 """
 
-import json, os, re, asyncio, secrets, tempfile, urllib.parse, httpx, datetime, hashlib, base64, pathlib, socketio, auth as _auth, integrations.tesla as _tesla_mod, integrations.vision as _vision_mod, integrations.automation as _automation_mod, integrations.multiroom.presence as _presence_mod, integrations.multiroom.snapcast as _snapcast_mod, integrations.vigil as _vigil_mod, integrations.briefing as _briefing_mod, integrations.habits as _habits_mod, integrations.travel as _travel_mod, integrations.email_triage as _email_triage_mod, integrations.package_tracking as _package_tracking_mod
+import json, os, re, asyncio, secrets, tempfile, urllib.parse, httpx, datetime, hashlib, base64, pathlib, socketio, auth as _auth, integrations.tesla as _tesla_mod, integrations.vision as _vision_mod, integrations.automation as _automation_mod, integrations.multiroom.presence as _presence_mod, integrations.multiroom.snapcast as _snapcast_mod, integrations.vigil as _vigil_mod, integrations.briefing as _briefing_mod, integrations.habits as _habits_mod, integrations.travel as _travel_mod, integrations.meeting_prep as _meeting_prep_mod, integrations.email_triage as _email_triage_mod, integrations.package_tracking as _package_tracking_mod
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Request, File, UploadFile, Response
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, FileResponse
@@ -47,6 +47,7 @@ from integrations.vigil import _get_vigil_mode, _set_vigil_mode
 from integrations.briefing import _get_briefing_prefs, _set_briefing_prefs
 from integrations.habits import _get_habit_prefs, _set_habit_prefs
 from integrations.travel import _add_travel_trip_api, _remove_travel_trip_api, _travel_prefs
+from integrations.meeting_prep import _get_meeting_prep_prefs, _set_meeting_prep_prefs
 from integrations.email_triage import _get_email_triage_prefs, _set_email_triage_prefs
 from integrations.package_tracking import _get_package_tracking_prefs, _set_package_tracking_prefs
 from integrations.music.spotify import (
@@ -276,6 +277,7 @@ _vigil_mod.init(_broadcast_all)
 _briefing_mod.init(sio, _sids_for_user, _location_context)
 _habits_mod.init(sio, _sids_for_user)
 _travel_mod.init(sio, _sids_for_user)
+_meeting_prep_mod.init(sio, _sids_for_user)
 _email_triage_mod.init(sio, _sids_for_user)
 _package_tracking_mod.init(sio, _sids_for_user)
 
@@ -302,8 +304,9 @@ async def lifespan(application: FastAPI):
     t10 = asyncio.create_task(_travel_mod._travel_alert_loop())
     t11 = asyncio.create_task(_email_triage_mod._email_triage_loop())
     t12 = asyncio.create_task(_package_tracking_mod._package_tracking_loop())
+    t13 = asyncio.create_task(_meeting_prep_mod._meeting_prep_loop())
     yield
-    for t in (t1, t2, t3, t4, t5, t6, t8, t9, t10, t11, t12):
+    for t in (t1, t2, t3, t4, t5, t6, t8, t9, t10, t11, t12, t13):
         t.cancel()
     await _db_close()
 
@@ -807,6 +810,16 @@ async def api_add_travel(request: Request):
 @fast_app.delete("/api/travel/{trip_id}")
 async def api_remove_travel(trip_id: int, request: Request):
     return await _remove_travel_trip_api(_require_user(request), trip_id)
+
+
+@fast_app.get("/api/meeting-prep")
+async def api_get_meeting_prep(request: Request):
+    return await _get_meeting_prep_prefs(_require_user(request))
+
+
+@fast_app.post("/api/meeting-prep")
+async def api_set_meeting_prep(request: Request):
+    return await _set_meeting_prep_prefs(_require_user(request), await request.json())
 
 
 @fast_app.get("/api/email-triage")
@@ -1788,7 +1801,7 @@ async def _meeting_cleanup_loop():
         try:
             if _db_ready():
                 async with _pool().acquire() as conn:
-                    result = await conn.execute("DELETE FROM meetings WHERE created_at < NOW() - INTERVAL '48 hours'")
+                    result = await conn.execute("DELETE FROM meetings WHERE created_at < NOW() - INTERVAL '90 days'")
                 if result != "DELETE 0":
                     print(f"[MEETING] Cleanup: {result}", flush=True)
         except Exception as e:

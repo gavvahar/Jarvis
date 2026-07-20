@@ -11,6 +11,7 @@ from integrations.vigil import _VIGIL_TOOL_NAMES, _execute_vigil_tool, _get_vigi
 from integrations.briefing import _execute_briefing_tool, _get_briefing_tools
 from integrations.habits import _HABITS_TOOL_NAMES, _execute_habits_tool, _get_habits_tools
 from integrations.travel import _TRAVEL_TOOL_NAMES, _execute_travel_tool, _get_travel_tools
+from integrations.meeting_prep import _MEETING_PREP_TOOL_NAMES, _execute_meeting_prep_tool, _get_meeting_prep_tools
 from integrations.email_triage import _EMAIL_TRIAGE_TOOL_NAMES, _execute_email_triage_tool, _get_email_triage_tools
 from integrations.package_tracking import _PACKAGE_TOOL_NAMES, _execute_package_tool, _get_package_tools
 from integrations.pim.calendar import _calendar_configured, _execute_calendar_tool
@@ -355,6 +356,7 @@ async def _stream_reply(state: dict, on_text):
         + _get_vigil_tools(provider)
         + _get_habits_tools(provider)
         + _get_travel_tools(provider)
+        + _get_meeting_prep_tools(config, provider)
         + _get_email_triage_tools(config, provider)
         + _get_package_tools(config, provider)
         + _get_snapcast_tools(provider)
@@ -401,6 +403,8 @@ async def _stream_reply(state: dict, on_text):
                         result = await _execute_calendar_tool(config, dict(block.input))
                     elif block.name == "manage_briefing":
                         result = await _execute_briefing_tool(uid, dict(block.input), config)
+                    elif block.name in _MEETING_PREP_TOOL_NAMES:
+                        result = await _execute_meeting_prep_tool(block.name, uid, dict(block.input), config)
                     elif block.name == "lookup_contact":
                         result = await _execute_contact_lookup_tool(config, dict(block.input))
                     elif block.name == "list_unread_email":
@@ -475,6 +479,8 @@ async def _stream_reply(state: dict, on_text):
                     result = await _execute_calendar_tool(config, args)
                 elif acc["name"] == "manage_briefing":
                     result = await _execute_briefing_tool(uid, args, config)
+                elif acc["name"] in _MEETING_PREP_TOOL_NAMES:
+                    result = await _execute_meeting_prep_tool(acc["name"], uid, args, config)
                 elif acc["name"] == "lookup_contact":
                     result = await _execute_contact_lookup_tool(config, args)
                 elif acc["name"] == "list_unread_email":

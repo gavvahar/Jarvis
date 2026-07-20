@@ -555,6 +555,73 @@ async def _db_finalize_meeting(meeting_id: int, notes: str):
         )
 
 
+async def _db_search_past_meetings(user_id: str, keywords: list[str], limit: int = 3) -> list:
+    if not keywords:
+        return []
+    async with _pool().acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT id, started_at, notes FROM meetings
+            WHERE user_id = $1 AND notes != '' AND notes ILIKE ANY($2::text[])
+            ORDER BY started_at DESC
+            LIMIT $3
+            """,
+            user_id,
+            [f"%{kw}%" for kw in keywords],
+            limit,
+        )
+    return [dict(r) for r in rows]
+
+
+# ─── MEETING PREP ─────────────────────────────────────────────────────────────
+async def _db_get_meeting_prep_prefs(user_id: str) -> dict:
+    async with _pool().acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT meeting_prep_enabled, meeting_prep_lead_minutes FROM user_configs WHERE user_id = $1",
+            user_id,
+        )
+    if row is None:
+        return {"enabled": False, "lead_minutes": 15}
+    return {"enabled": row["meeting_prep_enabled"], "lead_minutes": row["meeting_prep_lead_minutes"]}
+
+
+async def _db_set_meeting_prep_prefs(user_id: str, enabled: bool, lead_minutes: int) -> None:
+    async with _pool().acquire() as conn:
+        await conn.execute(
+            "UPDATE user_configs SET meeting_prep_enabled=$2, meeting_prep_lead_minutes=$3 WHERE user_id=$1",
+            user_id,
+            enabled,
+            lead_minutes,
+        )
+
+
+async def _db_list_users_for_meeting_prep() -> list:
+    async with _pool().acquire() as conn:
+        rows = await conn.fetch("SELECT user_id FROM user_configs WHERE meeting_prep_enabled = TRUE")
+    return [r["user_id"] for r in rows]
+
+
+async def _db_meeting_prep_sent_uids(user_id: str, event_uids: list[str]) -> set[str]:
+    if not event_uids:
+        return set()
+    async with _pool().acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT event_uid FROM meeting_prep_sent WHERE user_id = $1 AND event_uid = ANY($2::text[])",
+            user_id,
+            event_uids,
+        )
+    return {r["event_uid"] for r in rows}
+
+
+async def _db_mark_meeting_prep_sent(user_id: str, event_uid: str) -> None:
+    async with _pool().acquire() as conn:
+        await conn.execute(
+            "INSERT INTO meeting_prep_sent (user_id, event_uid) VALUES ($1, $2) ON CONFLICT (user_id, event_uid) DO NOTHING",
+            user_id,
+            event_uid,
+        )
+
+
 # ─── DOORBELL ─────────────────────────────────────────────────────────────────
 async def _db_store_doorbell_event(user_id: str, event_type: str, source: str):
     async with _pool().acquire() as conn:
