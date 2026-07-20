@@ -200,11 +200,25 @@ async def _generate_meeting_notes(state: dict, transcript: str) -> str:
     raise last
 
 
+def _time_of_day_label(hour: int) -> str:
+    if 0 <= hour < 5:
+        return "late night"
+    if 5 <= hour < 7:
+        return "early morning"
+    if 7 <= hour < 12:
+        return "morning"
+    if 12 <= hour < 17:
+        return "afternoon"
+    if 17 <= hour < 21:
+        return "evening"
+    return "night"
+
+
 # ─── LLM STREAMING ───────────────────────────────────────────────────────────
 def _build_system_prompt(config: dict, speaker_name: str | None = None, is_kid_safe: bool = False, room: str = "") -> str:
     system = JARVIS_SYSTEM
     now = datetime.datetime.now()
-    system += f"\n\nCURRENT DATE AND TIME: {now.strftime('%A, %B %d, %Y, %I:%M %p')}."
+    system += f"\n\nCURRENT DATE AND TIME: {now.strftime('%A, %B %d, %Y, %I:%M %p')} ({_time_of_day_label(now.hour)})."
     system += (
         "\n\nTIMERS & REMINDERS — use manage_timer to set/list/cancel timers by duration. "
         "Use manage_reminder to set/list/cancel reminders at a specific datetime (ISO 8601). "
@@ -306,6 +320,15 @@ def _build_system_prompt(config: dict, speaker_name: str | None = None, is_kid_s
     if room:
         system += f"\n\nCURRENT ROOM: The user is in the '{room}' room. Default any room-specific Snapcast commands to that room."
     system += _get_presence_prompt_context()
+    system += (
+        "\n\nCONTEXT AWARENESS — let the time of day, location/weather, current room, and household "
+        "activity above quietly shape your tone and, when it's clearly relevant, your suggestions. "
+        "Keep responses shorter and quieter late at night; don't propose workouts, loud music, or "
+        "errands once most of the household is asleep. If someone's mid-task (cooking, exercising, "
+        "watching something), keep it brief and to the point rather than chatty. Offer an unprompted "
+        "suggestion only when it's obviously useful in the moment — never pad a reply with context "
+        "just to prove you're aware of it."
+    )
     return system
 
 
