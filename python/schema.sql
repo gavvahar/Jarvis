@@ -47,6 +47,8 @@ ALTER TABLE user_configs ADD COLUMN IF NOT EXISTS email_username TEXT NOT NULL D
 ALTER TABLE user_configs ADD COLUMN IF NOT EXISTS email_password TEXT NOT NULL DEFAULT '';
 ALTER TABLE user_configs ADD COLUMN IF NOT EXISTS email_triage_enabled BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE user_configs ADD COLUMN IF NOT EXISTS package_tracking_enabled BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE user_configs ADD COLUMN IF NOT EXISTS meeting_prep_enabled BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE user_configs ADD COLUMN IF NOT EXISTS meeting_prep_lead_minutes INTEGER NOT NULL DEFAULT 15;
 
 CREATE TABLE IF NOT EXISTS shared_lists (
     id          BIGSERIAL PRIMARY KEY,
@@ -267,3 +269,12 @@ CREATE TABLE IF NOT EXISTS package_events (
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_package_events_user_uid ON package_events (user_id, uid);
 CREATE INDEX IF NOT EXISTS idx_package_events_user_detected ON package_events (user_id, detected_at DESC);
+
+CREATE TABLE IF NOT EXISTS meeting_prep_sent (
+    id          BIGSERIAL PRIMARY KEY,
+    user_id     TEXT NOT NULL REFERENCES user_configs(user_id) ON DELETE CASCADE,
+    event_uid   TEXT NOT NULL,
+    sent_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_meeting_prep_sent_user_uid ON meeting_prep_sent (user_id, event_uid);
