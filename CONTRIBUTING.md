@@ -64,7 +64,7 @@ The UI is one page (`templates/index.html`), split for readability:
 
 - `templates/partials/*.html` — one file per screen/modal/panel (e.g. `tesla_settings_modal.html`, `topbar.html`), pulled into `index.html` with Jinja `{% include %}`.
 - `static/v2/css/*.css` — `styles.css`/`starter.css` split the same way, one file per section, linked in order from `partials/head_assets.html`. Order matters — the cascade depends on it.
-- `static/v2/js/app/*.js` — ES modules, one per feature panel (`ha.js`, `tesla.js`, `finance.js`, ...). `core.js` is the shared runtime (socket, modes, TTS/STT) every other module imports from; `boot.js` fetches `/api/status` and hydrates every panel; `main.js` is the `<script type="module">` entry point that pulls everything else in.
+- `static/v2/js/app/*.js` — ES modules, one per feature panel (`ha.js`, `tesla.js`, `spotify.js`, ...). `core.js` is the shared runtime (socket, modes, TTS/STT) every other module imports from; `boot.js` fetches `/api/status` and hydrates every panel; `main.js` is the `<script type="module">` entry point that pulls everything else in.
 
 Adding a new feature panel: add its DOM to a new `partials/*.html`, its styles to a new `css/*.css` (included via `head_assets.html`), and its logic to a new `js/app/*.js` (imported from `main.js`).
 

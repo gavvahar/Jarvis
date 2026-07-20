@@ -15,11 +15,10 @@
 | 7        | Phase 5 — Deeper Smart Home                    | Complete    |
 | 8        | Phase 6 — Proactive & Ambient Intelligence     | In Progress |
 | 9        | Phase 8 — Developer & Extensibility Platform   | On Hold     |
-| 10       | Phase 9 — Financial Intelligence               | In Progress |
-| 11       | Phase 10 — Computer Vision & Spatial Awareness | Complete    |
-| 12       | Phase 11 — Accessibility & Hearing Assistance  | Planned     |
-| 13       | Phase 12 — Mental Wellness & Social Assistance | Planned     |
-| 14       | Phase 3 — Mobile PWA                           | In Progress |
+| 10       | Phase 9 — Computer Vision & Spatial Awareness | Complete    |
+| 11       | Phase 10 — Accessibility & Hearing Assistance  | Planned     |
+| 12       | Phase 11 — Mental Wellness & Social Assistance | Planned     |
+| 13       | Phase 3 — Mobile PWA                           | In Progress |
 
 ---
 
@@ -145,7 +144,7 @@ Make Jarvis a platform others can build on, like Alexa Skills or Google Actions.
 
 ---
 
-## Phase 12 — Mental Wellness & Social Assistance
+## Phase 11 — Mental Wellness & Social Assistance
 
 Reduce social friction for introverts and provide grounding, calm, and pattern awareness for anxiety.
 
@@ -163,7 +162,7 @@ Reduce social friction for introverts and provide grounding, calm, and pattern a
 
 ---
 
-## Phase 11 — Accessibility & Hearing Assistance
+## Phase 10 — Accessibility & Hearing Assistance
 
 Compensate for single-sided hearing loss with visual alerts, real-time captions, and a more forgiving voice UX.
 
@@ -177,7 +176,7 @@ Compensate for single-sided hearing loss with visual alerts, real-time captions,
 
 ---
 
-## Phase 10 — Computer Vision & Spatial Awareness
+## Phase 9 — Computer Vision & Spatial Awareness
 
 Give Jarvis eyes — know who is home, where they are, what they're doing, and flag anything unusual.
 
@@ -195,23 +194,6 @@ Give Jarvis eyes — know who is home, where they are, what they're doing, and f
   - [x] **Consecutive-mismatch state machine** — lock condition is: the logged-in user's `user_id` is _absent_ from the matched faces _and_ at least one _other_ matched (or unmatched/`unknown`) face _is_ present, for 3 consecutive checks — a single bad frame (bad lighting, brief look-away, empty frame) doesn't trigger it or reset it; the counter only resets to 0 on a check where the logged-in user is visible again.
   - [x] **Lock screen UI** — full-viewport overlay blanking the rest of the app, "J.A.R.V.I.S. LOCKED" state, continues running the same capture loop underneath and auto-unlocks the instant a check sees the logged-in user alone in frame.
   - [x] **Snapshot on lock event** — `POST /api/face/lock-event` → `_record_device_lock()` reuses the `security_events` table (`event_type: "device_lock"`) so a lock event shows up in the same RECENT EVENTS list Vigil Mode already has, with the triggering snapshot attached via the existing `_db_record_security_event(..., snapshot=...)` path.
-
----
-
-## Phase 9 — Financial Intelligence
-
-Give Jarvis full visibility and control over money — balances, spending, budgets, goals, and payments.
-
-- [x] **Account aggregation** — Plaid Link (sandbox); unified account view across linked banks in `plaid_items`/`plaid_accounts`
-- [x] **Balance & transaction lookup** — "what's my balance?", "show my recent transactions" answered by voice via `get_account_balances`/`get_recent_transactions`
-- [x] **Spending categorization** — reuses Plaid's `personal_finance_category`; override via voice (`set_transaction_category`) or `PATCH /api/finance/transactions/{id}`
-- [ ] **Budget tracking** — set monthly budgets by category; alert when approaching or over limit
-- [ ] **Bill & subscription detection** — surface recurring charges automatically; alert before due dates
-- [ ] **Savings goals** — "save $5k for vacation by December"; track progress and surface weekly
-- [ ] **Net worth dashboard** — aggregate all accounts (checking, savings, credit, investments) into a single number
-- [ ] **Spending alerts** — flag large, unusual, or out-of-category transactions in real time via webhook
-- [ ] **Transfer & payment initiation** — initiate bank transfers via Plaid Transfer API or direct bank APIs; confirm by voice before executing
-- [ ] **Financial briefing** — daily/weekly money summary: net cash flow, top spending categories, upcoming bills, goal progress
 
 ---
 
