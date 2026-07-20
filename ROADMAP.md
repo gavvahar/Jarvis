@@ -15,7 +15,7 @@
 | 7        | Phase 5 — Deeper Smart Home                    | Complete    |
 | 8        | Phase 6 — Proactive & Ambient Intelligence     | In Progress |
 | 9        | Phase 8 — Developer & Extensibility Platform   | On Hold     |
-| 10       | Phase 9 — Computer Vision & Spatial Awareness | Complete    |
+| 10       | Phase 9 — Computer Vision & Spatial Awareness  | Complete    |
 | 11       | Phase 10 — Accessibility & Hearing Assistance  | Planned     |
 | 12       | Phase 11 — Mental Wellness & Social Assistance | Planned     |
 | 13       | Phase 3 — Mobile PWA                           | In Progress |
