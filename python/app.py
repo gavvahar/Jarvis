@@ -10,7 +10,7 @@ Three providers:
   • openai_compatible — any OpenAI-compatible endpoint (Ollama, OpenRouter, …)
 """
 
-import json, os, re, asyncio, secrets, tempfile, urllib.parse, httpx, datetime, hashlib, base64, pathlib, socketio, auth as _auth, integrations.tesla as _tesla_mod, integrations.vision as _vision_mod, integrations.finance as _finance_mod, integrations.automation as _automation_mod, integrations.multiroom.presence as _presence_mod, integrations.multiroom.snapcast as _snapcast_mod, integrations.vigil as _vigil_mod, integrations.briefing as _briefing_mod, integrations.habits as _habits_mod, integrations.travel as _travel_mod, integrations.email_triage as _email_triage_mod, integrations.package_tracking as _package_tracking_mod
+import json, os, re, asyncio, secrets, tempfile, urllib.parse, httpx, datetime, hashlib, base64, pathlib, socketio, auth as _auth, integrations.tesla as _tesla_mod, integrations.vision as _vision_mod, integrations.automation as _automation_mod, integrations.multiroom.presence as _presence_mod, integrations.multiroom.snapcast as _snapcast_mod, integrations.vigil as _vigil_mod, integrations.briefing as _briefing_mod, integrations.habits as _habits_mod, integrations.travel as _travel_mod, integrations.email_triage as _email_triage_mod, integrations.package_tracking as _package_tracking_mod
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Request, File, UploadFile, Response
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, FileResponse
@@ -27,7 +27,6 @@ from auth import (
 )
 from integrations.myq import _myq_configured, _myq_get_status
 from integrations.ha import _ha_configured, _validate_ha
-from integrations.finance import _finance_configured, _plaid_create_link_token, _plaid_exchange_public_token, _plaid_remove_item
 from integrations.tesla import _tesla_access_token, _tesla_configured
 from integrations.vision import (
     _list_cameras,
@@ -92,9 +91,6 @@ from config import (
     TESLA_CLIENT_ID,
     TESLA_CLIENT_SECRET,
     SPOTIFY_CLIENT_ID,
-    PLAID_CLIENT_ID,
-    PLAID_SECRET,
-    PLAID_ENV,
     VAPID_PUBLIC_KEY,
 )
 
@@ -135,11 +131,6 @@ from db import (
     _db_append_transcript_segment,
     _db_finalize_meeting,
     _db_store_doorbell_event,
-    _db_list_plaid_items,
-    _db_list_plaid_accounts,
-    _db_get_plaid_item,
-    _db_delete_plaid_item,
-    _db_set_transaction_category_override,
     _db_add_push_subscription,
     _db_remove_push_subscription,
 )
@@ -306,14 +297,13 @@ async def lifespan(application: FastAPI):
     t4 = asyncio.create_task(_timer_reminder_loop())
     t5 = asyncio.create_task(_automation_mod._device_alert_loop())
     t6 = asyncio.create_task(_vision_mod._vision_loop())
-    t7 = asyncio.create_task(_finance_mod._finance_loop())
     t8 = asyncio.create_task(_briefing_mod._briefing_loop())
     t9 = asyncio.create_task(_habits_mod._habit_nudge_loop())
     t10 = asyncio.create_task(_travel_mod._travel_alert_loop())
     t11 = asyncio.create_task(_email_triage_mod._email_triage_loop())
     t12 = asyncio.create_task(_package_tracking_mod._package_tracking_loop())
     yield
-    for t in (t1, t2, t3, t4, t5, t6, t7, t8, t9, t10, t11, t12):
+    for t in (t1, t2, t3, t4, t5, t6, t8, t9, t10, t11, t12):
         t.cancel()
     await _db_close()
 
@@ -453,9 +443,6 @@ async def api_status(request: Request):
         "spotify_client_enabled": bool(SPOTIFY_CLIENT_ID),
         "apple_music_configured": _apple_music_configured(config),
         "apple_music_server_enabled": _apple_music_server_configured(),
-        "finance_configured": await _finance_configured(user_id),
-        "plaid_client_enabled": bool(PLAID_CLIENT_ID and PLAID_SECRET),
-        "plaid_env": PLAID_ENV,
         "role": state.get("role", "user"),
         "vapid_public_key": VAPID_PUBLIC_KEY,
         "face_enrolled": _user_has_face_enrollment(user_id),
@@ -859,67 +846,6 @@ async def api_save_myq(request: Request):
         config["myq_password"] = myq_password
         await _db_save_config(user_id, config)
     return {"ok": True, "myq_configured": _myq_configured(config)}
-
-
-# ─── FINANCE / PLAID ROUTES ──────────────────────────────────────────────────
-@fast_app.post("/api/finance/link_token")
-async def api_finance_link_token(request: Request):
-    user_id = _require_user(request)
-    if not (PLAID_CLIENT_ID and PLAID_SECRET):
-        raise HTTPException(503, "Plaid not configured — set PLAID_CLIENT_ID and PLAID_SECRET in .env")
-    token = await _plaid_create_link_token(user_id)
-    return {"link_token": token}
-
-
-@fast_app.post("/api/finance/exchange_token")
-async def api_finance_exchange_token(request: Request):
-    user_id = _require_user(request)
-    data = await request.json()
-    public_token = (data.get("public_token") or "").strip()
-    if not public_token:
-        return {"ok": False, "error": "Missing public_token."}
-    try:
-        result = await _plaid_exchange_public_token(
-            user_id,
-            public_token,
-            (data.get("institution_id") or "").strip(),
-            (data.get("institution_name") or "").strip(),
-        )
-    except Exception as e:
-        return {"ok": False, "error": f"Could not link account: {e}"}
-    return {"ok": True, **result}
-
-
-@fast_app.get("/api/finance/connections")
-async def api_finance_connections(request: Request):
-    user_id = _require_user(request)
-    items = await _db_list_plaid_items(user_id)
-    accounts = await _db_list_plaid_accounts(user_id)
-    return {"connections": items, "accounts": accounts}
-
-
-@fast_app.delete("/api/finance/connections/{item_pk}")
-async def api_finance_disconnect(item_pk: int, request: Request):
-    user_id = _require_user(request)
-    item = await _db_get_plaid_item(user_id, item_pk)
-    if not item:
-        raise HTTPException(404, "Connection not found")
-    await _plaid_remove_item(item["access_token"])
-    await _db_delete_plaid_item(user_id, item_pk)
-    return {"ok": True}
-
-
-@fast_app.patch("/api/finance/transactions/{transaction_pk}")
-async def api_finance_override_category(transaction_pk: int, request: Request):
-    user_id = _require_user(request)
-    data = await request.json()
-    category = (data.get("category") or "").strip()
-    if not category:
-        return {"ok": False, "error": "category is required"}
-    ok = await _db_set_transaction_category_override(user_id, transaction_pk, category)
-    if not ok:
-        raise HTTPException(404, "Transaction not found")
-    return {"ok": True}
 
 
 @fast_app.get("/api/meetings")
