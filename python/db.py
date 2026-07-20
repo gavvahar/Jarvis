@@ -49,7 +49,7 @@ async def _db_ensure_user(user_id: str, email: str, role: str):
 async def _db_load_config(user_id: str) -> dict:
     async with _pool().acquire() as conn:
         row = await conn.fetchrow(
-            "SELECT role, provider, api_key, model, base_url, ha_url, ha_token, myq_email, myq_password, tesla_method, tesla_refresh_token, tesla_fleet_refresh_token, spotify_refresh_token, spotify_access_token, spotify_token_expiry, apple_music_user_token, apple_music_storefront, calendar_url, calendar_username, calendar_password, contacts_url, contacts_username, contacts_password, display_name, voice_embedding, is_kid_safe FROM user_configs WHERE user_id = $1",
+            "SELECT role, provider, api_key, model, base_url, ha_url, ha_token, myq_email, myq_password, tesla_method, tesla_refresh_token, tesla_fleet_refresh_token, spotify_refresh_token, spotify_access_token, spotify_token_expiry, apple_music_user_token, apple_music_storefront, calendar_url, calendar_username, calendar_password, contacts_url, contacts_username, contacts_password, email_host, email_username, email_password, display_name, voice_embedding, is_kid_safe FROM user_configs WHERE user_id = $1",
             user_id,
         )
     if row is None:
@@ -77,6 +77,9 @@ async def _db_load_config(user_id: str) -> dict:
             "contacts_url": "",
             "contacts_username": "",
             "contacts_password": "",
+            "email_host": "",
+            "email_username": "",
+            "email_password": "",
             "display_name": "",
             "voice_embedding": None,
             "is_kid_safe": False,
@@ -149,6 +152,21 @@ async def _db_save_pim_config(
             contacts_url,
             contacts_username,
             contacts_password,
+        )
+
+
+async def _db_save_email_config(user_id: str, email_host: str, email_username: str, email_password: str) -> None:
+    async with _pool().acquire() as conn:
+        await conn.execute(
+            "INSERT INTO user_configs (user_id, email, role) VALUES ($1, '', 'user') ON CONFLICT (user_id) DO NOTHING",
+            user_id,
+        )
+        await conn.execute(
+            "UPDATE user_configs SET email_host=$2, email_username=$3, email_password=$4, updated_at=NOW() WHERE user_id=$1",
+            user_id,
+            email_host,
+            email_username,
+            email_password,
         )
 
 
@@ -372,6 +390,48 @@ async def _db_fire_due_reminders() -> list:
             else:
                 await conn.execute("UPDATE reminders SET active = FALSE WHERE id = $1", r["id"])
     return fired
+
+
+# ─── DAILY BRIEFING ───────────────────────────────────────────────────────────
+async def _db_get_briefing_prefs(user_id: str) -> dict:
+    async with _pool().acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT briefing_enabled, briefing_morning_time, briefing_evening_time FROM user_configs WHERE user_id = $1",
+            user_id,
+        )
+    if row is None:
+        return {"enabled": False, "morning_time": "07:00", "evening_time": "18:00"}
+    return {"enabled": row["briefing_enabled"], "morning_time": row["briefing_morning_time"], "evening_time": row["briefing_evening_time"]}
+
+
+async def _db_set_briefing_prefs(user_id: str, enabled: bool, morning_time: str, evening_time: str) -> None:
+    async with _pool().acquire() as conn:
+        await conn.execute(
+            "UPDATE user_configs SET briefing_enabled=$2, briefing_morning_time=$3, briefing_evening_time=$4 WHERE user_id=$1",
+            user_id,
+            enabled,
+            morning_time,
+            evening_time,
+        )
+
+
+async def _db_list_users_due_for_briefing(slot: str, hhmm: str, today: datetime.date) -> list:
+    time_col = "briefing_morning_time" if slot == "morning" else "briefing_evening_time"
+    sent_col = "briefing_last_morning_sent" if slot == "morning" else "briefing_last_evening_sent"
+    # time_col/sent_col are chosen from the fixed "morning"/"evening" branch above, not user input
+    async with _pool().acquire() as conn:
+        rows = await conn.fetch(
+            f"SELECT user_id FROM user_configs WHERE briefing_enabled = TRUE AND {time_col} = $1 AND ({sent_col} IS NULL OR {sent_col} != $2)",
+            hhmm,
+            today,
+        )
+    return [r["user_id"] for r in rows]
+
+
+async def _db_mark_briefing_sent(user_id: str, slot: str, today: datetime.date) -> None:
+    sent_col = "briefing_last_morning_sent" if slot == "morning" else "briefing_last_evening_sent"
+    async with _pool().acquire() as conn:
+        await conn.execute(f"UPDATE user_configs SET {sent_col}=$2 WHERE user_id=$1", user_id, today)
 
 
 # ─── ROUTINES ─────────────────────────────────────────────────────────────────
@@ -607,16 +667,16 @@ async def _db_get_security_event_snapshot(user_id: str, event_id: int) -> bytes 
         return await conn.fetchval("SELECT snapshot FROM security_events WHERE id=$1 AND user_id=$2", event_id, user_id)
 
 
-async def _db_get_sentry_mode() -> str:
+async def _db_get_vigil_mode() -> str:
     async with _pool().acquire() as conn:
-        mode = await conn.fetchval("SELECT mode FROM sentry_state WHERE id=1")
+        mode = await conn.fetchval("SELECT mode FROM vigil_state WHERE id=1")
     return mode or "auto"
 
 
-async def _db_set_sentry_mode(mode: str, updated_by: str) -> None:
+async def _db_set_vigil_mode(mode: str, updated_by: str) -> None:
     async with _pool().acquire() as conn:
         await conn.execute(
-            "UPDATE sentry_state SET mode=$1, updated_by=$2, updated_at=NOW() WHERE id=1",
+            "UPDATE vigil_state SET mode=$1, updated_by=$2, updated_at=NOW() WHERE id=1",
             mode,
             updated_by,
         )
@@ -714,6 +774,59 @@ async def _db_update_presence(user_id: str, is_home: bool):
             user_id,
             is_home,
         )
+
+
+# ─── HABITS (PRESENCE EVENTS) ─────────────────────────────────────────────────
+async def _db_record_presence_event(user_id: str, event_type: str, occurred_at: datetime.datetime | None = None) -> None:
+    async with _pool().acquire() as conn:
+        await conn.execute(
+            "INSERT INTO presence_events (user_id, event_type, occurred_at) VALUES ($1, $2, COALESCE($3, NOW()))",
+            user_id,
+            event_type,
+            occurred_at,
+        )
+
+
+async def _db_get_presence_events(user_id: str, event_type: str, since_days: int = 60, limit: int = 200) -> list:
+    async with _pool().acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT occurred_at FROM presence_events WHERE user_id=$1 AND event_type=$2 AND occurred_at > NOW() - ($3 || ' days')::interval ORDER BY occurred_at DESC LIMIT $4",
+            user_id,
+            event_type,
+            str(since_days),
+            limit,
+        )
+    return [r["occurred_at"] for r in rows]
+
+
+async def _db_has_presence_event_today(user_id: str, event_type: str, today: datetime.date) -> bool:
+    async with _pool().acquire() as conn:
+        return bool(await conn.fetchval("SELECT EXISTS(SELECT 1 FROM presence_events WHERE user_id=$1 AND event_type=$2 AND occurred_at::date=$3)", user_id, event_type, today))
+
+
+async def _db_get_habit_nudge_prefs(user_id: str) -> dict:
+    async with _pool().acquire() as conn:
+        row = await conn.fetchrow("SELECT habit_nudges_enabled FROM user_configs WHERE user_id = $1", user_id)
+    return {"enabled": bool(row["habit_nudges_enabled"])} if row else {"enabled": False}
+
+
+async def _db_set_habit_nudges_enabled(user_id: str, enabled: bool) -> None:
+    async with _pool().acquire() as conn:
+        await conn.execute("UPDATE user_configs SET habit_nudges_enabled=$2 WHERE user_id=$1", user_id, enabled)
+
+
+async def _db_list_users_for_habit_nudge(today: datetime.date) -> list:
+    async with _pool().acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT user_id FROM user_configs WHERE habit_nudges_enabled = TRUE AND (habit_nudge_last_sent IS NULL OR habit_nudge_last_sent != $1)",
+            today,
+        )
+    return [r["user_id"] for r in rows]
+
+
+async def _db_mark_habit_nudge_sent(user_id: str, today: datetime.date) -> None:
+    async with _pool().acquire() as conn:
+        await conn.execute("UPDATE user_configs SET habit_nudge_last_sent=$2 WHERE user_id=$1", user_id, today)
 
 
 # ─── FINANCE / PLAID ──────────────────────────────────────────────────────────
@@ -908,3 +1021,159 @@ async def _db_set_transaction_category_override(user_id: str, transaction_pk: in
             category,
         )
     return r.split()[-1] != "0"
+
+
+# ─── TRAVEL ALERTS ────────────────────────────────────────────────────────────
+async def _db_add_travel_trip(user_id: str, airline: str, flight_number: str, flight_date: datetime.date) -> int:
+    async with _pool().acquire() as conn:
+        return await conn.fetchval(
+            "INSERT INTO travel_trips (user_id, airline, flight_number, flight_date) VALUES ($1,$2,$3,$4) RETURNING id",
+            user_id,
+            airline,
+            flight_number,
+            flight_date,
+        )
+
+
+async def _db_list_travel_trips(user_id: str) -> list:
+    async with _pool().acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT id, airline, flight_number, flight_date, status, gate, terminal, departure_time, active "
+            "FROM travel_trips WHERE user_id = $1 ORDER BY flight_date DESC, id DESC",
+            user_id,
+        )
+    return [dict(r) for r in rows]
+
+
+async def _db_delete_travel_trip(user_id: str, trip_id: int) -> bool:
+    return await db_exec_affected(_pool(), "DELETE FROM travel_trips WHERE id = $1 AND user_id = $2", trip_id, user_id)
+
+
+async def _db_get_travel_trip(user_id: str, trip_id: int) -> dict | None:
+    async with _pool().acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT id, airline, flight_number, flight_date, status, gate, terminal, departure_time, active FROM travel_trips WHERE id = $1 AND user_id = $2",
+            trip_id,
+            user_id,
+        )
+    return dict(row) if row else None
+
+
+async def _db_get_active_travel_trips() -> list:
+    async with _pool().acquire() as conn:
+        rows = await conn.fetch("SELECT id, user_id, airline, flight_number, flight_date, status, gate, terminal, departure_time FROM travel_trips WHERE active = TRUE")
+    return [dict(r) for r in rows]
+
+
+async def _db_update_travel_trip(trip_id: int, status: str, gate: str, terminal: str, departure_time: datetime.datetime | None) -> None:
+    async with _pool().acquire() as conn:
+        await conn.execute(
+            "UPDATE travel_trips SET status=$2, gate=$3, terminal=$4, departure_time=$5, last_checked_at=NOW() WHERE id=$1",
+            trip_id,
+            status,
+            gate,
+            terminal,
+            departure_time,
+        )
+
+
+async def _db_deactivate_travel_trip(trip_id: int) -> None:
+    async with _pool().acquire() as conn:
+        await conn.execute("UPDATE travel_trips SET active = FALSE WHERE id = $1", trip_id)
+
+
+# ─── EMAIL TRIAGE ──────────────────────────────────────────────────────────────
+async def _db_get_email_triage_prefs(user_id: str) -> dict:
+    async with _pool().acquire() as conn:
+        row = await conn.fetchrow("SELECT email_triage_enabled FROM user_configs WHERE user_id = $1", user_id)
+    return {"enabled": bool(row["email_triage_enabled"])} if row else {"enabled": False}
+
+
+async def _db_set_email_triage_enabled(user_id: str, enabled: bool) -> None:
+    async with _pool().acquire() as conn:
+        await conn.execute("UPDATE user_configs SET email_triage_enabled=$2 WHERE user_id=$1", user_id, enabled)
+
+
+async def _db_list_users_for_email_triage() -> list:
+    async with _pool().acquire() as conn:
+        rows = await conn.fetch("SELECT user_id FROM user_configs WHERE email_triage_enabled = TRUE")
+    return [r["user_id"] for r in rows]
+
+
+async def _db_uids_already_classified(user_id: str, uids: list[str]) -> set[str]:
+    if not uids:
+        return set()
+    async with _pool().acquire() as conn:
+        rows = await conn.fetch("SELECT uid FROM email_triage WHERE user_id = $1 AND uid = ANY($2::text[])", user_id, uids)
+    return {r["uid"] for r in rows}
+
+
+async def _db_insert_email_triage(user_id: str, uid: str, sender: str, subject: str, summary: str, important: bool) -> None:
+    async with _pool().acquire() as conn:
+        await conn.execute(
+            "INSERT INTO email_triage (user_id, uid, sender, subject, summary, important) VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT (user_id, uid) DO NOTHING",
+            user_id,
+            uid,
+            sender,
+            subject,
+            summary,
+            important,
+        )
+
+
+async def _db_list_email_triage(user_id: str, limit: int = 20) -> list:
+    async with _pool().acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT id, sender, subject, summary, important, classified_at FROM email_triage WHERE user_id = $1 ORDER BY classified_at DESC LIMIT $2",
+            user_id,
+            limit,
+        )
+    return [dict(r) for r in rows]
+
+
+# ─── PACKAGE TRACKING ──────────────────────────────────────────────────────────
+async def _db_get_package_tracking_prefs(user_id: str) -> dict:
+    async with _pool().acquire() as conn:
+        row = await conn.fetchrow("SELECT package_tracking_enabled FROM user_configs WHERE user_id = $1", user_id)
+    return {"enabled": bool(row["package_tracking_enabled"])} if row else {"enabled": False}
+
+
+async def _db_set_package_tracking_enabled(user_id: str, enabled: bool) -> None:
+    async with _pool().acquire() as conn:
+        await conn.execute("UPDATE user_configs SET package_tracking_enabled=$2 WHERE user_id=$1", user_id, enabled)
+
+
+async def _db_list_users_for_package_tracking() -> list:
+    async with _pool().acquire() as conn:
+        rows = await conn.fetch("SELECT user_id FROM user_configs WHERE package_tracking_enabled = TRUE")
+    return [r["user_id"] for r in rows]
+
+
+async def _db_uids_already_tracked(user_id: str, uids: list[str]) -> set[str]:
+    if not uids:
+        return set()
+    async with _pool().acquire() as conn:
+        rows = await conn.fetch("SELECT uid FROM package_events WHERE user_id = $1 AND uid = ANY($2::text[])", user_id, uids)
+    return {r["uid"] for r in rows}
+
+
+async def _db_insert_package_event(user_id: str, uid: str, carrier: str, status: str, tracking_number: str) -> None:
+    async with _pool().acquire() as conn:
+        await conn.execute(
+            "INSERT INTO package_events (user_id, uid, carrier, status, tracking_number) VALUES ($1,$2,$3,$4,$5) ON CONFLICT (user_id, uid) DO NOTHING",
+            user_id,
+            uid,
+            carrier,
+            status,
+            tracking_number,
+        )
+
+
+async def _db_list_package_events(user_id: str, limit: int = 20) -> list:
+    async with _pool().acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT id, carrier, status, tracking_number, detected_at FROM package_events WHERE user_id = $1 ORDER BY detected_at DESC LIMIT $2",
+            user_id,
+            limit,
+        )
+    return [dict(r) for r in rows]

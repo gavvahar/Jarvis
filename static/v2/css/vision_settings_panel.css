@@ -120,12 +120,12 @@
   border-color: var(--cyan-bright, #aef1ff);
   box-shadow: 0 0 14px rgba(127, 233, 255, 0.3);
 }
-#vision-sentry-mode-control {
+#vision-vigil-mode-control {
   display: flex;
   gap: 6px;
   margin-top: 8px;
 }
-.vision-sentry-btn {
+.vision-vigil-btn {
   flex: 1;
   padding: 8px 10px;
   background: rgba(127, 233, 255, 0.08);
@@ -141,22 +141,22 @@
     box-shadow 0.2s,
     color 0.2s;
 }
-.vision-sentry-btn:hover {
+.vision-vigil-btn:hover {
   background: rgba(127, 233, 255, 0.18);
 }
-.vision-sentry-btn.active {
+.vision-vigil-btn.active {
   background: rgba(127, 233, 255, 0.28);
   border-color: var(--cyan-bright, #aef1ff);
   color: #eafcff;
   box-shadow: 0 0 10px rgba(127, 233, 255, 0.3);
 }
-.vision-sentry-btn.active[data-mode="armed"] {
+.vision-vigil-btn.active[data-mode="armed"] {
   background: rgba(255, 122, 122, 0.22);
   border-color: rgba(255, 122, 122, 0.6);
   color: #ff9a9a;
   box-shadow: 0 0 10px rgba(255, 122, 122, 0.3);
 }
-.vision-sentry-btn.active[data-mode="disarmed"] {
+.vision-vigil-btn.active[data-mode="disarmed"] {
   background: rgba(255, 187, 51, 0.18);
   border-color: rgba(255, 187, 51, 0.5);
   color: #ffbb33;
@@ -255,4 +255,35 @@
   letter-spacing: 0.06em;
   color: rgba(127, 233, 255, 0.7);
   min-height: 14px;
+}
+
+#vision-habits-summary {
+  text-align: left;
+  margin-top: 8px;
+  font-family: "Share Tech Mono", monospace;
+  font-size: 11px;
+  line-height: 1.6;
+  color: rgba(127, 233, 255, 0.9);
+}
+#vision-habits-summary em {
+  color: rgba(127, 233, 255, 0.55);
+  font-style: normal;
+  font-size: 11.5px;
+}
+#vision-habits-nudge-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  font-family: "Share Tech Mono", monospace;
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  color: rgba(127, 233, 255, 0.85);
+  cursor: pointer;
+}
+#vision-habits-nudge-row input[type="checkbox"] {
+  width: 15px;
+  height: 15px;
+  accent-color: var(--cyan-bright, #7fe9ff);
+  cursor: pointer;
 }
