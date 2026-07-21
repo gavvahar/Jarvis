@@ -3,7 +3,6 @@ import datetime, json
 from config import DEFAULT_MODELS, MQTT_BROKER
 from db import _db_get_recent_doorbell_events
 from llm_client import build_llm_client
-from integrations.finance import _FINANCE_TOOL_NAMES, _execute_finance_tool, _get_finance_tools
 from integrations.ha import _get_ha_tools, _ha_call_service, _ha_configured, _ha_get_states
 from integrations.music.apple_music import _AM_TOOL_NAMES, _apple_music_configured, _execute_apple_music_tool, _get_apple_music_tools
 from integrations.music.spotify import _SPOTIFY_TOOL_NAMES, _execute_spotify_tool, _get_spotify_tools, _spotify_configured
@@ -12,6 +11,7 @@ from integrations.vigil import _VIGIL_TOOL_NAMES, _execute_vigil_tool, _get_vigi
 from integrations.briefing import _execute_briefing_tool, _get_briefing_tools
 from integrations.habits import _HABITS_TOOL_NAMES, _execute_habits_tool, _get_habits_tools
 from integrations.travel import _TRAVEL_TOOL_NAMES, _execute_travel_tool, _get_travel_tools
+from integrations.meeting_prep import _MEETING_PREP_TOOL_NAMES, _execute_meeting_prep_tool, _get_meeting_prep_tools
 from integrations.email_triage import _EMAIL_TRIAGE_TOOL_NAMES, _execute_email_triage_tool, _get_email_triage_tools
 from integrations.package_tracking import _PACKAGE_TOOL_NAMES, _execute_package_tool, _get_package_tools
 from integrations.pim.calendar import _calendar_configured, _execute_calendar_tool
@@ -88,8 +88,6 @@ async def _execute_ha_tool(config: dict, name, args, user_id: str = ""):
             return await _execute_spotify_tool(name, args, user_id, config)
         if name in _AM_TOOL_NAMES:
             return await _execute_apple_music_tool(name, args, user_id)
-        if name in _FINANCE_TOOL_NAMES:
-            return await _execute_finance_tool(name, args, user_id)
         return f"Unknown tool: {name}"
     except Exception as e:
         return f"Error: {e}"
@@ -202,11 +200,25 @@ async def _generate_meeting_notes(state: dict, transcript: str) -> str:
     raise last
 
 
+def _time_of_day_label(hour: int) -> str:
+    if 0 <= hour < 5:
+        return "late night"
+    if 5 <= hour < 7:
+        return "early morning"
+    if 7 <= hour < 12:
+        return "morning"
+    if 12 <= hour < 17:
+        return "afternoon"
+    if 17 <= hour < 21:
+        return "evening"
+    return "night"
+
+
 # ─── LLM STREAMING ───────────────────────────────────────────────────────────
 def _build_system_prompt(config: dict, speaker_name: str | None = None, is_kid_safe: bool = False, room: str = "") -> str:
     system = JARVIS_SYSTEM
     now = datetime.datetime.now()
-    system += f"\n\nCURRENT DATE AND TIME: {now.strftime('%A, %B %d, %Y, %I:%M %p')}."
+    system += f"\n\nCURRENT DATE AND TIME: {now.strftime('%A, %B %d, %Y, %I:%M %p')} ({_time_of_day_label(now.hour)})."
     system += (
         "\n\nTIMERS & REMINDERS — use manage_timer to set/list/cancel timers by duration. "
         "Use manage_reminder to set/list/cancel reminders at a specific datetime (ISO 8601). "
@@ -308,6 +320,15 @@ def _build_system_prompt(config: dict, speaker_name: str | None = None, is_kid_s
     if room:
         system += f"\n\nCURRENT ROOM: The user is in the '{room}' room. Default any room-specific Snapcast commands to that room."
     system += _get_presence_prompt_context()
+    system += (
+        "\n\nCONTEXT AWARENESS — let the time of day, location/weather, current room, and household "
+        "activity above quietly shape your tone and, when it's clearly relevant, your suggestions. "
+        "Keep responses shorter and quieter late at night; don't propose workouts, loud music, or "
+        "errands once most of the household is asleep. If someone's mid-task (cooking, exercising, "
+        "watching something), keep it brief and to the point rather than chatty. Offer an unprompted "
+        "suggestion only when it's obviously useful in the moment — never pad a reply with context "
+        "just to prove you're aware of it."
+    )
     return system
 
 
@@ -344,7 +365,6 @@ async def _stream_reply(state: dict, on_text):
         is_kid_safe=state.get("_speaker_kid_safe", False),
         room=state.get("_room", ""),
     )
-    finance_tools = await _get_finance_tools(state.get("user_id", ""), provider)
     ha_tools = (
         _get_ha_tools(config, provider)
         + _get_myq_tools(config, provider)
@@ -359,10 +379,10 @@ async def _stream_reply(state: dict, on_text):
         + _get_vigil_tools(provider)
         + _get_habits_tools(provider)
         + _get_travel_tools(provider)
+        + _get_meeting_prep_tools(config, provider)
         + _get_email_triage_tools(config, provider)
         + _get_package_tools(config, provider)
         + _get_snapcast_tools(provider)
-        + finance_tools
     )
     local_msgs = list(state["conversation"])
 
@@ -406,6 +426,8 @@ async def _stream_reply(state: dict, on_text):
                         result = await _execute_calendar_tool(config, dict(block.input))
                     elif block.name == "manage_briefing":
                         result = await _execute_briefing_tool(uid, dict(block.input), config)
+                    elif block.name in _MEETING_PREP_TOOL_NAMES:
+                        result = await _execute_meeting_prep_tool(block.name, uid, dict(block.input), config)
                     elif block.name == "lookup_contact":
                         result = await _execute_contact_lookup_tool(config, dict(block.input))
                     elif block.name == "list_unread_email":
@@ -480,6 +502,8 @@ async def _stream_reply(state: dict, on_text):
                     result = await _execute_calendar_tool(config, args)
                 elif acc["name"] == "manage_briefing":
                     result = await _execute_briefing_tool(uid, args, config)
+                elif acc["name"] in _MEETING_PREP_TOOL_NAMES:
+                    result = await _execute_meeting_prep_tool(acc["name"], uid, args, config)
                 elif acc["name"] == "lookup_contact":
                     result = await _execute_contact_lookup_tool(config, args)
                 elif acc["name"] == "list_unread_email":
