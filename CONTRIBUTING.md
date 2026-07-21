@@ -56,7 +56,9 @@ Tests live in `python/tests/`. Run them with:
 tox -e tests
 ```
 
-Coverage must stay above 50%. Add tests for any new routes or logic.
+Coverage must stay above 80%. Add tests for any new routes or logic.
+
+Tests are split one file per integration module (`test_tesla.py`, `test_vision.py`, `test_meeting_prep.py`, ...), mirroring `python/integrations/`. Shared mock-builder helpers (`_mock_asyncpg_pool`, `_seed_user_state`, etc.) live in `helpers.py`; the `api_client` fixture (stubs the DB so no live Postgres is needed) lives in `conftest.py`. Tests that don't belong to a single integration — core `app.py` routes, `db.py` CRUD helpers, `auth.py` — live in `test_app_core.py`, `test_db_core.py`, and `test_auth.py` respectively. Add a new feature's tests to a new file following this same one-file-per-module convention rather than growing an existing one.
 
 ## Frontend structure
 
@@ -64,7 +66,7 @@ The UI is one page (`templates/index.html`), split for readability:
 
 - `templates/partials/*.html` — one file per screen/modal/panel (e.g. `tesla_settings_modal.html`, `topbar.html`), pulled into `index.html` with Jinja `{% include %}`.
 - `static/v2/css/*.css` — `styles.css`/`starter.css` split the same way, one file per section, linked in order from `partials/head_assets.html`. Order matters — the cascade depends on it.
-- `static/v2/js/app/*.js` — ES modules, one per feature panel (`ha.js`, `tesla.js`, `finance.js`, ...). `core.js` is the shared runtime (socket, modes, TTS/STT) every other module imports from; `boot.js` fetches `/api/status` and hydrates every panel; `main.js` is the `<script type="module">` entry point that pulls everything else in.
+- `static/v2/js/app/*.js` — ES modules, one per feature panel (`ha.js`, `tesla.js`, `spotify.js`, ...). `core.js` is the shared runtime (socket, modes, TTS/STT) every other module imports from; `boot.js` fetches `/api/status` and hydrates every panel; `main.js` is the `<script type="module">` entry point that pulls everything else in.
 
 Adding a new feature panel: add its DOM to a new `partials/*.html`, its styles to a new `css/*.css` (included via `head_assets.html`), and its logic to a new `js/app/*.js` (imported from `main.js`).
 
