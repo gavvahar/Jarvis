@@ -13,13 +13,12 @@
 | 5        | app.py Modularisation                          | Complete    |
 | 6        | Phase 4 — Smart Speaker & Local Hardware       | Complete    |
 | 7        | Phase 5 — Deeper Smart Home                    | Complete    |
-| 8        | Phase 6 — Proactive & Ambient Intelligence     | In Progress |
+| 8        | Phase 6 — Proactive & Ambient Intelligence     | Complete    |
 | 9        | Phase 8 — Developer & Extensibility Platform   | On Hold     |
-| 10       | Phase 9 — Financial Intelligence               | In Progress |
-| 11       | Phase 10 — Computer Vision & Spatial Awareness | Complete    |
-| 12       | Phase 11 — Accessibility & Hearing Assistance  | Planned     |
-| 13       | Phase 12 — Mental Wellness & Social Assistance | Planned     |
-| 14       | Phase 3 — Mobile PWA                           | In Progress |
+| 10       | Phase 9 — Computer Vision & Spatial Awareness  | Complete    |
+| 11       | Phase 10 — Accessibility & Hearing Assistance  | Planned     |
+| 12       | Phase 11 — Mental Wellness & Social Assistance | Planned     |
+| 13       | Phase 3 — Mobile PWA                           | In Progress |
 
 ---
 
@@ -103,10 +102,10 @@ Extend beyond Home Assistant to cover all major smart home ecosystems.
 Move from reactive (answer questions) to proactive (anticipate needs).
 
 - [x] **Daily briefing** — scheduled morning/evening summaries (weather, calendar, reminders, news). Opt-in per user (`briefing_enabled`, off by default) with configurable `briefing_morning_time`/`briefing_evening_time` (24h `HH:MM`, server-local time — same convention `_vision_loop`'s night detection and calendar event display already use) via a **DAILY BRIEFING** section in the PIM settings panel or voice (`manage_briefing`: `enable`/`disable`/`set_time`/`status`/`now`). `python/integrations/briefing.py`'s `_briefing_loop()` polls every 60s, composes weather (`_location_context`, already populated by the existing weather loop) + today's remaining calendar events (reuses `_calendar_events_between`) + today's reminders (`_db_list_reminders`) + top 3 general headlines (`_fetch_news_headlines`, factored out of the existing `get_news_headlines` tool), and delivers via the same `speak`-field socket pattern as `timer_fired`/`reminder_fired` (new `briefing_ready` event) plus a push notification through the existing `_send_push` fan-out.
-- [ ] **Context awareness** — time of day, location, recent activity shape responses and suggestions
+- [x] **Context awareness** — time of day, location, recent activity shape responses and suggestions. Most of the raw context was already in the system prompt (weather/location, current room, live household presence + activity from Phase 10's vision system) but nothing instructed the model to actually use it — this pass closes that gap. `llm.py`'s `_time_of_day_label()` buckets the current hour into a qualitative label (late night/early morning/morning/afternoon/evening/night), appended to the existing `CURRENT DATE AND TIME` line. A new `CONTEXT AWARENESS` block in `_build_system_prompt()` instructs Jarvis to let time/location/room/household-activity quietly shape tone and unprompted suggestions (shorter and quieter late at night, no workout/errand suggestions once the household's asleep, brief interruptions when someone's mid-task) while explicitly avoiding padding replies with context just to prove awareness of it.
 - [x] **Habit learning** — detect patterns ("you usually leave at 8:30") and surface them. Built on top of existing camera presence detection (requires Vigil Mode cameras + face enrollment; no data without them): `python/integrations/vision.py`'s `_vision_loop` now records `arrived`/`departed` transitions to a new `presence_events` table (departure timestamp backdated to `last_seen_at`, not "now", since the away-timeout detection lags the actual departure by up to `VISION_AWAY_TIMEOUT`). `python/integrations/habits.py`'s `_analyze_habit()` buckets each user's last 60 days of events into weekday/weekend, takes the median time-of-day per bucket (min 3 samples required, else "not enough data yet"), and surfaces it via the `get_habits` voice tool, a **HABIT LEARNING** summary in the VISION settings panel, and an opt-in (`habit_nudges_enabled`, off by default) proactive nudge — `_habit_nudge_loop()` polls every 5 min and speaks/pushes a heads-up (`habit_nudge` socket event, same pattern as `timer_fired`) once per day when the current time enters a 10-minute window around the user's usual "departed" time and they haven't left yet today. Scoped to leave/arrive-home patterns only (the roadmap's example); other behavioral signals (routine usage, timer patterns, etc.) are a natural extension but out of scope for this pass.
 - [x] **Email triage** — classify and summarize unread email; flag urgent items. See steps 1-3 of the build order below.
-- [ ] **Meeting prep** — pull agenda, attendees, and prior notes before calendar events
+- [x] **Meeting prep** — pull agenda, attendees, and prior notes before calendar events. `python/integrations/meeting_prep.py`'s `_meeting_prep_loop()` (60s poll, same shape as `_briefing_loop()`) fires a heads-up `meeting_prep_lead_minutes` (opt-in, `meeting_prep_enabled`, default 15) before each upcoming CalDAV event: the event's `DESCRIPTION` as agenda, `ATTENDEE`/`CN` properties newly parsed by `_parse_ical_events()` in `integrations/pim/calendar.py`, and a keyword search (`_db_search_past_meetings`, ILIKE against `meetings.notes` on significant words from the event title) surfacing notes from prior related meetings. Delivered via `meeting_prep_ready` socket event + push through the existing `_send_push` fan-out, dedup'd per event via the iCal `UID` (newly parsed) in a `meeting_prep_sent` table so the same event doesn't fire twice; also exposed as an on-demand `get_meeting_prep` voice tool ("prep me for my next meeting") plus `manage_meeting_prep` (enable/disable/set_lead_time/status) and a **MEETING PREP** section in the PIM settings panel. Meeting note retention (`_meeting_cleanup_loop` in `app.py`) was bumped from 48 hours to 90 days so prior-notes lookback is actually useful for recurring meetings — meetings have no PII beyond what the user says into the mic.
 - [x] **Package tracking** — parse shipping emails, announce deliveries. See step 4 of the build order below.
 
 **Email triage / package tracking build order** (each its own commit; package tracking and the later triage steps all sit on top of step 1, so nothing downstream can start until it lands):
@@ -145,7 +144,7 @@ Make Jarvis a platform others can build on, like Alexa Skills or Google Actions.
 
 ---
 
-## Phase 12 — Mental Wellness & Social Assistance
+## Phase 11 — Mental Wellness & Social Assistance
 
 Reduce social friction for introverts and provide grounding, calm, and pattern awareness for anxiety.
 
@@ -163,7 +162,7 @@ Reduce social friction for introverts and provide grounding, calm, and pattern a
 
 ---
 
-## Phase 11 — Accessibility & Hearing Assistance
+## Phase 10 — Accessibility & Hearing Assistance
 
 Compensate for single-sided hearing loss with visual alerts, real-time captions, and a more forgiving voice UX.
 
@@ -177,7 +176,7 @@ Compensate for single-sided hearing loss with visual alerts, real-time captions,
 
 ---
 
-## Phase 10 — Computer Vision & Spatial Awareness
+## Phase 9 — Computer Vision & Spatial Awareness
 
 Give Jarvis eyes — know who is home, where they are, what they're doing, and flag anything unusual.
 
@@ -195,23 +194,6 @@ Give Jarvis eyes — know who is home, where they are, what they're doing, and f
   - [x] **Consecutive-mismatch state machine** — lock condition is: the logged-in user's `user_id` is _absent_ from the matched faces _and_ at least one _other_ matched (or unmatched/`unknown`) face _is_ present, for 3 consecutive checks — a single bad frame (bad lighting, brief look-away, empty frame) doesn't trigger it or reset it; the counter only resets to 0 on a check where the logged-in user is visible again.
   - [x] **Lock screen UI** — full-viewport overlay blanking the rest of the app, "J.A.R.V.I.S. LOCKED" state, continues running the same capture loop underneath and auto-unlocks the instant a check sees the logged-in user alone in frame.
   - [x] **Snapshot on lock event** — `POST /api/face/lock-event` → `_record_device_lock()` reuses the `security_events` table (`event_type: "device_lock"`) so a lock event shows up in the same RECENT EVENTS list Vigil Mode already has, with the triggering snapshot attached via the existing `_db_record_security_event(..., snapshot=...)` path.
-
----
-
-## Phase 9 — Financial Intelligence
-
-Give Jarvis full visibility and control over money — balances, spending, budgets, goals, and payments.
-
-- [x] **Account aggregation** — Plaid Link (sandbox); unified account view across linked banks in `plaid_items`/`plaid_accounts`
-- [x] **Balance & transaction lookup** — "what's my balance?", "show my recent transactions" answered by voice via `get_account_balances`/`get_recent_transactions`
-- [x] **Spending categorization** — reuses Plaid's `personal_finance_category`; override via voice (`set_transaction_category`) or `PATCH /api/finance/transactions/{id}`
-- [ ] **Budget tracking** — set monthly budgets by category; alert when approaching or over limit
-- [ ] **Bill & subscription detection** — surface recurring charges automatically; alert before due dates
-- [ ] **Savings goals** — "save $5k for vacation by December"; track progress and surface weekly
-- [ ] **Net worth dashboard** — aggregate all accounts (checking, savings, credit, investments) into a single number
-- [ ] **Spending alerts** — flag large, unusual, or out-of-category transactions in real time via webhook
-- [ ] **Transfer & payment initiation** — initiate bank transfers via Plaid Transfer API or direct bank APIs; confirm by voice before executing
-- [ ] **Financial briefing** — daily/weekly money summary: net cash flow, top spending categories, upcoming bills, goal progress
 
 ---
 
