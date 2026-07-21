@@ -31,8 +31,8 @@ Beyond conversation, J.A.R.V.I.S. can:
 - Receive and triage your phone messages
 - Alert you when someone is at the door
 - Recognize who's home via camera-based face detection, and flag security events
-- Track balances, transactions, and spending by category from your linked bank accounts
 - Transcribe meetings and generate structured notes
+- Prep you for upcoming meetings with the agenda, attendees, and notes from prior related meetings
 - Read the latest news headlines by category
 
 See [ROADMAP.md](ROADMAP.md) for what's shipped, in progress, and planned next
@@ -458,6 +458,24 @@ departing within a day to stay inside AeroDataBox's free-tier request
 budget) and speaks/pushes an update whenever something changes. Tracking
 stops automatically once a flight lands, is cancelled, or diverts.
 
+## MEETING PREP
+
+A heads-up shortly before each calendar event — the agenda (from the event
+description), attendees, and notes surfaced from prior related meetings (if
+you've used the Meeting Recorder before on a similar topic). Off by default;
+enable it under **MEETING PREP** in the calendar/contacts (**AGENDA**)
+settings panel, or by voice:
+
+- "Turn on meeting prep."
+- "Give me meeting prep 30 minutes before."
+- "What's my meeting prep status?"
+- "Prep me for my next meeting." _(delivers it immediately, any time)_
+- "Turn off meeting prep."
+
+When a heads-up fires, J.A.R.V.I.S. wakes from standby and speaks it on every
+connected session for that user, plus a push notification if you've enabled
+push — the same delivery as the daily briefing and travel alerts.
+
 ## PHONE MESSAGES
 
 J.A.R.V.I.S. can receive your text messages and alert you to the important ones.
@@ -543,7 +561,7 @@ when you're done.
 - Click **End Meeting** when you're done — J.A.R.V.I.S. produces notes with
   a summary, key decisions, action items, and topics discussed.
 
-Meetings are kept for 48 hours and then automatically deleted.
+Meetings are kept for 90 days and then automatically deleted.
 
 ## LIVE HUD
 

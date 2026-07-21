@@ -56,7 +56,9 @@ Tests live in `python/tests/`. Run them with:
 tox -e tests
 ```
 
-Coverage must stay above 50%. Add tests for any new routes or logic.
+Coverage must stay above 80%. Add tests for any new routes or logic.
+
+Tests are split one file per integration module (`test_tesla.py`, `test_vision.py`, `test_meeting_prep.py`, ...), mirroring `python/integrations/`. Shared mock-builder helpers (`_mock_asyncpg_pool`, `_seed_user_state`, etc.) live in `helpers.py`; the `api_client` fixture (stubs the DB so no live Postgres is needed) lives in `conftest.py`. Tests that don't belong to a single integration — core `app.py` routes, `db.py` CRUD helpers, `auth.py` — live in `test_app_core.py`, `test_db_core.py`, and `test_auth.py` respectively. Add a new feature's tests to a new file following this same one-file-per-module convention rather than growing an existing one.
 
 ## Frontend structure
 
