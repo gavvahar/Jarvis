@@ -29,11 +29,6 @@ import {
   initMusicKit,
   appleMusicConnectBtn,
 } from "./apple_music.js";
-import {
-  setFinanceStatus,
-  financeEnvLabel,
-  financeLinkBtn,
-} from "./finance.js";
 
 fetch("/api/status")
   .then((r) => r.json())
@@ -96,14 +91,6 @@ fetch("/api/status")
       appleMusicConnectBtn.title = "APPLE_MUSIC_* keys not configured in .env";
     }
     if (d.apple_music_server_enabled) initMusicKit();
-    setFinanceStatus(!!d.finance_configured);
-    if (financeEnvLabel && d.plaid_env)
-      financeEnvLabel.textContent = d.plaid_env;
-    if (!d.plaid_client_enabled && financeLinkBtn) {
-      financeLinkBtn.style.opacity = "0.4";
-      financeLinkBtn.style.pointerEvents = "none";
-      financeLinkBtn.title = "PLAID_CLIENT_ID not configured in .env";
-    }
     if (
       new URLSearchParams(window.location.search).get("spotify_connected") ===
       "1"

@@ -212,5 +212,31 @@
       </div>
     </form>
     <div id="travel-msg"></div>
+
+    <div class="setup-sub" style="margin-top: 22px">MEETING PREP</div>
+    <p class="pim-note">
+      A heads-up before each calendar event with its agenda, attendees, and
+      notes from prior related meetings.
+    </p>
+    <form id="meeting-prep-form" autocomplete="off">
+      <label id="meeting-prep-enabled-row" for="meeting-prep-enabled">
+        <input type="checkbox" id="meeting-prep-enabled" />
+        ENABLE MEETING PREP
+      </label>
+      <label class="setup-label" for="meeting-prep-lead-minutes"
+        >MINUTES BEFORE MEETING</label
+      >
+      <input
+        id="meeting-prep-lead-minutes"
+        type="number"
+        min="1"
+        max="120"
+        value="15"
+      />
+      <div style="display: flex; gap: 8px; margin-top: 14px">
+        <button type="submit" id="meeting-prep-save">SAVE</button>
+      </div>
+    </form>
+    <div id="meeting-prep-msg"></div>
   </div>
 </div>

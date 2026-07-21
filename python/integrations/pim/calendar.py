@@ -10,7 +10,7 @@ from integrations.pim.dav import (
 )
 from tool_schemas import anthropic_tools_to_openai
 
-type _CalendarEvent = dict[str, datetime.datetime | str | bool]
+type _CalendarEvent = dict[str, datetime.datetime | str | bool | list[str]]
 
 
 def _calendar_configured(config: dict) -> bool:
@@ -96,7 +96,7 @@ def _parse_ical_events(calendar_blob: str) -> list[_CalendarEvent]:
     for line in _unfold_ical_lines(calendar_blob):
         upper = line.upper()
         if upper == "BEGIN:VEVENT":
-            current = {"title": "", "location": "", "description": "", "all_day": False}
+            current = {"title": "", "location": "", "description": "", "all_day": False, "uid": "", "attendees": []}
             continue
         if upper == "END:VEVENT":
             if current and current.get("start"):
@@ -114,6 +114,12 @@ def _parse_ical_events(calendar_blob: str) -> list[_CalendarEvent]:
             current["location"] = _unescape_ical_text(value).strip()
         elif name == "DESCRIPTION":
             current["description"] = _unescape_ical_text(value).strip()
+        elif name == "UID":
+            current["uid"] = value.strip()
+        elif name == "ATTENDEE":
+            display = params.get("CN", "").strip('"') or value.strip().removeprefix("mailto:")
+            if display:
+                current["attendees"].append(display)
         elif name == "DTSTART":
             current["start"], current["all_day"] = _parse_ical_datetime(value.strip(), params)
         elif name == "DTEND":
