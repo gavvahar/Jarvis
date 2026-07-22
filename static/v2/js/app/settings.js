@@ -1,6 +1,6 @@
 /* ===========================================================
    SETTINGS PANEL — single entry point with a tab per integration
-   (HA, Agenda, Messages, Doorbell, Vision, Garage, Tesla, Finance,
+   (HA, Agenda, Messages, Doorbell, Vision, Garage, Tesla,
    Spotify, Apple Music).
 
    Each tab button keeps the id + click handler its own module
@@ -39,7 +39,6 @@ const PANES = [
   setupHiddenPane("vision-settings"),
   setupHiddenPane("garage-settings"),
   setupHiddenPane("tesla-settings"),
-  setupHiddenPane("finance-settings"),
   setupHiddenPane("spotify-settings"),
   setupHiddenPane("apple-music-settings"),
 ];

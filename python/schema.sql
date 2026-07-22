@@ -47,6 +47,8 @@ ALTER TABLE user_configs ADD COLUMN IF NOT EXISTS email_username TEXT NOT NULL D
 ALTER TABLE user_configs ADD COLUMN IF NOT EXISTS email_password TEXT NOT NULL DEFAULT '';
 ALTER TABLE user_configs ADD COLUMN IF NOT EXISTS email_triage_enabled BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE user_configs ADD COLUMN IF NOT EXISTS package_tracking_enabled BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE user_configs ADD COLUMN IF NOT EXISTS meeting_prep_enabled BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE user_configs ADD COLUMN IF NOT EXISTS meeting_prep_lead_minutes INTEGER NOT NULL DEFAULT 15;
 
 CREATE TABLE IF NOT EXISTS shared_lists (
     id          BIGSERIAL PRIMARY KEY,
@@ -221,61 +223,6 @@ CREATE TABLE IF NOT EXISTS push_subscriptions (
 
 CREATE INDEX IF NOT EXISTS idx_push_subscriptions_user ON push_subscriptions (user_id);
 
-CREATE TABLE IF NOT EXISTS plaid_items (
-    id               BIGSERIAL PRIMARY KEY,
-    user_id          TEXT NOT NULL REFERENCES user_configs(user_id) ON DELETE CASCADE,
-    item_id          TEXT NOT NULL UNIQUE,
-    access_token     TEXT NOT NULL,
-    institution_id   TEXT NOT NULL DEFAULT '',
-    institution_name TEXT NOT NULL DEFAULT '',
-    cursor           TEXT NOT NULL DEFAULT '',
-    status           TEXT NOT NULL DEFAULT 'active',
-    created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE INDEX IF NOT EXISTS idx_plaid_items_user ON plaid_items (user_id);
-
-CREATE TABLE IF NOT EXISTS plaid_accounts (
-    id                 BIGSERIAL PRIMARY KEY,
-    user_id            TEXT NOT NULL REFERENCES user_configs(user_id) ON DELETE CASCADE,
-    item_id            BIGINT NOT NULL REFERENCES plaid_items(id) ON DELETE CASCADE,
-    account_id         TEXT NOT NULL UNIQUE,
-    name               TEXT NOT NULL DEFAULT '',
-    official_name      TEXT NOT NULL DEFAULT '',
-    mask               TEXT NOT NULL DEFAULT '',
-    type               TEXT NOT NULL DEFAULT '',
-    subtype            TEXT NOT NULL DEFAULT '',
-    balance_current    REAL,
-    balance_available  REAL,
-    balance_limit      REAL,
-    iso_currency       TEXT NOT NULL DEFAULT 'USD',
-    updated_at         TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE INDEX IF NOT EXISTS idx_plaid_accounts_user ON plaid_accounts (user_id);
-CREATE INDEX IF NOT EXISTS idx_plaid_accounts_item ON plaid_accounts (item_id);
-
-CREATE TABLE IF NOT EXISTS plaid_transactions (
-    id                        BIGSERIAL PRIMARY KEY,
-    user_id                   TEXT NOT NULL REFERENCES user_configs(user_id) ON DELETE CASCADE,
-    account_id                TEXT NOT NULL REFERENCES plaid_accounts(account_id) ON DELETE CASCADE,
-    transaction_id            TEXT NOT NULL UNIQUE,
-    amount                    REAL NOT NULL DEFAULT 0.0,
-    iso_currency              TEXT NOT NULL DEFAULT 'USD',
-    date                      DATE NOT NULL,
-    merchant_name             TEXT NOT NULL DEFAULT '',
-    name                      TEXT NOT NULL DEFAULT '',
-    category                  TEXT NOT NULL DEFAULT '',
-    personal_finance_category TEXT NOT NULL DEFAULT '',
-    category_override         TEXT,
-    pending                   BOOLEAN NOT NULL DEFAULT FALSE,
-    created_at                TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE INDEX IF NOT EXISTS idx_plaid_transactions_user ON plaid_transactions (user_id, date DESC);
-CREATE INDEX IF NOT EXISTS idx_plaid_transactions_account ON plaid_transactions (account_id);
-
 CREATE INDEX IF NOT EXISTS idx_security_events_user ON security_events (user_id, detected_at DESC);
 
 CREATE TABLE IF NOT EXISTS travel_trips (
@@ -322,3 +269,12 @@ CREATE TABLE IF NOT EXISTS package_events (
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_package_events_user_uid ON package_events (user_id, uid);
 CREATE INDEX IF NOT EXISTS idx_package_events_user_detected ON package_events (user_id, detected_at DESC);
+
+CREATE TABLE IF NOT EXISTS meeting_prep_sent (
+    id          BIGSERIAL PRIMARY KEY,
+    user_id     TEXT NOT NULL REFERENCES user_configs(user_id) ON DELETE CASCADE,
+    event_uid   TEXT NOT NULL,
+    sent_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_meeting_prep_sent_user_uid ON meeting_prep_sent (user_id, event_uid);

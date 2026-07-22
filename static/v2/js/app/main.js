@@ -15,7 +15,6 @@ import "./doorbell.js";
 import "./vision.js";
 import "./vigil_lock.js";
 import "./garage.js";
-import "./finance.js";
 import "./tesla.js";
 import "./spotify.js";
 import "./apple_music.js";
