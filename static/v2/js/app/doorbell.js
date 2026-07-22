@@ -84,6 +84,13 @@ socket.on("package_alert", ({ speak: speakText }) => {
   speak(msg);
 });
 
+socket.on("meeting_prep_ready", ({ speak: speakText }) => {
+  const msg = speakText || "You have a meeting coming up.";
+  if (window.__chat) window.__chat.addMsg(msg, "in");
+  if (isStandby()) wake();
+  speak(msg);
+});
+
 socket.on("wake_trigger", ({ device_id }) => {
   if (isStandby()) {
     wake();
