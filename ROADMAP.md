@@ -13,13 +13,12 @@
 | 5        | app.py Modularisation                          | Complete    |
 | 6        | Phase 4 — Smart Speaker & Local Hardware       | Complete    |
 | 7        | Phase 5 — Deeper Smart Home                    | Complete    |
-| 8        | Phase 6 — Proactive & Ambient Intelligence     | In Progress |
+| 8        | Phase 6 — Proactive & Ambient Intelligence     | Complete    |
 | 9        | Phase 8 — Developer & Extensibility Platform   | On Hold     |
-| 10       | Phase 9 — Financial Intelligence               | In Progress |
-| 11       | Phase 10 — Computer Vision & Spatial Awareness | Complete    |
-| 12       | Phase 11 — Accessibility & Hearing Assistance  | Planned     |
-| 13       | Phase 12 — Mental Wellness & Social Assistance | Planned     |
-| 14       | Phase 3 — Mobile PWA                           | In Progress |
+| 10       | Phase 9 — Computer Vision & Spatial Awareness  | Complete    |
+| 11       | Phase 10 — Accessibility & Hearing Assistance  | Planned     |
+| 12       | Phase 11 — Mental Wellness & Social Assistance | Planned     |
+| 13       | Phase 3 — Mobile PWA                           | In Progress |
 
 ---
 
@@ -57,17 +56,21 @@ Replace native iOS/Android apps with a Progressive Web App to avoid app store co
 
 - [x] **Responsive layout pass 1** — phone/tablet breakpoints in `responsive.css`; device-tailored orb particle count + FPS cap
 - [x] **PWA manifest & service worker** — `static/manifest.json` + `static/sw.js`, served at `/manifest.json` and `/sw.js` (root scope, not `/static/`) via dedicated FastAPI routes; registered from `pwa.js`. Cache-first for `/static/v2/` assets. Installability still requires HTTPS in production (service workers won't register over plain HTTP except on localhost)
-- [ ] **Mobile UI pass 2** — audit remaining panels (settings tabs, telemetry panels, party mode, meeting panel) for touch targets and viewport overflow; add a mobile-viewport project to `playwright.config.js` so regressions are caught in CI
+- [ ] **Mobile UI pass 2** — audit remaining panels (settings tabs, telemetry panels, party mode, meeting panel) for touch targets and viewport overflow; add a mobile-viewport project to `playwright.config.js` so regressions are caught in CI. Scope grew substantially since this was last planned, almost entirely from Phase 6 shipping in full:
+  - The PIM/AGENDA tab (`templates/partials/pim_settings_modal.html`) went from one section (Calendar & Contacts) to **seven** stacked in a single scrollable pane: Calendar & Contacts, Email, Email Triage, Package Tracking, Daily Briefing, Travel Alerts, Meeting Prep (242 lines, up from ~80). This isn't just a touch-target pass anymore — a single 7-section pane is a real mobile scroll-length problem on its own; worth deciding whether it needs sub-tabs/collapsible sections rather than just sizing fixes.
+  - The VISION tab gained a **VIGIL MODE** control row and a **HABIT LEARNING** summary+checkbox.
+  - A brand-new full-viewport `#vigil-lock` overlay (not a settings-tab pane, layered above everything at `z-index: 100000`) needs its own touch-target/overflow pass on the "UNLOCK WITH ACCOUNT LOGIN" button and status text. Low priority for phones specifically — the feature's own design already treats phones as out-of-scope since they have their own OS lock screen — but shouldn't render broken if someone opens it on one.
+  - Several new `<input type="time">` fields (Daily Briefing, and likely others) — worth an explicit iOS Safari check, native time pickers are a common mobile-Safari pain point.
 - [ ] **Tap-to-talk mic flow** — background mic access is OS-restricted, so mobile uses an explicit mic button (`MediaRecorder`) instead of the always-on wake daemon; iOS Safari and Android Chrome differ on audio formats/permission prompts and need separate testing
-- [ ] **Push notifications** — Web Push (VAPID) + service worker push handler, wired into existing alert sources (doorbell, reminders/timers, device alerts) via a `pywebpush` layer server-side. The shared infrastructure (`push_subscriptions` table, `python/integrations/push.py`'s `_send_push`, VAPID env vars, `sw.js` `push`/`notificationclick` listeners) already shipped as part of Phase 10's Vigil Mode and is only wired into `security_alert` today — remaining work is just adding the other 5 emit sites (`message_alert`, `doorbell_alert`, `timer_fired`, `reminder_fired`, `device_alert`) to the same fan-out
+- [ ] **Push notifications** — Web Push (VAPID) + service worker push handler, wired into existing alert sources via a `pywebpush` layer server-side. The shared infrastructure (`push_subscriptions` table, `python/integrations/push.py`'s `_send_push`, VAPID env vars, `sw.js` `push`/`notificationclick` listeners) shipped as part of Phase 10's Vigil Mode, originally wired only into `security_alert`. Every proactive feature Phase 6 has shipped since wired itself into the same fan-out as it was built — `briefing_ready`, `habit_nudge`, `meeting_prep_ready`, `email_alert`, `package_alert`, `travel_alert` — so **7 of 12 known alert emit-sites now push** (verified directly against `_send_push` call sites in the code, not just this doc). Remaining work is purely mechanical: the other 5 — `message_alert`, `doorbell_alert`, `timer_fired`, `reminder_fired`, `device_alert` — still only emit a socket event with no push fallback.
 - [ ] **Offline mode** — service worker caches the app shell; IndexedDB queue holds outbound commands issued while offline and replays them on reconnect, with a visible "reconnecting" state
 
 **Planned build order** (safest first, each item its own commit):
 
-1. **UI pass 2** — pure CSS (`responsive.css`) + Playwright config; no runtime risk, doesn't touch `sw.js`/backend. Adds `.settings-tab-btn`/`.msg-tab`/`.doorbell-tab` touch-target sizing, collapses the absolutely-positioned telemetry `.panel` parallax elements to a static stacked/hidden layout below 768px/480px, audits `party.html`'s own CSS. Playwright gets a `projects` array (`devices["iPhone 13"]`, `devices["Pixel 5"]`, plus the existing desktop project) so every current spec re-runs on mobile viewports for free, plus a new `tests/browser/mobile.spec.js` for touch-target and overflow assertions.
+1. **UI pass 2** — pure CSS (`responsive.css`) + Playwright config; no runtime risk, doesn't touch `sw.js`/backend. Adds `.settings-tab-btn`/`.msg-tab`/`.doorbell-tab` touch-target sizing, collapses the absolutely-positioned telemetry `.panel` parallax elements to a static stacked/hidden layout below 768px/480px, audits `party.html`'s own CSS. Given how large the PIM tab has grown (see above), this step should start with a decision on whether that pane needs restructuring (sub-tabs or collapsible `<details>` sections per feature) before doing a line-by-line touch-target pass on content that might get restructured anyway — restructure first, then size. Also covers the VISION tab's two new sections and the `#vigil-lock` overlay. Playwright gets a `projects` array (`devices["iPhone 13"]`, `devices["Pixel 5"]`, plus the existing desktop project) so every current spec re-runs on mobile viewports for free, plus a new `tests/browser/mobile.spec.js` for touch-target and overflow assertions.
 2. **Tap-to-talk** — client-only JS, no protocol changes; reuses the existing `/api/transcribe` endpoint `core.js` already calls. New `#ptt-btn` in the topbar (shown via CSS media query, same convention as the rest of `responsive.css`), press-and-hold via `pointerdown`/`pointerup`, coexists with (doesn't replace) the always-on `_vadLoop`. Mime-negotiation logic (currently duplicated between `core.js` and `meeting.js`) gets extracted into a shared `static/v2/js/app/media_utils.js` helper; add `audio/mp4` to the candidate list for iOS Safari.
-3. **Push notifications** — additive only. The `push_subscriptions` table, `python/integrations/push.py` module (`_send_push`, no class, fans out via `pywebpush.webpush()` off the event loop via `asyncio.to_thread`), VAPID env vars (`VAPID_PUBLIC_KEY`/`VAPID_PRIVATE_KEY`/`VAPID_SUBJECT`, exposed to the frontend via `/api/status`), and the `push`/`notificationclick` listeners in `sw.js` already exist (built for Vigil Mode, currently wired only into `security_alert`). Remaining work: add the other 5 existing alert emit-sites (`message_alert`, `doorbell_alert`, `timer_fired`, `reminder_fired`, `device_alert`) to the same `_send_push` fan-out — push sent unconditionally alongside each socket emit (not gated on "no live sid") since mobile OSes can silently suspend a socket long before the server sees it drop.
-4. **Offline mode** — last and riskiest, since it's the only item that changes the existing cache-first `fetch` logic in `sw.js`. Along the way, fixes a latent bug: `caches.match(event.request, { ignoreSearch: true })` ignores the `?v=` cache-busting query string, so once an asset is cached by pathname, bumping `?v=2` → `?v=3` doesn't actually invalidate it — switching to `CACHE_NAME`-based versioning (bumped alongside `?v=N`) fixes this and is required before app-shell pre-caching can be trusted. Offline queue scope is deliberately narrow: only typed/spoken-then-transcribed chat text sent via the `user_message` socket event gets queued in IndexedDB (mic capture itself needs a live Whisper round-trip and can't be queued). Dedup via a client-generated `client_msg_id` + a socket ack from `on_user_message`, with a small in-memory server-side dict as a second line of defense against double-sends on flaky reconnects.
+3. **Push notifications** — additive only, and much smaller than originally scoped: the infrastructure exists and is now proven across 7 emit sites (not the 1 it started with), including several built by other people/sessions independently reaching for the same `_send_push` fan-out without being told to — a good sign it's a stable, obvious-to-reuse pattern. Remaining work is purely mechanical: add the other 5 existing alert emit-sites (`message_alert`, `doorbell_alert`, `timer_fired`, `reminder_fired`, `device_alert`) to the same `_send_push` fan-out — push sent unconditionally alongside each socket emit (not gated on "no live sid") since mobile OSes can silently suspend a socket long before the server sees it drop.
+4. **Offline mode** — last and riskiest, since it's the only item that changes the existing cache-first `fetch` logic in `sw.js`. Along the way, fixes a latent bug: `caches.match(event.request, { ignoreSearch: true })` ignores the `?v=` cache-busting query string, so once an asset is cached by pathname, bumping `?v=2` → `?v=3` doesn't actually invalidate it — switching to `CACHE_NAME`-based versioning (bumped alongside `?v=N`) fixes this and is required before app-shell pre-caching can be trusted. This is a different cache layer than the one behind the now-fixed "Known Issues" settings-panel bug (that was the _browser's_ HTTP cache serving stale `?v=1` assets; this is the _service worker's_ Cache Storage API ignoring `?v=` entirely) — don't assume the earlier fix covers this too. Offline queue scope is deliberately narrow: only typed/spoken-then-transcribed chat text sent via the `user_message` socket event gets queued in IndexedDB (mic capture itself needs a live Whisper round-trip and can't be queued). Dedup via a client-generated `client_msg_id` + a socket ack from `on_user_message`, with a small in-memory server-side dict as a second line of defense against double-sends on flaky reconnects.
 
 ---
 
@@ -103,10 +106,10 @@ Extend beyond Home Assistant to cover all major smart home ecosystems.
 Move from reactive (answer questions) to proactive (anticipate needs).
 
 - [x] **Daily briefing** — scheduled morning/evening summaries (weather, calendar, reminders, news). Opt-in per user (`briefing_enabled`, off by default) with configurable `briefing_morning_time`/`briefing_evening_time` (24h `HH:MM`, server-local time — same convention `_vision_loop`'s night detection and calendar event display already use) via a **DAILY BRIEFING** section in the PIM settings panel or voice (`manage_briefing`: `enable`/`disable`/`set_time`/`status`/`now`). `python/integrations/briefing.py`'s `_briefing_loop()` polls every 60s, composes weather (`_location_context`, already populated by the existing weather loop) + today's remaining calendar events (reuses `_calendar_events_between`) + today's reminders (`_db_list_reminders`) + top 3 general headlines (`_fetch_news_headlines`, factored out of the existing `get_news_headlines` tool), and delivers via the same `speak`-field socket pattern as `timer_fired`/`reminder_fired` (new `briefing_ready` event) plus a push notification through the existing `_send_push` fan-out.
-- [ ] **Context awareness** — time of day, location, recent activity shape responses and suggestions
+- [x] **Context awareness** — time of day, location, recent activity shape responses and suggestions. Most of the raw context was already in the system prompt (weather/location, current room, live household presence + activity from Phase 10's vision system) but nothing instructed the model to actually use it — this pass closes that gap. `llm.py`'s `_time_of_day_label()` buckets the current hour into a qualitative label (late night/early morning/morning/afternoon/evening/night), appended to the existing `CURRENT DATE AND TIME` line. A new `CONTEXT AWARENESS` block in `_build_system_prompt()` instructs Jarvis to let time/location/room/household-activity quietly shape tone and unprompted suggestions (shorter and quieter late at night, no workout/errand suggestions once the household's asleep, brief interruptions when someone's mid-task) while explicitly avoiding padding replies with context just to prove awareness of it.
 - [x] **Habit learning** — detect patterns ("you usually leave at 8:30") and surface them. Built on top of existing camera presence detection (requires Vigil Mode cameras + face enrollment; no data without them): `python/integrations/vision.py`'s `_vision_loop` now records `arrived`/`departed` transitions to a new `presence_events` table (departure timestamp backdated to `last_seen_at`, not "now", since the away-timeout detection lags the actual departure by up to `VISION_AWAY_TIMEOUT`). `python/integrations/habits.py`'s `_analyze_habit()` buckets each user's last 60 days of events into weekday/weekend, takes the median time-of-day per bucket (min 3 samples required, else "not enough data yet"), and surfaces it via the `get_habits` voice tool, a **HABIT LEARNING** summary in the VISION settings panel, and an opt-in (`habit_nudges_enabled`, off by default) proactive nudge — `_habit_nudge_loop()` polls every 5 min and speaks/pushes a heads-up (`habit_nudge` socket event, same pattern as `timer_fired`) once per day when the current time enters a 10-minute window around the user's usual "departed" time and they haven't left yet today. Scoped to leave/arrive-home patterns only (the roadmap's example); other behavioral signals (routine usage, timer patterns, etc.) are a natural extension but out of scope for this pass.
 - [x] **Email triage** — classify and summarize unread email; flag urgent items. See steps 1-3 of the build order below.
-- [ ] **Meeting prep** — pull agenda, attendees, and prior notes before calendar events
+- [x] **Meeting prep** — pull agenda, attendees, and prior notes before calendar events. `python/integrations/meeting_prep.py`'s `_meeting_prep_loop()` (60s poll, same shape as `_briefing_loop()`) fires a heads-up `meeting_prep_lead_minutes` (opt-in, `meeting_prep_enabled`, default 15) before each upcoming CalDAV event: the event's `DESCRIPTION` as agenda, `ATTENDEE`/`CN` properties newly parsed by `_parse_ical_events()` in `integrations/pim/calendar.py`, and a keyword search (`_db_search_past_meetings`, ILIKE against `meetings.notes` on significant words from the event title) surfacing notes from prior related meetings. Delivered via `meeting_prep_ready` socket event + push through the existing `_send_push` fan-out, dedup'd per event via the iCal `UID` (newly parsed) in a `meeting_prep_sent` table so the same event doesn't fire twice; also exposed as an on-demand `get_meeting_prep` voice tool ("prep me for my next meeting") plus `manage_meeting_prep` (enable/disable/set_lead_time/status) and a **MEETING PREP** section in the PIM settings panel. Meeting note retention (`_meeting_cleanup_loop` in `app.py`) was bumped from 48 hours to 90 days so prior-notes lookback is actually useful for recurring meetings — meetings have no PII beyond what the user says into the mic.
 - [x] **Package tracking** — parse shipping emails, announce deliveries. See step 4 of the build order below.
 
 **Email triage / package tracking build order** (each its own commit; package tracking and the later triage steps all sit on top of step 1, so nothing downstream can start until it lands):
@@ -145,7 +148,7 @@ Make Jarvis a platform others can build on, like Alexa Skills or Google Actions.
 
 ---
 
-## Phase 12 — Mental Wellness & Social Assistance
+## Phase 11 — Mental Wellness & Social Assistance
 
 Reduce social friction for introverts and provide grounding, calm, and pattern awareness for anxiety.
 
@@ -159,11 +162,18 @@ Reduce social friction for introverts and provide grounding, calm, and pattern a
 - [ ] **Social reply drafting** — "help me respond to this" — draft replies to messages, emails, or invitations in your voice so you don't have to start from scratch
 - [ ] **Social energy tracker** — log social commitments; warn when the week is overloaded and suggest blocking recovery time
 - [ ] **Polite decline generator** — given an event or request, draft a kind, non-awkward way to say no
-- [ ] **Therapist mode** — dedicated conversational mode that uses active listening, reflective questioning, and CBT-influenced techniques; Jarvis listens without rushing to fix, tracks session history for continuity, and escalates to real emergency resources if crisis language is detected
+- [ ] **Therapist mode** — dedicated conversational mode that uses active listening, reflective questioning, and CBT-influenced techniques; Jarvis listens without rushing to fix, tracks session history for continuity, and escalates to real emergency resources if crisis language is detected. Not a replacement for professional care — the mode's own framing needs to make that clear at first use without being naggy about it on every message. Planned build order below (each its own commit, safety-critical piece first and deliberately not gated on the others):
+
+  1. **Crisis-language safety net (build this first, independent of everything else)** — a deterministic, non-LLM keyword/pattern scan run on every user utterance while Therapist Mode is active, checked _before_ the message reaches the model — the response to a crisis-language match must not depend on the LLM behaving correctly that turn. On a match: bypass the normal reply entirely, speak/display a fixed, locale-configurable crisis-line message (e.g. 988 Suicide & Crisis Lifeline for a US-configured household — needs an env var, not a hardcoded US number, since this is self-hosted by anyone), and log the event minimally (timestamp + that it fired, not the message content) so it isn't silently lost if the user needs to revisit it later. Ships and is tested completely on its own before step 2 exists, since it's the one piece that must never regress.
+  2. **Mode toggle + dedicated system prompt** — reuses the existing per-user system-prompt-swap pattern already proven by kid-safe mode (`is_kid_safe` flag → conditional prompt block in `_build_system_prompt`): a `therapist_mode_active` flag, a voice/UI toggle ("Jarvis, I need to talk" / an explicit exit phrase), and a distinct system-prompt block instructing active listening, reflective questioning, and CBT-influenced phrasing instead of the default assistant's fix-it-fast tone. First activation shows a one-time, brief disclaimer (not a replacement for professional care) — shown once per household member, not every session. Depends on step 1 being live first.
+  3. **Session continuity & recall** — a dedicated conversation history scoped to Therapist Mode sessions (separate from, or tagged within, the existing `conversations` table) so a new session can open with a brief, non-presumptuous recall of the last one — conceptually the same ILIKE-keyword-search-over-past-notes pattern Phase 6's Meeting Prep already built (`_db_search_past_meetings`) for finding relevant prior context, applied here to past session summaries instead of meeting notes.
+  4. **Visual/tonal distinction in the UI** — a clearly different color treatment or tone while the mode is active (mirrors how Silent Mode and standby already shift the UI's visual state) so it's never ambiguous which mode a conversation is happening in, plus a one-tap/one-phrase way to exit back to normal chat at any time.
+
+  Open question worth deciding before starting, not silently assumed: should the step-1 crisis-language safety net run only inside Therapist Mode, or on every conversation regardless of mode? Scoping it to Therapist-Mode-only is smaller and matches how the feature is described above, but means a crisis-adjacent remark made in ordinary chat goes unnoticed. That's a real product/safety tradeoff, not just an implementation detail — worth the user's explicit call rather than picking one silently when this gets built.
 
 ---
 
-## Phase 11 — Accessibility & Hearing Assistance
+## Phase 10 — Accessibility & Hearing Assistance
 
 Compensate for single-sided hearing loss with visual alerts, real-time captions, and a more forgiving voice UX.
 
@@ -177,7 +187,7 @@ Compensate for single-sided hearing loss with visual alerts, real-time captions,
 
 ---
 
-## Phase 10 — Computer Vision & Spatial Awareness
+## Phase 9 — Computer Vision & Spatial Awareness
 
 Give Jarvis eyes — know who is home, where they are, what they're doing, and flag anything unusual.
 
@@ -198,23 +208,6 @@ Give Jarvis eyes — know who is home, where they are, what they're doing, and f
 
 ---
 
-## Phase 9 — Financial Intelligence
-
-Give Jarvis full visibility and control over money — balances, spending, budgets, goals, and payments.
-
-- [x] **Account aggregation** — Plaid Link (sandbox); unified account view across linked banks in `plaid_items`/`plaid_accounts`
-- [x] **Balance & transaction lookup** — "what's my balance?", "show my recent transactions" answered by voice via `get_account_balances`/`get_recent_transactions`
-- [x] **Spending categorization** — reuses Plaid's `personal_finance_category`; override via voice (`set_transaction_category`) or `PATCH /api/finance/transactions/{id}`
-- [ ] **Budget tracking** — set monthly budgets by category; alert when approaching or over limit
-- [ ] **Bill & subscription detection** — surface recurring charges automatically; alert before due dates
-- [ ] **Savings goals** — "save $5k for vacation by December"; track progress and surface weekly
-- [ ] **Net worth dashboard** — aggregate all accounts (checking, savings, credit, investments) into a single number
-- [ ] **Spending alerts** — flag large, unusual, or out-of-category transactions in real time via webhook
-- [ ] **Transfer & payment initiation** — initiate bank transfers via Plaid Transfer API or direct bank APIs; confirm by voice before executing
-- [ ] **Financial briefing** — daily/weekly money summary: net cash flow, top spending categories, upcoming bills, goal progress
-
----
-
 ## Known Issues
 
 - [x] **Settings panel closes entirely when switching tabs** — root cause: browser runs the microtask checkpoint between capture and bubble phases, so the `MutationObserver` in `settings.js` fired between them and saw "no pane open" before the new pane was shown. Fixed by wrapping the auto-close check in `setTimeout(0)` so it defers to after all event listeners complete; all `?v=` cache strings bumped to `?v=2`.
@@ -229,7 +222,7 @@ Automated workflows to keep the repo healthy and branches in sync.
 - [x] **Cascade merge on push** — when `staging` or `main` receives a push, automatically attempt to merge it into every other open branch; on conflict, open a detailed issue describing the conflicting files and assign it to whoever made the last commit on that branch
 - [x] **Auto-deploy on push to `main`** — `deploy-main.yml` runs on `[self-hosted, homelab]`; pulls latest, restarts the stack with `docker compose up -d --build`, and health-checks `/login` before reporting success
 - [x] **Playwright browser checks in `testing-smoke.yml`** — the smoke test currently only curls `/login` and `/` for non-5xx status; add a headless Playwright pass (with a seeded test account/session) that logs in and clicks through core UI (Settings panel tabs, chat send) so a broken button/JS bundle fails CI, not just a broken route
-- [ ] **Self-hosted GitHub Actions runner** — register the home server (or a dedicated Pi) as a self-hosted runner so CI jobs get persistent Docker layer cache (faster builds), can test ARM-specific daemon packages (onnxruntime, sounddevice, rpi_ws281x) on real hardware, and aren't subject to GitHub's free-tier minute limits. Candidate jobs to move first: `docker-build` (biggest cache win), `testing-smoke` (runs against real stack). Keep `android-build` and `actionlint` on `ubuntu-latest` for clean environments. Add runner labels (`homelab`, `arm64`) so jobs can target the right host. Docs: [Self-hosted runners](https://docs.github.com/en/actions/concepts/runners/self-hosted-runners)
+- [x] **Self-hosted GitHub Actions runner** — home server registered as a self-hosted runner (`homelab` label); `docker-build`, `compose-validate`, and `testing-smoke` run on it for persistent Docker layer cache and real-stack testing, without eating GitHub's free-tier minutes. `android-build` and `actionlint` stay on `ubuntu-latest` for clean environments. Docs: [Self-hosted runners](https://docs.github.com/en/actions/concepts/runners/self-hosted-runners)
 
 ---
 
