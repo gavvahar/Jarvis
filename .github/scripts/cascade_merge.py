@@ -10,7 +10,7 @@ import json, os, subprocess, sys, urllib.error, urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
-SKIP_BRANCHES = {"main", "staging", "HEAD", "testing"}
+SKIP_BRANCHES = {"main", "staging", "HEAD", "testing", "backup/tests-pre-ai-scrub"}
 
 # Branches that should only receive a cascade from specific source branches,
 # loaded from cascade_restrictions.json so this data doesn't ride along inside
