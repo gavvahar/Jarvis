@@ -148,9 +148,7 @@ class TestTtsPrefs:
     def test_set_clamps_out_of_range_values(self, api_client):
         _seed_user_state()
         with patch.object(jarvis, "_db_set_tts_prefs", new=AsyncMock()) as mock_set:
-            resp = api_client.post(
-                "/api/tts-prefs", json={"rate": 99, "pitch": -5, "volume": 3}
-            )
+            resp = api_client.post("/api/tts-prefs", json={"rate": 99, "pitch": -5, "volume": 3})
         assert resp.status_code == 200
         data = resp.json()
         assert data == {"ok": True, "rate": 2.0, "pitch": 0.5, "volume": 1.0}
