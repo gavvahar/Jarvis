@@ -12,7 +12,8 @@ vi.mock("../../static/v2/js/app/core.js", () => ({
   isStandby: () => true,
 }));
 
-const { buildDoorbellYaml } = await import("../../static/v2/js/app/doorbell.js");
+const { buildDoorbellYaml } =
+  await import("../../static/v2/js/app/doorbell.js");
 
 describe("buildDoorbellYaml", () => {
   it("builds a doorbell_press automation without a state condition", () => {
@@ -30,7 +31,7 @@ describe("buildDoorbellYaml", () => {
     expect(yaml).toContain('alias: "Jarvis — DOORBELL PRESS"');
   });
 
-  it("adds a to: \"on\" trigger condition for binary_sensor events", () => {
+  it('adds a to: "on" trigger condition for binary_sensor events', () => {
     const yaml = buildDoorbellYaml(
       "motion",
       "https://jarvis.example/api/doorbell",
