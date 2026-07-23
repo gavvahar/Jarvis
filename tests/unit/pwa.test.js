@@ -50,7 +50,10 @@ describe("subscribePush", () => {
     });
 
     const result = await subscribePush();
-    expect(result).toEqual({ ok: false, error: "Notification permission denied." });
+    expect(result).toEqual({
+      ok: false,
+      error: "Notification permission denied.",
+    });
   });
 
   it("subscribes and posts the subscription to the backend on success", async () => {
@@ -62,13 +65,17 @@ describe("subscribePush", () => {
     };
     const fetchMock = vi
       .fn()
-      .mockResolvedValueOnce({ json: async () => ({ vapid_public_key: "BBBB" }) })
+      .mockResolvedValueOnce({
+        json: async () => ({ vapid_public_key: "BBBB" }),
+      })
       .mockResolvedValueOnce({ json: async () => ({ ok: true }) });
 
     Object.defineProperty(navigator, "serviceWorker", {
       value: {
         ready: Promise.resolve({
-          pushManager: { subscribe: vi.fn().mockResolvedValue(fakeSubscription) },
+          pushManager: {
+            subscribe: vi.fn().mockResolvedValue(fakeSubscription),
+          },
         }),
       },
       configurable: true,
@@ -98,7 +105,9 @@ describe("subscribePush", () => {
   it("surfaces the server error when push isn't configured yet", async () => {
     const fetchMock = vi
       .fn()
-      .mockResolvedValueOnce({ json: async () => ({ vapid_public_key: null }) });
+      .mockResolvedValueOnce({
+        json: async () => ({ vapid_public_key: null }),
+      });
 
     Object.defineProperty(navigator, "serviceWorker", {
       value: { ready: Promise.resolve({ pushManager: {} }) },
