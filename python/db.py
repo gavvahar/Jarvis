@@ -601,6 +601,29 @@ async def _db_list_users_for_meeting_prep() -> list:
     return [r["user_id"] for r in rows]
 
 
+# ─── TTS CLARITY (Phase 10 accessibility) ──────────────────────────────────────
+async def _db_get_tts_prefs(user_id: str) -> dict:
+    async with _pool().acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT tts_rate, tts_pitch, tts_volume FROM user_configs WHERE user_id = $1",
+            user_id,
+        )
+    if row is None:
+        return {"rate": 1.0, "pitch": 1.0, "volume": 1.0}
+    return {"rate": row["tts_rate"], "pitch": row["tts_pitch"], "volume": row["tts_volume"]}
+
+
+async def _db_set_tts_prefs(user_id: str, rate: float, pitch: float, volume: float) -> None:
+    async with _pool().acquire() as conn:
+        await conn.execute(
+            "UPDATE user_configs SET tts_rate=$2, tts_pitch=$3, tts_volume=$4 WHERE user_id=$1",
+            user_id,
+            rate,
+            pitch,
+            volume,
+        )
+
+
 async def _db_meeting_prep_sent_uids(user_id: str, event_uids: list[str]) -> set[str]:
     if not event_uids:
         return set()

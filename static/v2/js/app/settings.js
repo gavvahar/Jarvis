@@ -41,6 +41,7 @@ const PANES = [
   setupHiddenPane("tesla-settings"),
   setupHiddenPane("spotify-settings"),
   setupHiddenPane("apple-music-settings"),
+  setupHiddenPane("accessibility-settings"),
 ];
 
 function anyPaneOpen() {

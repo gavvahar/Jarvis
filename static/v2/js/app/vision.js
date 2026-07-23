@@ -150,7 +150,7 @@ async function loadSecurityEvents() {
 
 const HABIT_BUCKET_LABELS = { weekday: "weekdays", weekend: "weekends" };
 
-function formatHabit(label, habit) {
+export function formatHabit(label, habit) {
   if (!habit) return `<em>${label}: not enough data yet.</em>`;
   const bits = Object.keys(HABIT_BUCKET_LABELS)
     .filter((b) => habit[b])

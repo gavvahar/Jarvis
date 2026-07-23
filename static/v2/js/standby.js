@@ -273,6 +273,10 @@
   // Tab still lives in js/chat.js.
   window.__setMode = setMode;
   window.__getMode = () => mode;
+  // Fires the same energy-surge used on mode changes, but on demand and
+  // without changing mode — used to confirm the wake word was heard even
+  // when we're already awake (mode-change flash wouldn't fire then).
+  window.__triggerWakeFlash = () => triggerFlash("center");
 
   // ---- standby clock (lock-screen) ----
   const tEl = document.getElementById("sb-time");

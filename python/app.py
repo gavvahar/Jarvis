@@ -134,6 +134,8 @@ from db import (
     _db_store_doorbell_event,
     _db_add_push_subscription,
     _db_remove_push_subscription,
+    _db_get_tts_prefs,
+    _db_set_tts_prefs,
 )
 
 
@@ -422,8 +424,12 @@ async def api_status(request: Request):
     user_id = _require_user(request)
     state = await _get_user_state(user_id)
     config = state["config"]
+    tts_prefs = await _db_get_tts_prefs(user_id)
     return {
         "configured": _user_configured(state),
+        "tts_rate": tts_prefs["rate"],
+        "tts_pitch": tts_prefs["pitch"],
+        "tts_volume": tts_prefs["volume"],
         "user_id": user_id,
         "provider": config.get("provider", "anthropic"),
         "model": config.get("model", ""),
@@ -820,6 +826,25 @@ async def api_get_meeting_prep(request: Request):
 @fast_app.post("/api/meeting-prep")
 async def api_set_meeting_prep(request: Request):
     return await _set_meeting_prep_prefs(_require_user(request), await request.json())
+
+
+@fast_app.get("/api/tts-prefs")
+async def api_get_tts_prefs(request: Request):
+    return await _db_get_tts_prefs(_require_user(request))
+
+
+@fast_app.post("/api/tts-prefs")
+async def api_set_tts_prefs(request: Request):
+    user_id = _require_user(request)
+    data = await request.json()
+    try:
+        rate = min(max(float(data.get("rate", 1.0)), 0.5), 2.0)
+        pitch = min(max(float(data.get("pitch", 1.0)), 0.5), 2.0)
+        volume = min(max(float(data.get("volume", 1.0)), 0.0), 1.0)
+    except (TypeError, ValueError) as e:
+        raise HTTPException(400, "rate/pitch/volume must be numbers") from e
+    await _db_set_tts_prefs(user_id, rate, pitch, volume)
+    return {"ok": True, "rate": rate, "pitch": pitch, "volume": volume}
 
 
 @fast_app.get("/api/email-triage")
