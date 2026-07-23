@@ -236,6 +236,17 @@ commands = [
   ],
 ]
 
+[tool.tox.env."js-tests"]
+skip_install = true
+allowlist_externals = ["npx"]
+commands = [
+  [
+    "npx",
+    "vitest",
+    "run",
+  ],
+]
+
 # --- Aggregate (CI) ---------------------------------------------------------
 
 # Runs the full CI chain: no-classes-check → combined-imports-check → lint → txt-lint → prettier → tests
@@ -278,6 +289,11 @@ commands = [
     "tox",
     "-e",
     "tests",
+  ],
+  [
+    "tox",
+    "-e",
+    "js-tests",
   ],
 ]
 
