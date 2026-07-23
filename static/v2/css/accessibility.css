@@ -1,0 +1,40 @@
+/* ===========================================================
+   ACCESSIBILITY & HEARING ASSISTANCE (Phase 10)
+   =========================================================== */
+
+/* On-screen captions for Jarvis's spoken replies (and, later, live
+   conversation/media captions) — always readable regardless of whether
+   the Chat Tab drawer (chat_panel.css) is open, since that's hidden by
+   default and shouldn't be a prerequisite for seeing what Jarvis said. */
+#caption-bar {
+  position: fixed;
+  left: 50%;
+  bottom: 64px;
+  transform: translateX(-50%);
+  z-index: 9999;
+  max-width: min(80vw, 720px);
+  padding: 12px 22px;
+  background: rgba(2, 6, 10, 0.86);
+  border: 1px solid var(--line);
+  box-shadow: 0 0 16px rgba(31, 182, 239, 0.25);
+  font-family: var(--mono);
+  font-size: 16px;
+  line-height: 1.4;
+  color: var(--cyan-bright);
+  text-align: center;
+  opacity: 1;
+  transition: opacity 0.35s ease;
+  pointer-events: none;
+}
+#caption-bar.caption-hidden {
+  opacity: 0;
+}
+
+@media (max-width: 480px) {
+  #caption-bar {
+    bottom: 88px;
+    max-width: 92vw;
+    font-size: 14px;
+    padding: 10px 16px;
+  }
+}

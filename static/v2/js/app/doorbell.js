@@ -158,7 +158,7 @@ const doorbellWebhookToken = $("doorbell-webhook-token");
 const doorbellCopyUrl = $("doorbell-copy-url");
 const doorbellCopyToken = $("doorbell-copy-token");
 
-function buildDoorbellYaml(eventType, webhookUrl, token) {
+export function buildDoorbellYaml(eventType, webhookUrl, token) {
   const entityHints = {
     doorbell_press: "event.YOUR_DOORBELL   # e.g. event.front_door_doorbell",
     motion: "binary_sensor.YOUR_MOTION  # e.g. binary_sensor.front_door_motion",
