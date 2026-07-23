@@ -99,6 +99,18 @@ if (synth) {
   synth.onvoiceschanged = pickVoice;
 }
 
+// Per-user TTS clarity (Phase 10 accessibility, opt-in) — defaults match
+// today's behavior; boot.js overrides these from /api/status right after
+// load, tts_settings panel (accessibility.js) updates them live on save.
+let _ttsRate = 1.0,
+  _ttsPitch = 1.0,
+  _ttsVolume = 1.0;
+export function setTtsPrefs({ rate, pitch, volume } = {}) {
+  if (typeof rate === "number") _ttsRate = rate;
+  if (typeof pitch === "number") _ttsPitch = pitch;
+  if (typeof volume === "number") _ttsVolume = volume;
+}
+
 // sentence queue → spoken one at a time, with a synthetic orb envelope while speaking
 let _ttsQ = [],
   _ttsActive = false;
@@ -122,9 +134,9 @@ function _ttsNext() {
   const text = _ttsQ.shift();
   const u = new SpeechSynthesisUtterance(text);
   if (_voice) u.voice = _voice;
-  u.rate = 1.0;
-  u.pitch = 1.0;
-  u.volume = 1.0;
+  u.rate = _ttsRate;
+  u.pitch = _ttsPitch;
+  u.volume = _ttsVolume;
   u.onboundary = () => {
     _wordPunch = 1;
   }; // a little orb kick per word
