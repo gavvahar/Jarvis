@@ -60,6 +60,20 @@ Coverage must stay above 80%. Add tests for any new routes or logic.
 
 Tests are split one file per integration module (`test_tesla.py`, `test_vision.py`, `test_meeting_prep.py`, ...), mirroring `python/integrations/`. Shared mock-builder helpers (`_mock_asyncpg_pool`, `_seed_user_state`, etc.) live in `helpers.py`; the `api_client` fixture (stubs the DB so no live Postgres is needed) lives in `conftest.py`. Tests that don't belong to a single integration — core `app.py` routes, `db.py` CRUD helpers, `auth.py` — live in `test_app_core.py`, `test_db_core.py`, and `test_auth.py` respectively. Add a new feature's tests to a new file following this same one-file-per-module convention rather than growing an existing one.
 
+### Frontend unit tests
+
+JS unit tests (Vitest, our pytest equivalent for `static/v2/js/`) live in `tests/unit/`. Run them with:
+
+```bash
+tox -e js-tests
+# or, without tox:
+npx vitest run
+```
+
+Most `js/app/*.js` modules do DOM/socket wiring at import time via `core.js`, so a test that imports one of them mocks `./core.js` (and `./pwa.js` where relevant) with `vi.mock(...)` — see `tests/unit/doorbell.test.js` and `tests/unit/vision.test.js` for the pattern. Keep pure logic (formatting, YAML/string building, etc.) in its own exported function so it stays testable without a full DOM.
+
+Browser end-to-end tests (Playwright) live separately in `tests/browser/` — see `playwright.config.js`.
+
 ## Frontend structure
 
 The UI is one page (`templates/index.html`), split for readability:
