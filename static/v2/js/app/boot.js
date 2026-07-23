@@ -11,6 +11,7 @@ import {
   startRecognition,
   isSilentMode,
   setSilentMode,
+  setTtsPrefs,
 } from "./core.js";
 import { setHaStatus, haTokenInput } from "./ha.js";
 import {
@@ -34,6 +35,7 @@ fetch("/api/status")
   .then((r) => r.json())
   .then((d) => {
     setConfigured(!!d.configured);
+    setTtsPrefs({ rate: d.tts_rate, pitch: d.tts_pitch, volume: d.tts_volume });
     const ml = $("mod-link");
     if (ml && d.provider)
       ml.textContent =
