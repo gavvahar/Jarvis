@@ -112,7 +112,14 @@ class TestPWARoutes:
 class TestApiStatus:
     def test_returns_status_fields(self, api_client):
         _seed_user_state(config={"provider": "anthropic", "model": "claude-haiku-4-5"})
-        with patch.object(jarvis, "_user_has_face_enrollment", return_value=True):
+        with (
+            patch.object(jarvis, "_user_has_face_enrollment", return_value=True),
+            patch.object(
+                jarvis,
+                "_db_get_tts_prefs",
+                new=AsyncMock(return_value={"rate": 1.0, "pitch": 1.0, "volume": 1.0}),
+            ),
+        ):
             resp = api_client.get("/api/status")
         assert resp.status_code == 200
         data = resp.json()
@@ -121,6 +128,38 @@ class TestApiStatus:
         assert data["role"] == "user"
         assert data["user_id"] == "local"
         assert data["face_enrolled"] is True
+        assert data["tts_rate"] == 1.0
+        assert data["tts_pitch"] == 1.0
+        assert data["tts_volume"] == 1.0
+
+
+class TestTtsPrefs:
+    def test_get_returns_db_values(self, api_client):
+        _seed_user_state()
+        with patch.object(
+            jarvis,
+            "_db_get_tts_prefs",
+            new=AsyncMock(return_value={"rate": 0.8, "pitch": 1.0, "volume": 1.0}),
+        ):
+            resp = api_client.get("/api/tts-prefs")
+        assert resp.status_code == 200
+        assert resp.json() == {"rate": 0.8, "pitch": 1.0, "volume": 1.0}
+
+    def test_set_clamps_out_of_range_values(self, api_client):
+        _seed_user_state()
+        with patch.object(jarvis, "_db_set_tts_prefs", new=AsyncMock()) as mock_set:
+            resp = api_client.post(
+                "/api/tts-prefs", json={"rate": 99, "pitch": -5, "volume": 3}
+            )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data == {"ok": True, "rate": 2.0, "pitch": 0.5, "volume": 1.0}
+        mock_set.assert_awaited_once_with("local", 2.0, 0.5, 1.0)
+
+    def test_set_rejects_non_numeric(self, api_client):
+        _seed_user_state()
+        resp = api_client.post("/api/tts-prefs", json={"rate": "loud"})
+        assert resp.status_code == 400
 
 
 class TestApiSaveConfig:
