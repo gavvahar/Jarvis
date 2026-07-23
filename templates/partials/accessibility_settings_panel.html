@@ -1,0 +1,52 @@
+<div id="accessibility-settings" class="settings-tab-pane setup-hidden">
+  <div id="accessibility-settings-card">
+    <h2>ACCESSIBILITY — TTS CLARITY</h2>
+    <p class="pim-note">
+      Per-user voice controls, opt-in only — changing these only affects
+      how Jarvis sounds for you, not other household members.
+    </p>
+    <form id="tts-prefs-form" autocomplete="off">
+      <label class="setup-label" for="tts-rate-input"
+        >SPEECH RATE (<span id="tts-rate-val">1.0</span>x)</label
+      >
+      <input
+        id="tts-rate-input"
+        type="range"
+        min="0.5"
+        max="2.0"
+        step="0.05"
+        value="1.0"
+      />
+      <label class="setup-label" for="tts-pitch-input"
+        >PITCH (<span id="tts-pitch-val">1.0</span>)</label
+      >
+      <input
+        id="tts-pitch-input"
+        type="range"
+        min="0.5"
+        max="2.0"
+        step="0.05"
+        value="1.0"
+      />
+      <label class="setup-label" for="tts-volume-input"
+        >VOLUME (<span id="tts-volume-val">1.0</span>)</label
+      >
+      <input
+        id="tts-volume-input"
+        type="range"
+        min="0"
+        max="1.0"
+        step="0.05"
+        value="1.0"
+      />
+      <div style="display: flex; gap: 8px; margin-top: 14px">
+        <button type="button" id="tts-prefs-preset">
+          HEARING-ASSIST PRESET
+        </button>
+        <button type="submit" id="tts-prefs-save">SAVE</button>
+      </div>
+    </form>
+    <div id="tts-prefs-msg"></div>
+    <button id="accessibility-settings-close">CLOSE</button>
+  </div>
+</div>

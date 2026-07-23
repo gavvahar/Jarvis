@@ -12,6 +12,7 @@ import "./pim.js";
 import "./meeting.js";
 import "./messages.js";
 import "./doorbell.js";
+import "./accessibility.js";
 import "./vision.js";
 import "./vigil_lock.js";
 import "./garage.js";
