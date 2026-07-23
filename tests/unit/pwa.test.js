@@ -103,11 +103,9 @@ describe("subscribePush", () => {
   });
 
   it("surfaces the server error when push isn't configured yet", async () => {
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValueOnce({
-        json: async () => ({ vapid_public_key: null }),
-      });
+    const fetchMock = vi.fn().mockResolvedValueOnce({
+      json: async () => ({ vapid_public_key: null }),
+    });
 
     Object.defineProperty(navigator, "serviceWorker", {
       value: { ready: Promise.resolve({ pushManager: {} }) },
