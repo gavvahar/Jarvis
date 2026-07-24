@@ -129,7 +129,9 @@ describe("meeting.js", () => {
     });
 
     it("meeting_transcript_update hides the status line and appends a log segment", () => {
-      socketMock.trigger("meeting_transcript_update", { segment: "Hello there" });
+      socketMock.trigger("meeting_transcript_update", {
+        segment: "Hello there",
+      });
 
       expect($("meeting-status-line").style.display).toBe("none");
       expect($("meeting-log").textContent).toContain("Hello there");
@@ -145,13 +147,23 @@ describe("meeting.js", () => {
         transcript: "raw transcript text",
       });
 
-      expect($("meeting-panel").classList.contains("meeting-hidden")).toBe(true);
+      expect($("meeting-panel").classList.contains("meeting-hidden")).toBe(
+        true,
+      );
       expect($("meeting-end-btn").disabled).toBe(false);
-      expect($("meeting-notes-content").textContent).toBe("# Summary\nDid stuff.");
-      expect($("meeting-transcript-content").textContent).toBe("raw transcript text");
+      expect($("meeting-notes-content").textContent).toBe(
+        "# Summary\nDid stuff.",
+      );
+      expect($("meeting-transcript-content").textContent).toBe(
+        "raw transcript text",
+      );
       expect($("meeting-transcript-wrap").style.display).toBe("none");
-      expect($("meeting-notes-transcript-btn").textContent).toBe("SHOW TRANSCRIPT");
-      expect($("meeting-notes-modal").classList.contains("setup-hidden")).toBe(false);
+      expect($("meeting-notes-transcript-btn").textContent).toBe(
+        "SHOW TRANSCRIPT",
+      );
+      expect($("meeting-notes-modal").classList.contains("setup-hidden")).toBe(
+        false,
+      );
     });
 
     it("meeting_notes_ready defaults empty notes/transcript to blank strings", () => {
@@ -161,7 +173,9 @@ describe("meeting.js", () => {
     });
 
     it("meeting_error reports the error to chat", () => {
-      socketMock.trigger("meeting_error", { error: "transcription service down" });
+      socketMock.trigger("meeting_error", {
+        error: "transcription service down",
+      });
       expect(window.__chat.addMsg).toHaveBeenCalledWith(
         "Meeting: transcription service down",
         "in",
@@ -173,17 +187,23 @@ describe("meeting.js", () => {
     it("toggles the transcript panel open then closed", () => {
       $("meeting-notes-transcript-btn").click();
       expect($("meeting-transcript-wrap").style.display).toBe("");
-      expect($("meeting-notes-transcript-btn").textContent).toBe("HIDE TRANSCRIPT");
+      expect($("meeting-notes-transcript-btn").textContent).toBe(
+        "HIDE TRANSCRIPT",
+      );
 
       $("meeting-notes-transcript-btn").click();
       expect($("meeting-transcript-wrap").style.display).toBe("none");
-      expect($("meeting-notes-transcript-btn").textContent).toBe("SHOW TRANSCRIPT");
+      expect($("meeting-notes-transcript-btn").textContent).toBe(
+        "SHOW TRANSCRIPT",
+      );
     });
 
     it("closes the notes modal", () => {
       $("meeting-notes-modal").classList.remove("setup-hidden");
       $("meeting-notes-close").click();
-      expect($("meeting-notes-modal").classList.contains("setup-hidden")).toBe(true);
+      expect($("meeting-notes-modal").classList.contains("setup-hidden")).toBe(
+        true,
+      );
     });
 
     it("copies notes to the clipboard and shows a success message", async () => {
@@ -201,7 +221,9 @@ describe("meeting.js", () => {
 
     it("shows an error message when the clipboard is unavailable", async () => {
       vi.stubGlobal("navigator", {
-        clipboard: { writeText: vi.fn().mockRejectedValue(new Error("denied")) },
+        clipboard: {
+          writeText: vi.fn().mockRejectedValue(new Error("denied")),
+        },
       });
 
       $("meeting-notes-copy").click();
@@ -212,13 +234,21 @@ describe("meeting.js", () => {
     });
 
     it("exports notes as a downloadable markdown file", () => {
-      vi.stubGlobal("URL", { createObjectURL: vi.fn(() => "blob:mock"), revokeObjectURL: vi.fn() });
-      let captured = null;
-      vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function () {
-        captured = { href: this.href, download: this.download };
+      vi.stubGlobal("URL", {
+        createObjectURL: vi.fn(() => "blob:mock"),
+        revokeObjectURL: vi.fn(),
       });
+      let captured = null;
+      vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(
+        function () {
+          captured = { href: this.href, download: this.download };
+        },
+      );
 
-      socketMock.trigger("meeting_notes_ready", { notes: "Some notes", transcript: "Some transcript" });
+      socketMock.trigger("meeting_notes_ready", {
+        notes: "Some notes",
+        transcript: "Some transcript",
+      });
       $("meeting-notes-export").click();
 
       expect(captured.href).toBe("blob:mock");
@@ -249,7 +279,9 @@ describe("meeting.js", () => {
         "in",
       );
       expect(socketMock.emit).not.toHaveBeenCalledWith("start_meeting");
-      expect($("meeting-panel").classList.contains("meeting-hidden")).toBe(true);
+      expect($("meeting-panel").classList.contains("meeting-hidden")).toBe(
+        true,
+      );
     });
 
     it("starts mic-only when screen-share audio is declined, then ends cleanly", async () => {
@@ -259,9 +291,13 @@ describe("meeting.js", () => {
       await flush();
 
       expect(socketMock.emit).toHaveBeenCalledWith("start_meeting");
-      expect($("meeting-panel").classList.contains("meeting-hidden")).toBe(false);
+      expect($("meeting-panel").classList.contains("meeting-hidden")).toBe(
+        false,
+      );
       expect($("meeting-btn").classList.contains("meeting-live")).toBe(true);
-      expect($("meeting-status-line").textContent).toBe("Recording (mic only)…");
+      expect($("meeting-status-line").textContent).toBe(
+        "Recording (mic only)…",
+      );
 
       $("meeting-end-btn").click();
       await flush();
@@ -277,7 +313,9 @@ describe("meeting.js", () => {
       $("meeting-btn").click();
       await flush();
 
-      expect($("meeting-status-line").textContent).toBe("Recording (mic + system audio)…");
+      expect($("meeting-status-line").textContent).toBe(
+        "Recording (mic + system audio)…",
+      );
 
       $("meeting-end-btn").click();
       await flush();
