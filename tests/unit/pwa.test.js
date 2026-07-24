@@ -123,4 +123,66 @@ describe("subscribePush", () => {
       error: "Push isn't configured on the server yet.",
     });
   });
+
+  it("falls back to a generic message when the thrown error has none", async () => {
+    Object.defineProperty(navigator, "serviceWorker", {
+      value: {
+        ready: Promise.resolve({
+          pushManager: { subscribe: vi.fn().mockRejectedValue({}) },
+        }),
+      },
+      configurable: true,
+    });
+    vi.stubGlobal("PushManager", {});
+    vi.stubGlobal("Notification", {
+      requestPermission: vi.fn().mockResolvedValue("granted"),
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValueOnce({
+        json: async () => ({ vapid_public_key: "BBBB" }),
+      }),
+    );
+
+    const result = await subscribePush();
+    expect(result).toEqual({
+      ok: false,
+      error: "Failed to subscribe to push.",
+    });
+  });
+});
+
+describe("service worker registration (module load side effect)", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.resetModules();
+  });
+
+  it("registers the service worker on window load when supported", async () => {
+    const register = vi.fn().mockResolvedValue({});
+    vi.stubGlobal("navigator", { serviceWorker: { register } });
+    vi.resetModules();
+
+    await import("../../static/v2/js/app/pwa.js");
+    window.dispatchEvent(new Event("load"));
+    await new Promise((r) => setTimeout(r, 10));
+
+    expect(register).toHaveBeenCalledWith("/sw.js");
+  });
+
+  it("warns but does not throw when registration fails", async () => {
+    const register = vi.fn().mockRejectedValue(new Error("blocked"));
+    vi.stubGlobal("navigator", { serviceWorker: { register } });
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.resetModules();
+
+    await import("../../static/v2/js/app/pwa.js");
+    window.dispatchEvent(new Event("load"));
+    await new Promise((r) => setTimeout(r, 10));
+
+    expect(warnSpy).toHaveBeenCalledWith(
+      "[pwa] service worker registration failed",
+      expect.any(Error),
+    );
+  });
 });
