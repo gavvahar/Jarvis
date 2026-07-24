@@ -79,20 +79,28 @@ let _vizState = "idle";
 // ===================================================================
 const synth = window.speechSynthesis;
 let _voice = null;
+function scoreVoice(v) {
+  const n = (v.name || "").toLowerCase();
+  let s = 0;
+  if (v.lang && v.lang.toLowerCase().startsWith("en")) s += 4;
+  if (v.lang && v.lang.toLowerCase() === "en-gb") s += 3; // JARVIS is British
+  if (/(david|george|ryan|guy|james|thomas|daniel)/.test(n)) s += 3; // male voices
+  if (n.includes("microsoft")) s += 1;
+  return s;
+}
+
+export function pickBestVoice(voices) {
+  if (!voices.length) return null;
+  return (
+    voices.slice().sort((a, b) => scoreVoice(b) - scoreVoice(a))[0] || voices[0]
+  );
+}
+
 function pickVoice() {
   if (!synth) return;
   const voices = synth.getVoices();
   if (!voices.length) return;
-  const score = (v) => {
-    const n = (v.name || "").toLowerCase();
-    let s = 0;
-    if (v.lang && v.lang.toLowerCase().startsWith("en")) s += 4;
-    if (v.lang && v.lang.toLowerCase() === "en-gb") s += 3; // JARVIS is British
-    if (/(david|george|ryan|guy|james|thomas|daniel)/.test(n)) s += 3; // male voices
-    if (n.includes("microsoft")) s += 1;
-    return s;
-  };
-  _voice = voices.slice().sort((a, b) => score(b) - score(a))[0] || voices[0];
+  _voice = pickBestVoice(voices);
 }
 if (synth) {
   pickVoice();
