@@ -72,7 +72,8 @@ async function connectMusicKit() {
   vi.stubGlobal(
     "fetch",
     vi.fn().mockImplementation((url) => {
-      if (url === "/api/apple_music/token") return Promise.resolve(fetchJson({ token: "dev-token" }));
+      if (url === "/api/apple_music/token")
+        return Promise.resolve(fetchJson({ token: "dev-token" }));
       return Promise.resolve(fetchJson({ ok: true }));
     }),
   );
@@ -101,26 +102,36 @@ describe("apple_music.js", () => {
       mod.setAppleMusicStatus(true);
       expect($("apple-music-dot").className).toBe("connected");
       expect($("apple-music-text").textContent).toBe("CONNECTED");
-      expect($("apple-music-btn").classList.contains("spotify-live")).toBe(true);
+      expect($("apple-music-btn").classList.contains("spotify-live")).toBe(
+        true,
+      );
     });
 
     it("reflects disconnected state", () => {
       mod.setAppleMusicStatus(false);
       expect($("apple-music-dot").className).toBe("disconnected");
-      expect($("apple-music-btn").classList.contains("spotify-live")).toBe(false);
+      expect($("apple-music-btn").classList.contains("spotify-live")).toBe(
+        false,
+      );
     });
   });
 
   it("opens and closes the settings panel, including backdrop click", () => {
     $("apple-music-btn").click();
-    expect($("apple-music-settings").classList.contains("setup-hidden")).toBe(false);
+    expect($("apple-music-settings").classList.contains("setup-hidden")).toBe(
+      false,
+    );
 
     $("apple-music-settings-close").click();
-    expect($("apple-music-settings").classList.contains("setup-hidden")).toBe(true);
+    expect($("apple-music-settings").classList.contains("setup-hidden")).toBe(
+      true,
+    );
 
     $("apple-music-btn").click();
     $("apple-music-settings").click();
-    expect($("apple-music-settings").classList.contains("setup-hidden")).toBe(true);
+    expect($("apple-music-settings").classList.contains("setup-hidden")).toBe(
+      true,
+    );
   });
 
   describe("connect flow", () => {
@@ -128,7 +139,9 @@ describe("apple_music.js", () => {
       $("apple-music-connect-btn").click();
       await flush();
       expect($("apple-music-msg").className).toBe("err");
-      expect($("apple-music-msg").textContent).toBe("Apple Music not configured on server.");
+      expect($("apple-music-msg").textContent).toBe(
+        "Apple Music not configured on server.",
+      );
     });
 
     it("reports not-configured when the server has no developer token", async () => {
@@ -138,7 +151,9 @@ describe("apple_music.js", () => {
       $("apple-music-connect-btn").click();
       await flush();
 
-      expect($("apple-music-msg").textContent).toBe("Apple Music not configured on server.");
+      expect($("apple-music-msg").textContent).toBe(
+        "Apple Music not configured on server.",
+      );
       expect(MusicKit.configure).not.toHaveBeenCalled();
     });
 
@@ -147,7 +162,9 @@ describe("apple_music.js", () => {
 
       expect(musicKit.authorize).toHaveBeenCalled();
       expect($("apple-music-msg").className).toBe("ok");
-      expect($("apple-music-msg").textContent).toBe("Connected to Apple Music.");
+      expect($("apple-music-msg").textContent).toBe(
+        "Connected to Apple Music.",
+      );
       expect($("apple-music-dot").className).toBe("connected");
       expect(fetch).toHaveBeenCalledWith(
         "/api/apple_music/user_token",
@@ -159,9 +176,16 @@ describe("apple_music.js", () => {
 
     it("reports an authorization failure", async () => {
       vi.stubGlobal("MusicKit", {
-        configure: vi.fn().mockResolvedValue({ authorize: vi.fn().mockRejectedValue(new Error("denied")) }),
+        configure: vi
+          .fn()
+          .mockResolvedValue({
+            authorize: vi.fn().mockRejectedValue(new Error("denied")),
+          }),
       });
-      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(fetchJson({ token: "dev-token" })));
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockResolvedValue(fetchJson({ token: "dev-token" })),
+      );
 
       $("apple-music-connect-btn").click();
       await flush();
@@ -176,7 +200,9 @@ describe("apple_music.js", () => {
       vi.stubGlobal("fetch", vi.fn().mockResolvedValue({}));
       $("apple-music-disconnect-btn").click();
       await flush();
-      expect($("apple-music-msg").textContent).toBe("Disconnected from Apple Music.");
+      expect($("apple-music-msg").textContent).toBe(
+        "Disconnected from Apple Music.",
+      );
       expect($("apple-music-dot").className).toBe("disconnected");
     });
 
@@ -184,7 +210,9 @@ describe("apple_music.js", () => {
       vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
       $("apple-music-disconnect-btn").click();
       await flush();
-      expect($("apple-music-msg").textContent).toBe("Could not reach the server.");
+      expect($("apple-music-msg").textContent).toBe(
+        "Could not reach the server.",
+      );
     });
   });
 
@@ -202,7 +230,11 @@ describe("apple_music.js", () => {
       ["play", {}, (mk) => expect(mk.play).toHaveBeenCalled()],
       ["pause", {}, (mk) => expect(mk.pause).toHaveBeenCalled()],
       ["next", {}, (mk) => expect(mk.skipToNextItem).toHaveBeenCalled()],
-      ["previous", {}, (mk) => expect(mk.skipToPreviousItem).toHaveBeenCalled()],
+      [
+        "previous",
+        {},
+        (mk) => expect(mk.skipToPreviousItem).toHaveBeenCalled(),
+      ],
       ["volume", { value: 1.5 }, (mk) => expect(mk.volume).toBe(1)],
     ])("handles the %s action", async (action, extra, assertFn) => {
       const musicKit = await connectMusicKit();
@@ -226,10 +258,15 @@ describe("apple_music.js", () => {
 
     it("reports what's currently playing", async () => {
       const musicKit = await connectMusicKit();
-      musicKit.queue.currentItem = { attributes: { name: "Song A", artistName: "Artist A" } };
+      musicKit.queue.currentItem = {
+        attributes: { name: "Song A", artistName: "Artist A" },
+      };
       musicKit.playbackState = "playing";
 
-      socketMock.trigger("apple_music_cmd", { action: "now_playing", cb: "cb1" });
+      socketMock.trigger("apple_music_cmd", {
+        action: "now_playing",
+        cb: "cb1",
+      });
       await flush();
 
       expect(socketMock.emit).toHaveBeenCalledWith("apple_music_callback", {
@@ -240,7 +277,10 @@ describe("apple_music.js", () => {
 
     it("reports nothing playing", async () => {
       await connectMusicKit();
-      socketMock.trigger("apple_music_cmd", { action: "now_playing", cb: "cb1" });
+      socketMock.trigger("apple_music_cmd", {
+        action: "now_playing",
+        cb: "cb1",
+      });
       await flush();
       expect(socketMock.emit).toHaveBeenCalledWith("apple_music_callback", {
         cb: "cb1",
@@ -250,9 +290,14 @@ describe("apple_music.js", () => {
 
     it("reports now-playing data as JSON", async () => {
       const musicKit = await connectMusicKit();
-      musicKit.queue.currentItem = { attributes: { name: "Song A", artistName: "Artist A" } };
+      musicKit.queue.currentItem = {
+        attributes: { name: "Song A", artistName: "Artist A" },
+      };
 
-      socketMock.trigger("apple_music_cmd", { action: "now_playing_data", cb: "cb1" });
+      socketMock.trigger("apple_music_cmd", {
+        action: "now_playing_data",
+        cb: "cb1",
+      });
       await flush();
 
       expect(socketMock.emit).toHaveBeenCalledWith("apple_music_callback", {
@@ -265,7 +310,11 @@ describe("apple_music.js", () => {
       const musicKit = await connectMusicKit();
       musicKit.queue.append.mockRejectedValueOnce(new Error("boom"));
 
-      socketMock.trigger("apple_music_cmd", { action: "queue_add", id: "song1", cb: "cb1" });
+      socketMock.trigger("apple_music_cmd", {
+        action: "queue_add",
+        id: "song1",
+        cb: "cb1",
+      });
       await flush();
 
       expect(musicKit.queue.append).toHaveBeenCalledWith({ song: "song1" });
@@ -278,10 +327,25 @@ describe("apple_music.js", () => {
     it("searches and plays a matching song", async () => {
       const musicKit = await connectMusicKit();
       musicKit.api.music.mockResolvedValue({
-        data: { results: { songs: { data: [{ id: "s1", attributes: { name: "Song A", artistName: "Artist A" } }] } } },
+        data: {
+          results: {
+            songs: {
+              data: [
+                {
+                  id: "s1",
+                  attributes: { name: "Song A", artistName: "Artist A" },
+                },
+              ],
+            },
+          },
+        },
       });
 
-      socketMock.trigger("apple_music_cmd", { action: "search_and_play", query: "song a", cb: "cb1" });
+      socketMock.trigger("apple_music_cmd", {
+        action: "search_and_play",
+        query: "song a",
+        cb: "cb1",
+      });
       await flush();
 
       expect(musicKit.setQueue).toHaveBeenCalledWith({ song: "s1" });
@@ -295,7 +359,11 @@ describe("apple_music.js", () => {
     it("searches an album by type", async () => {
       const musicKit = await connectMusicKit();
       musicKit.api.music.mockResolvedValue({
-        data: { results: { albums: { data: [{ id: "a1", attributes: { name: "Album A" } }] } } },
+        data: {
+          results: {
+            albums: { data: [{ id: "a1", attributes: { name: "Album A" } }] },
+          },
+        },
       });
 
       socketMock.trigger("apple_music_cmd", {
@@ -313,7 +381,11 @@ describe("apple_music.js", () => {
       const musicKit = await connectMusicKit();
       musicKit.api.music.mockResolvedValue({ data: { results: {} } });
 
-      socketMock.trigger("apple_music_cmd", { action: "search_and_play", query: "nothing", cb: "cb1" });
+      socketMock.trigger("apple_music_cmd", {
+        action: "search_and_play",
+        query: "nothing",
+        cb: "cb1",
+      });
       await flush();
 
       expect(socketMock.emit).toHaveBeenCalledWith("apple_music_callback", {

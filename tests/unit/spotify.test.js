@@ -62,7 +62,9 @@ describe("spotify.js", () => {
 
   it("opens and closes the settings panel", () => {
     $("spotify-btn").click();
-    expect($("spotify-settings").classList.contains("setup-hidden")).toBe(false);
+    expect($("spotify-settings").classList.contains("setup-hidden")).toBe(
+      false,
+    );
     $("spotify-settings-close").click();
     expect($("spotify-settings").classList.contains("setup-hidden")).toBe(true);
   });
@@ -70,7 +72,9 @@ describe("spotify.js", () => {
   it("closes on backdrop click but not on content click", () => {
     $("spotify-settings").classList.remove("setup-hidden");
     $("spotify-btn").click();
-    expect($("spotify-settings").classList.contains("setup-hidden")).toBe(false);
+    expect($("spotify-settings").classList.contains("setup-hidden")).toBe(
+      false,
+    );
     $("spotify-settings").click();
     expect($("spotify-settings").classList.contains("setup-hidden")).toBe(true);
   });
@@ -102,7 +106,9 @@ describe("spotify.js", () => {
     buildDom();
     await import("../../static/v2/js/app/spotify.js");
 
-    expect($("spotify-settings").classList.contains("setup-hidden")).toBe(false);
+    expect($("spotify-settings").classList.contains("setup-hidden")).toBe(
+      false,
+    );
     expect(window.location.search).toBe("");
 
     window.history.pushState({}, "", "/");

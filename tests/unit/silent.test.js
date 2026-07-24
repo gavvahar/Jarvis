@@ -59,6 +59,8 @@ describe("silent.js", () => {
 
   it("does nothing when the button isn't on the page", async () => {
     document.body.innerHTML = "";
-    await expect(import("../../static/v2/js/app/silent.js")).resolves.toBeDefined();
+    await expect(
+      import("../../static/v2/js/app/silent.js"),
+    ).resolves.toBeDefined();
   });
 });

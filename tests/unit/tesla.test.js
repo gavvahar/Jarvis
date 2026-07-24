@@ -108,12 +108,18 @@ describe("tesla.js", () => {
 
     fleetTab.click();
     expect(fleetTab.classList.contains("tesla-tab-active")).toBe(true);
-    expect($("tesla-tab-fleet").classList.contains("tesla-tab-hidden")).toBe(false);
-    expect($("tesla-tab-unofficial").classList.contains("tesla-tab-hidden")).toBe(true);
+    expect($("tesla-tab-fleet").classList.contains("tesla-tab-hidden")).toBe(
+      false,
+    );
+    expect(
+      $("tesla-tab-unofficial").classList.contains("tesla-tab-hidden"),
+    ).toBe(true);
 
     unofficialTab.click();
     expect(unofficialTab.classList.contains("tesla-tab-active")).toBe(true);
-    expect($("tesla-tab-unofficial").classList.contains("tesla-tab-hidden")).toBe(false);
+    expect(
+      $("tesla-tab-unofficial").classList.contains("tesla-tab-hidden"),
+    ).toBe(false);
   });
 
   describe("unofficial token form", () => {
@@ -129,7 +135,11 @@ describe("tesla.js", () => {
       $("tesla-refresh-token").value = "tok123";
       vi.stubGlobal(
         "fetch",
-        vi.fn().mockResolvedValue({ json: async () => ({ ok: true, tesla_method: "unofficial" }) }),
+        vi
+          .fn()
+          .mockResolvedValue({
+            json: async () => ({ ok: true, tesla_method: "unofficial" }),
+          }),
       );
 
       $("tesla-unofficial-form").dispatchEvent(
@@ -146,7 +156,11 @@ describe("tesla.js", () => {
       $("tesla-refresh-token").value = "tok123";
       vi.stubGlobal(
         "fetch",
-        vi.fn().mockResolvedValue({ json: async () => ({ ok: false, error: "invalid token" }) }),
+        vi
+          .fn()
+          .mockResolvedValue({
+            json: async () => ({ ok: false, error: "invalid token" }),
+          }),
       );
 
       $("tesla-unofficial-form").dispatchEvent(
@@ -166,7 +180,9 @@ describe("tesla.js", () => {
       );
       await flush();
 
-      expect($("tesla-unofficial-msg").textContent).toBe("Could not reach the server.");
+      expect($("tesla-unofficial-msg").textContent).toBe(
+        "Could not reach the server.",
+      );
       expect($("tesla-unofficial-save").disabled).toBe(false);
     });
   });
@@ -175,20 +191,30 @@ describe("tesla.js", () => {
     it("disconnects the unofficial API", async () => {
       vi.stubGlobal(
         "fetch",
-        vi.fn().mockResolvedValue({ json: async () => ({ ok: true, tesla_method: "fleet" }) }),
+        vi
+          .fn()
+          .mockResolvedValue({
+            json: async () => ({ ok: true, tesla_method: "fleet" }),
+          }),
       );
 
       $("tesla-unofficial-disconnect").click();
       await flush();
 
-      expect($("tesla-unofficial-msg").textContent).toBe("Unofficial API disconnected.");
+      expect($("tesla-unofficial-msg").textContent).toBe(
+        "Unofficial API disconnected.",
+      );
       expect($("tesla-fleet-dot").className).toBe("connected");
     });
 
     it("disconnects the fleet API", async () => {
       vi.stubGlobal(
         "fetch",
-        vi.fn().mockResolvedValue({ json: async () => ({ ok: true, tesla_method: "" }) }),
+        vi
+          .fn()
+          .mockResolvedValue({
+            json: async () => ({ ok: true, tesla_method: "" }),
+          }),
       );
 
       $("tesla-fleet-disconnect").click();
@@ -203,7 +229,9 @@ describe("tesla.js", () => {
       $("tesla-fleet-disconnect").click();
       await flush();
 
-      expect($("tesla-fleet-msg").textContent).toBe("Could not reach the server.");
+      expect($("tesla-fleet-msg").textContent).toBe(
+        "Could not reach the server.",
+      );
     });
   });
 });

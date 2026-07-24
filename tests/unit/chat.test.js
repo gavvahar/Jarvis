@@ -235,7 +235,10 @@ describe("chat.js", () => {
   });
 
   describe("dragging the panel by its header", () => {
-    function pointerEvent(type, { clientX = 0, clientY = 0, pointerId = 1, target } = {}) {
+    function pointerEvent(
+      type,
+      { clientX = 0, clientY = 0, pointerId = 1, target } = {},
+    ) {
       const evt = new Event(type, { bubbles: true, cancelable: true });
       Object.defineProperty(evt, "clientX", { value: clientX });
       Object.defineProperty(evt, "clientY", { value: clientY });
@@ -253,23 +256,31 @@ describe("chat.js", () => {
       $("chat-head").dispatchEvent(
         pointerEvent("pointerdown", { target: $("chat-close") }),
       );
-      $("chat-head").dispatchEvent(pointerEvent("pointermove", { clientX: 50, clientY: 50 }));
+      $("chat-head").dispatchEvent(
+        pointerEvent("pointermove", { clientX: 50, clientY: 50 }),
+      );
 
       expect($("chat-panel").classList.contains("dragging")).toBe(false);
       expect($("chat-panel").style.left).toBe("");
     });
 
     it("pointermove before any pointerdown does nothing", () => {
-      $("chat-head").dispatchEvent(pointerEvent("pointermove", { clientX: 50, clientY: 50 }));
+      $("chat-head").dispatchEvent(
+        pointerEvent("pointermove", { clientX: 50, clientY: 50 }),
+      );
       expect($("chat-panel").style.left).toBe("");
     });
 
     it("drags the panel, clamped within the window bounds, then stops on pointerup", () => {
-      $("chat-head").dispatchEvent(pointerEvent("pointerdown", { clientX: 10, clientY: 10 }));
+      $("chat-head").dispatchEvent(
+        pointerEvent("pointerdown", { clientX: 10, clientY: 10 }),
+      );
       expect($("chat-panel").classList.contains("dragging")).toBe(true);
       expect($("chat-head").setPointerCapture).toHaveBeenCalledWith(1);
 
-      $("chat-head").dispatchEvent(pointerEvent("pointermove", { clientX: 40, clientY: 30 }));
+      $("chat-head").dispatchEvent(
+        pointerEvent("pointermove", { clientX: 40, clientY: 30 }),
+      );
       expect($("chat-panel").style.left).not.toBe("");
       expect($("chat-panel").style.top).not.toBe("");
 
@@ -278,12 +289,16 @@ describe("chat.js", () => {
 
       // now that drag is cleared, further pointermove is a no-op
       const leftBefore = $("chat-panel").style.left;
-      $("chat-head").dispatchEvent(pointerEvent("pointermove", { clientX: 999, clientY: 999 }));
+      $("chat-head").dispatchEvent(
+        pointerEvent("pointermove", { clientX: 999, clientY: 999 }),
+      );
       expect($("chat-panel").style.left).toBe(leftBefore);
     });
 
     it("pointercancel also ends the drag", () => {
-      $("chat-head").dispatchEvent(pointerEvent("pointerdown", { clientX: 10, clientY: 10 }));
+      $("chat-head").dispatchEvent(
+        pointerEvent("pointerdown", { clientX: 10, clientY: 10 }),
+      );
       $("chat-head").dispatchEvent(pointerEvent("pointercancel"));
       expect($("chat-panel").classList.contains("dragging")).toBe(false);
     });
