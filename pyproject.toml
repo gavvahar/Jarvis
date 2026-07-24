@@ -239,7 +239,7 @@ commands = [
 [tool.tox.env."js-tests"]
 skip_install = true
 allowlist_externals = ["npx"]
-commands = [["npx", "vitest", "run"]]
+commands = [["npx", "vitest", "run", "--coverage"]]
 
 # --- Aggregate (CI) ---------------------------------------------------------
 
