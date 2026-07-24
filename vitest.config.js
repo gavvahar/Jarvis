@@ -13,10 +13,10 @@ module.exports = defineConfig({
       // ratchet these up as more of static/v2/js/app/*.js gets test coverage,
       // the same incremental path the Python side took toward its 80% gate.
       thresholds: {
-        statements: 6,
-        branches: 3,
-        functions: 3,
-        lines: 7,
+        statements: 8,
+        branches: 4,
+        functions: 8,
+        lines: 9,
       },
     },
   },
