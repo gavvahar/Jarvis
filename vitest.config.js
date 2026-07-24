@@ -26,10 +26,10 @@ module.exports = defineConfig({
       // JS equivalent of the Python side's 80% gate — see
       // memory/pending-js-coverage-80-percent.md.
       thresholds: {
-        statements: 20,
-        branches: 20,
-        functions: 20,
-        lines: 20,
+        statements: 40,
+        branches: 40,
+        functions: 40,
+        lines: 40,
       },
     },
   },

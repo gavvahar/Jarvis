@@ -97,6 +97,14 @@ describe("settings panel shell", () => {
     expect(isPaneOpen("msg-settings")).toBe(false);
   });
 
+  it("ignores clicks on the tab bar that don't land on a tab button", () => {
+    openPane("ha-settings");
+
+    document.getElementById("settings-tabs").click();
+
+    expect(isPaneOpen("ha-settings")).toBe(true);
+  });
+
   it("marks only the clicked tab button as active", () => {
     clickTab("garage-settings");
     clickTab("tesla-settings");
