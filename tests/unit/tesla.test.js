@@ -135,11 +135,9 @@ describe("tesla.js", () => {
       $("tesla-refresh-token").value = "tok123";
       vi.stubGlobal(
         "fetch",
-        vi
-          .fn()
-          .mockResolvedValue({
-            json: async () => ({ ok: true, tesla_method: "unofficial" }),
-          }),
+        vi.fn().mockResolvedValue({
+          json: async () => ({ ok: true, tesla_method: "unofficial" }),
+        }),
       );
 
       $("tesla-unofficial-form").dispatchEvent(
@@ -156,11 +154,9 @@ describe("tesla.js", () => {
       $("tesla-refresh-token").value = "tok123";
       vi.stubGlobal(
         "fetch",
-        vi
-          .fn()
-          .mockResolvedValue({
-            json: async () => ({ ok: false, error: "invalid token" }),
-          }),
+        vi.fn().mockResolvedValue({
+          json: async () => ({ ok: false, error: "invalid token" }),
+        }),
       );
 
       $("tesla-unofficial-form").dispatchEvent(
@@ -191,11 +187,9 @@ describe("tesla.js", () => {
     it("disconnects the unofficial API", async () => {
       vi.stubGlobal(
         "fetch",
-        vi
-          .fn()
-          .mockResolvedValue({
-            json: async () => ({ ok: true, tesla_method: "fleet" }),
-          }),
+        vi.fn().mockResolvedValue({
+          json: async () => ({ ok: true, tesla_method: "fleet" }),
+        }),
       );
 
       $("tesla-unofficial-disconnect").click();
@@ -210,11 +204,9 @@ describe("tesla.js", () => {
     it("disconnects the fleet API", async () => {
       vi.stubGlobal(
         "fetch",
-        vi
-          .fn()
-          .mockResolvedValue({
-            json: async () => ({ ok: true, tesla_method: "" }),
-          }),
+        vi.fn().mockResolvedValue({
+          json: async () => ({ ok: true, tesla_method: "" }),
+        }),
       );
 
       $("tesla-fleet-disconnect").click();

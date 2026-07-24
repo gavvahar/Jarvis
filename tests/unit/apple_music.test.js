@@ -176,11 +176,9 @@ describe("apple_music.js", () => {
 
     it("reports an authorization failure", async () => {
       vi.stubGlobal("MusicKit", {
-        configure: vi
-          .fn()
-          .mockResolvedValue({
-            authorize: vi.fn().mockRejectedValue(new Error("denied")),
-          }),
+        configure: vi.fn().mockResolvedValue({
+          authorize: vi.fn().mockRejectedValue(new Error("denied")),
+        }),
       });
       vi.stubGlobal(
         "fetch",

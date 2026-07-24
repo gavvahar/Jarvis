@@ -139,11 +139,9 @@ describe("subscribePush", () => {
     });
     vi.stubGlobal(
       "fetch",
-      vi
-        .fn()
-        .mockResolvedValueOnce({
-          json: async () => ({ vapid_public_key: "BBBB" }),
-        }),
+      vi.fn().mockResolvedValueOnce({
+        json: async () => ({ vapid_public_key: "BBBB" }),
+      }),
     );
 
     const result = await subscribePush();
