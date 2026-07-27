@@ -30,6 +30,22 @@ jobs:
           git diff "origin/${{ github.base_ref }}...HEAD" --stat > /tmp/diff_stat.txt || true
           git diff "origin/${{ github.base_ref }}...HEAD" | head -c 51200 > /tmp/diff.txt || true
 
+      - name: Preserve issue-closing keywords
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          python3 - <<'EOF'
+          import os, re
+
+          body = os.environ.get("PR_BODY") or ""
+          pattern = re.compile(r"\b(?:close[sd]?|fixe?[sd]?|resolve[sd]?)\s+#(\d+)\b", re.IGNORECASE)
+          nums = sorted({int(n) for n in pattern.findall(body)}, key=int)
+          with open("/tmp/issue_refs.txt", "w") as f:
+              f.write("\n".join(f"Closes #{n}" for n in nums))
+          if nums:
+              print(f"Preserved issue refs: {nums}")
+          EOF
+
       - name: Assign PR author and code owners
         env:
           GH_TOKEN: ${{ github.token }}
@@ -324,6 +340,23 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          python3 - <<'EOF'
+          import re
+
+          body = open("/tmp/pr_body.txt").read()
+          try:
+              refs = [l for l in open("/tmp/issue_refs.txt").read().splitlines() if l]
+          except FileNotFoundError:
+              refs = []
+
+          existing_nums = set(re.findall(r"#(\d+)", body))
+          missing = [r for r in refs if re.search(r"#(\d+)", r).group(1) not in existing_nums]
+          if missing:
+              body = body.rstrip() + "\n\n" + "\n".join(missing) + "\n"
+
+          open("/tmp/pr_body.txt", "w").write(body)
+          EOF
+
           gh pr edit ${{ github.event.pull_request.number }} \
             --title "$(tr -d '\n' < /tmp/pr_title.txt)" \
             --body-file /tmp/pr_body.txt

@@ -7,10 +7,11 @@ On conflict: abort, then open a GitHub issue listing the conflicting files
 """
 
 import json, os, subprocess, sys, urllib.error, urllib.request
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
-SKIP_BRANCHES = {"main", "staging", "HEAD", "testing"}
+SKIP_BRANCHES = {"main", "staging", "HEAD", "testing", "backup/tests-pre-ai-scrub"}
 
 # Branches that should only receive a cascade from specific source branches,
 # loaded from cascade_restrictions.json so this data doesn't ride along inside
@@ -78,7 +79,7 @@ def get_login_for_sha(sha, token, repo):
 
 def open_conflict_issue(source, branch, conflicting, trigger_sha, token, repo, run_id, server_url):
     short_sha = trigger_sha[:7]
-    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    now = datetime.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d %H:%M %Z")
 
     last_sha = run(["git", "log", "-1", "--format=%H", f"origin/{branch}"]).stdout.strip()
     login = get_login_for_sha(last_sha, token, repo)

@@ -109,23 +109,40 @@ async function checkFrame(blob) {
   evaluate(faces || [], blob);
 }
 
-function evaluate(faces, blob) {
+// Pure decision core: given the current frame's detected faces and lock
+// state, decide what should happen next. Kept separate from evaluate()'s
+// module-state mutation and DOM/network side effects so the security-
+// relevant logic (mismatch counting, lock/unlock thresholds) is testable
+// in isolation.
+export function decideLockAction({
+  faces,
+  ownUserId,
+  locked,
+  mismatchCount,
+  threshold = MISMATCH_THRESHOLD,
+}) {
   const ownPresent = faces.some((f) => f.detected_user_id === ownUserId);
 
   if (locked) {
     // auto-unlock only when the logged-in user reappears alone in frame
-    if (ownPresent && faces.length === 1) unlock();
-    return;
+    if (ownPresent && faces.length === 1)
+      return { action: "unlock", mismatchCount: 0 };
+    return { action: "none", mismatchCount };
   }
 
-  if (ownPresent) {
-    mismatchCount = 0;
-    return;
-  }
-  if (faces.length === 0) return; // no one in frame at all — inconclusive
+  if (ownPresent) return { action: "none", mismatchCount: 0 };
+  if (faces.length === 0) return { action: "none", mismatchCount }; // no one in frame — inconclusive
 
-  mismatchCount++;
-  if (mismatchCount >= MISMATCH_THRESHOLD) lock(blob);
+  const nextCount = mismatchCount + 1;
+  if (nextCount >= threshold) return { action: "lock", mismatchCount: 0 };
+  return { action: "none", mismatchCount: nextCount };
+}
+
+function evaluate(faces, blob) {
+  const result = decideLockAction({ faces, ownUserId, locked, mismatchCount });
+  mismatchCount = result.mismatchCount;
+  if (result.action === "lock") lock(blob);
+  else if (result.action === "unlock") unlock();
 }
 
 function lock(blob) {
